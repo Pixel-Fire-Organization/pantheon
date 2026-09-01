@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Theme declaration",
+  "description": "The interface's look, declared once. Every theme here is compiled into the binary and cooked as a loadable asset from the same entry. A theme is a whole style -- colours, metrics and fonts together -- so a theme built for a smaller or poorer display can ask for larger text and wider borders, not only different colours. Exactly one theme is marked \"default\": true; every other theme inherits, field by field, whatever colours/metrics/fonts it does not name itself from that one. See docs/subsystems/UI.md and docs/formats/THEME_FORMAT.md.",
+  "type": "object",
+  "required": ["themes"],
+  "additionalProperties": false,
+
+  "definitions": {
+    "rgba": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "type": "integer", "minimum": 0, "maximum": 255 },
+      "description": "Red, green, blue, alpha, 0..255."
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Whole-pixel measurements and repeat timing. The default theme must name every field; any other theme may name none, some, or all -- anything it does not name is inherited from the default theme.",
+      "properties": {
+        "panelPadding": { "type": "integer", "minimum": 0, "maximum": 256 },
+        "itemSpacing": { "type": "integer", "minimum": 0, "maximum": 256 },
+        "borderWidth": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "textScale": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "rowPadding": { "type": "integer", "minimum": 0, "maximum": 256 },
+        "barHeight": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "cursorSize": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "screenMargin": { "type": "integer", "minimum": 0, "maximum": 512 },
+        "panelGap": { "type": "integer", "minimum": 0, "maximum": 512 },
+        "scrollBarWidth": { "type": "integer", "minimum": 1, "maximum": 128 },
+        "menuBarHeight": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "caretWidth": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "iconSpacing": { "type": "integer", "minimum": 0, "maximum": 128 },
+        "repeatDelaySeconds": { "type": "number", "minimum": 0.01, "maximum": 5.0 },
+        "repeatIntervalSeconds": { "type": "number", "minimum": 0.01, "maximum": 5.0 }
+      }
+    },
+    "fonts": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Which cooked font asset serves each text role. \"Default\" is this theme's own fallback font, tried before a role-specific one is found empty and before the interface's built-in font. The default theme must name \"Default\"; any other theme may name none, some, or all of these -- anything it does not name is inherited from the default theme.",
+      "properties": {
+        "Default": { "type": "string" },
+        "Body": { "type": "string" },
+        "Header": { "type": "string" },
+        "Value": { "type": "string" }
+      }
+    }
+  },
+
+  "properties": {
+    "$schema": { "type": "string" },
+
+    "themes": {
+      "type": "array",
+      "description": "Compiled into the binary as UiBuiltinTheme, and cooked as a loadable THEME_<NAME> asset from the same entry. Exactly one entry must carry \"default\": true.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "description": "Upper snake case. Becomes UiBuiltinTheme::<name> and the cooked asset key THEME_<name>."
+          },
+          "description": { "type": "string" },
+          "default": {
+            "type": "boolean",
+            "description": "Marks this as the theme every other theme inherits unset colours, metrics and fonts from. Exactly one theme in the declaration must set this true."
+          },
+          "colors": {
+            "type": "object",
+            "description": "One entry per UiColor role this theme overrides; the generator checks role names against the engine's own enum, so a role added there and forgotten here fails the build rather than drawing black. The default theme must name every role; any other theme may name none, some, or all -- anything it does not name is inherited from the default theme.",
+            "additionalProperties": { "$ref": "#/definitions/rgba" }
+          },
+          "metrics": {
+            "allOf": [{ "$ref": "#/definitions/metrics" }]
+          },
+          "fonts": {
+            "allOf": [{ "$ref": "#/definitions/fonts" }]
+          }
+        }
+      }
+    }
+  }
+}

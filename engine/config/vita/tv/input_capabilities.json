@@ -1,0 +1,16 @@
+{
+  "description": "What tools/actions.py may bind an action to on the Vita TV variant. Read only by Python tooling at build time; the engine never sees this file. Derived from engine/include/platform/vita/tv/Platform.h's TranslatePadButtons, which is the identity (this variant pairs with a full DualShock-class pad, so L3/R3/L2/R2 are real buttons here, unlike handheld). HasTouchSurfaces() is false; PlatformCapability::AnalogTriggers is false for the whole Vita family, so there are no trigger sources even though L2/R2 exist as buttons.",
+  "gamepad": {
+    "buttons": [
+      "select", "l3", "r3", "start",
+      "dpad_up", "dpad_right", "dpad_down", "dpad_left",
+      "l2", "r2", "l1", "r1",
+      "triangle", "circle", "cross", "square"
+    ],
+    "sticks": ["stick_left", "stick_right"],
+    "triggers": []
+  },
+  "keyboard": false,
+  "mouse": false,
+  "touch": false
+}

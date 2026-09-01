@@ -1,0 +1,6 @@
+{
+  "type": "TEXTURE",
+  "source": "ENGINE_FONT.PNG",
+  "format": "coverage8",
+  "filter": "nearest"
+}

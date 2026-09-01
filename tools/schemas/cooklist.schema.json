@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Platform cook list",
+  "description": "How one platform wants source assets baked. Per-asset metadata says WHAT an asset is; this says how this platform wants it. See docs/PIPELINE.md.",
+  "type": "object",
+  "required": ["platform", "assets"],
+  "additionalProperties": false,
+  "properties": {
+    "platform": {
+      "type": "string",
+      "description": "Platform this list applies to, matching the CMake platform name in lower case."
+    },
+    "description": {
+      "type": "string"
+    },
+    "level_textures": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Max dimensions for a brush material baked by the level compiler (tools/compile_level.py), separate from the 'assets.TEXTURE' ceiling: a level pins every one of its materials for its whole lifetime, unlike a standalone resource the game loads one at a time. Absent means unrestricted.",
+      "properties": {
+        "max_width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_height": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "description": "Policy per asset class. A class absent from here is skipped entirely on this platform.",
+      "additionalProperties": false,
+      "properties": {
+        "TEXTURE": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "format": {
+              "type": "string",
+              "enum": ["rgba32", "pal8", "coverage8", "source"],
+              "description": "Target encoding. 'source' honours the per-asset format instead of overriding it. 'coverage8' keeps only an alpha channel, against a white ramp, which is what a glyph atlas needs."
+            },
+            "max_width": { "type": "integer", "minimum": 1 },
+            "max_height": { "type": "integer", "minimum": 1 },
+            "budget_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Ceiling for all cooked textures together. Validation fails past it."
+            }
+          }
+        },
+        "MODEL": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
+        "SOUND": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" } }
+        },
+        "FONT": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" } }
+        },
+        "THEME": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+name: 'Build Win32'
+description: 'Installs the MinGW-w64 cross-toolchain and Python tool deps, then runs the engine build script'
+
+inputs:
+  build_type:
+    description: 'Type of build (debug, release)'
+    required: true
+    default: 'debug'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: '3.12'
+
+    - name: Install Python tool dependencies (cook/pack scripts CMake shells out to)
+      shell: bash
+      run: pip install -r tools/requirements-ci.txt
+
+    - name: Install MinGW-w64 cross-compiler
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends mingw-w64
+
+    - name: Build engine via Script
+      shell: bash
+      run: python3 ./tools/build.py ${{ inputs.build_type }} --platforms WIN32

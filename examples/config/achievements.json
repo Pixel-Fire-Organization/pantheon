@@ -1,0 +1,15 @@
+{
+  "$schema": "../../tools/schemas/achievements.schema.json",
+  "description": "Shared, placeholder achievement set for every standalone example under examples/ — examples don't earn trophies, but the declaration requires at least one entry. See docs/guidelines/NEW_EXAMPLE.md.",
+
+  "achievements": [
+    {
+      "id": 0,
+      "key": "Unused",
+      "name": "Unused",
+      "detail": "Placeholder — examples declare no real achievements. Vita packaging carries trophies.enabled: false, so this is never packaged as a trophy.",
+      "grade": "bronze",
+      "hidden": true
+    }
+  ]
+}

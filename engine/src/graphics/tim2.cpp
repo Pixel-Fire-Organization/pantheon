@@ -2,7 +2,7 @@
 
 #include <cstring>
 
-#include "EngineDebug.h"
+#include "../../include/core/EngineDebug.h"
 
 namespace
 {
@@ -32,12 +32,35 @@ namespace
     // need: sizes, dimensions and the image color type.
     constexpr size_t TIM2_PIC_HEADER_SIZE = 0x30;
 
+    // GsTex1 carries the sampling filter. Zero has always meant "backend
+    // default", and every texture cooked before the field was used holds zero,
+    // so an explicit choice is marked rather than encoded as a value.
+    constexpr uint64_t TIM2_TEX1_EXPLICIT = 1ull << 63;
+    constexpr uint64_t TIM2_TEX1_MMAG_SHIFT = 8;
+
+    uint64_t ReadU64(const uint8_t* p)
+    {
+        uint64_t v = 0;
+        for (int i = 7; i >= 0; --i)
+            v = (v << 8) | p[i];
+        return v;
+    }
+
+    TextureFilter Tim2FilterFromTex1(uint64_t tex1)
+    {
+        if (!(tex1 & TIM2_TEX1_EXPLICIT))
+            return TextureFilter::Linear;
+        return ((tex1 >> TIM2_TEX1_MMAG_SHIFT) & 1ull) ? TextureFilter::Linear : TextureFilter::Nearest;
+    }
+
     // TIM2 imageType values we accept.
     constexpr uint8_t TIM2_IMGTYPE_RGBA16 = 0x01; // A1B5G5R5
     constexpr uint8_t TIM2_IMGTYPE_RGBA32 = 0x03; // A8B8G8R8
     constexpr uint8_t TIM2_IMGTYPE_IDTEX8 = 0x05; // 8-bit indexed + CLUT
 
-    inline size_t Align16(size_t n) { return (n + 15u) & ~static_cast<size_t>(15u); }
+    inline uint64_t Align16(uint64_t n) { return (n + 15u) & ~static_cast<uint64_t>(15u); }
+
+    inline bool IsAligned16(uint64_t n) { return (n & 15u) == 0u; }
 } // namespace
 
 bool Tim2_Parse(const void* data, size_t size, Tim2Image* out)
@@ -117,33 +140,41 @@ bool Tim2_Parse(const void* data, size_t size, Tim2Image* out)
 
     // Image data starts headerSize bytes into the picture block. Levels are
     // stored contiguously largest-first, each 16-byte aligned (see pack_assets.py).
-    const size_t imgOffset = picBase + headerSize;
+    // Offsets are widened before they are summed: imageSize is a 32-bit field
+    // and the sum wraps a 32-bit size_t, which would pass the bound trivially.
+    const uint64_t imgOffset = static_cast<uint64_t>(picBase) + headerSize;
     if (headerSize < TIM2_PIC_HEADER_SIZE || imgOffset + imageSize > size)
     {
         Engine_LogError("TIM2: image payload out of bounds (hdr=%u, size=%u).", headerSize, imageSize);
         return false;
     }
+    if (!IsAligned16(imgOffset))
+    {
+        Engine_LogError("TIM2: picture header is %u bytes, which leaves the pixels unaligned.", headerSize);
+        return false;
+    }
 
     std::memset(out->levelPtr, 0, sizeof(out->levelPtr));
-    size_t off = 0;
+    uint64_t off = 0;
     for (uint8_t lvl = 0; lvl < mipCount; ++lvl)
     {
         const uint32_t w = (imageWidth >> lvl) ? static_cast<uint32_t>(imageWidth >> lvl) : 1u;
         const uint32_t h = (imageHeight >> lvl) ? static_cast<uint32_t>(imageHeight >> lvl) : 1u;
-        if (off + static_cast<size_t>(w) * h * bpp > imageSize)
+        const uint64_t levelBytes = static_cast<uint64_t>(w) * h * bpp;
+        if (off + levelBytes > imageSize)
         {
             Engine_LogError("TIM2: mip level %u out of bounds.", lvl);
             return false;
         }
         out->levelPtr[lvl] = base + imgOffset + off;
-        off += Align16(static_cast<size_t>(w) * h * bpp);
+        off += Align16(levelBytes);
     }
 
     // CLUT (PAL8) follows the image payload.
     out->clut = nullptr;
     if (fmt == PixelFormat::PAL8)
     {
-        const size_t clutOffset = imgOffset + imageSize;
+        const uint64_t clutOffset = imgOffset + imageSize;
         if (clutOffset + 256u * 4u > size)
         {
             Engine_LogError("TIM2: CLUT out of bounds.");
@@ -157,6 +188,7 @@ bool Tim2_Parse(const void* data, size_t size, Tim2Image* out)
     out->width = imageWidth;
     out->height = imageHeight;
     out->format = fmt;
+    out->filter = Tim2FilterFromTex1(ReadU64(pic + 32));
     out->imageSize = imageSize;
     return true;
 }

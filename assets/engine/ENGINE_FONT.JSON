@@ -1,0 +1,7 @@
+{
+  "type": "FONT",
+  "source": "ENGINE_FONT.FNT",
+  "deps": [
+    "ENGINE_FONT_ATLAS"
+  ]
+}

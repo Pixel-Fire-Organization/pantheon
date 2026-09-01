@@ -1,8 +1,8 @@
 # copy_iso_files.cmake
-# Copies cd_files/ into the ISO staging directory, honouring ISO_BLACKLIST.
+# Copies assets/ into the ISO staging directory, honouring ISO_BLACKLIST.
 #
 # Expected variables (pass via -D on the cmake command line):
-#   SRC       – source directory  (cd_files/)
+#   SRC       – source directory  (assets/)
 #   DST       – destination directory (iso_root/)
 #   BLACKLIST – semicolon-separated list of file/directory names to exclude
 

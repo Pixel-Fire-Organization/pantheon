@@ -1,0 +1,16 @@
+{
+  "description": "What tools/actions.py may bind an action to on this platform. Read only by Python tooling at build time; the engine never sees this file. Derived from engine/src/platform/psp/Input.cpp's TranslatePadButtons, which promotes the two shoulder-trigger bits onto L1/R1 and masks L2/R2 out entirely (the PSP has one shoulder row, no clickable-stick L3/R3, and only a left analog nub — the right stick is hard-zeroed every poll). PlatformCapability::AnalogTriggers is false; the trigger query instead mirrors the digital L1/R1 state, so there are no independent trigger sources.",
+  "gamepad": {
+    "buttons": [
+      "select", "start",
+      "dpad_up", "dpad_right", "dpad_down", "dpad_left",
+      "l1", "r1",
+      "triangle", "circle", "cross", "square"
+    ],
+    "sticks": ["stick_left"],
+    "triggers": []
+  },
+  "keyboard": false,
+  "mouse": false,
+  "touch": false
+}

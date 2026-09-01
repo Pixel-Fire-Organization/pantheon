@@ -1,0 +1,113 @@
+{
+  "$schema": "../../tools/schemas/theme.schema.json",
+  "themes": [
+    {
+      "name": "MIDNIGHT",
+      "description": "The default. Cool, low-glare, readable on a television at three metres.",
+      "default": true,
+      "colors": {
+        "WindowBackground": [12, 14, 20, 255],
+        "PanelBackground": [22, 26, 36, 255],
+        "Border": [56, 68, 92, 255],
+        "Header": [120, 200, 255, 255],
+        "Text": [212, 220, 232, 255],
+        "TextDim": [126, 138, 156, 255],
+        "TextAccent": [255, 240, 120, 255],
+        "TextWarn": [255, 128, 96, 255],
+        "TextDisabled": [70, 78, 92, 255],
+        "ItemBackground": [32, 38, 52, 255],
+        "ItemHovered": [46, 58, 80, 255],
+        "ItemActive": [64, 84, 116, 255],
+        "Focus": [28, 56, 84, 255],
+        "BarTrack": [34, 40, 54, 255],
+        "BarFill": [96, 200, 148, 255],
+        "BarFillWarn": [232, 168, 72, 255],
+        "Cursor": [255, 255, 255, 255],
+        "CursorOutline": [16, 18, 24, 255]
+      },
+      "metrics": {
+        "panelPadding": 8,
+        "itemSpacing": 4,
+        "borderWidth": 1,
+        "textScale": 2,
+        "rowPadding": 3,
+        "barHeight": 8,
+        "cursorSize": 10,
+        "screenMargin": 16,
+        "panelGap": 8,
+        "scrollBarWidth": 6,
+        "menuBarHeight": 22,
+        "caretWidth": 2,
+        "iconSpacing": 4,
+        "repeatDelaySeconds": 0.35,
+        "repeatIntervalSeconds": 0.06
+      },
+      "fonts": {
+        "Default": "ENGINE_FONT"
+      }
+    },
+    {
+      "name": "SLATE",
+      "description": "Neutral greys, for judging colour in content rather than in the interface.",
+      "colors": {
+        "WindowBackground": [18, 18, 18, 255],
+        "PanelBackground": [30, 30, 30, 255],
+        "Border": [72, 72, 72, 255],
+        "Header": [220, 220, 220, 255],
+        "Text": [225, 225, 225, 255],
+        "TextDim": [140, 140, 140, 255],
+        "TextAccent": [255, 210, 120, 255],
+        "TextWarn": [240, 130, 110, 255],
+        "TextDisabled": [80, 80, 80, 255],
+        "ItemBackground": [42, 42, 42, 255],
+        "ItemHovered": [60, 60, 60, 255],
+        "ItemActive": [86, 86, 86, 255],
+        "Focus": [52, 52, 52, 255],
+        "BarTrack": [44, 44, 44, 255],
+        "BarFill": [170, 170, 170, 255],
+        "BarFillWarn": [230, 170, 90, 255],
+        "Cursor": [255, 255, 255, 255],
+        "CursorOutline": [0, 0, 0, 255]
+      }
+    },
+    {
+      "name": "CONTRAST",
+      "description": "Maximum separation, for a small handheld screen or a poor display. Also demonstrates a per-theme metrics override: larger text and wider borders, not only different colours.",
+      "colors": {
+        "WindowBackground": [0, 0, 0, 255],
+        "PanelBackground": [0, 0, 0, 255],
+        "Border": [255, 255, 255, 255],
+        "Header": [255, 255, 0, 255],
+        "Text": [255, 255, 255, 255],
+        "TextDim": [190, 190, 190, 255],
+        "TextAccent": [0, 255, 255, 255],
+        "TextWarn": [255, 80, 80, 255],
+        "TextDisabled": [110, 110, 110, 255],
+        "ItemBackground": [0, 0, 0, 255],
+        "ItemHovered": [60, 60, 60, 255],
+        "ItemActive": [120, 120, 120, 255],
+        "Focus": [0, 0, 140, 255],
+        "BarTrack": [40, 40, 40, 255],
+        "BarFill": [0, 255, 0, 255],
+        "BarFillWarn": [255, 200, 0, 255],
+        "Cursor": [255, 255, 255, 255],
+        "CursorOutline": [0, 0, 0, 255]
+      },
+      "metrics": {
+        "textScale": 3,
+        "borderWidth": 2,
+        "panelPadding": 10,
+        "rowPadding": 4,
+        "cursorSize": 12,
+        "screenMargin": 20,
+        "panelGap": 10,
+        "scrollBarWidth": 8,
+        "menuBarHeight": 26
+      }
+    },
+    {
+      "name": "MAINMENU",
+      "description": "The theme used in the main menu"
+    }
+  ]
+}

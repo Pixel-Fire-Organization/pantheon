@@ -1,0 +1,29 @@
+{
+  "platform": "ps2",
+  "description": "Video memory is 4 MB and paged. 'source' keeps the format each asset was authored with; setting it to pal8 cooks palettised instead, which is far cheaper per page at the cost of one colour-table page. The per-texture ceiling matches the largest slot the memory layout registers. See docs/ps2/TEXTURE_BUDGET.md. level_textures caps brush materials baked by the level compiler separately from standalone TEXTURE assets: a level pins every one of its materials for its whole lifetime, so even a modest per-texture size adds up fast across many unique brushes - 64x64 keeps a level's own material set affordable within the same page budget.",
+  "assets": {
+    "TEXTURE": {
+      "enabled": true,
+      "format": "source",
+      "max_width": 512,
+      "max_height": 512,
+      "budget_bytes": 2162688
+    },
+    "MODEL": {
+      "enabled": true
+    },
+    "SOUND": {
+      "enabled": false
+    },
+    "FONT": {
+      "enabled": true
+    },
+    "THEME": {
+      "enabled": true
+    }
+  },
+  "level_textures": {
+    "max_width": 64,
+    "max_height": 64
+  }
+}

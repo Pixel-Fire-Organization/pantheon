@@ -2,7 +2,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(ps2_engine_external)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
+# Entered only when a PS2 platform is active (see the root CMakeLists), so no
+# toolchain guard is needed here.
     # Derive PS2DEV/PS2SDK at configure time so build-phase commands have the correct env
     if(DEFINED ENV{PS2DEV})
         set(_PS2DEV "$ENV{PS2DEV}")
@@ -49,11 +50,20 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     set(PS2GL_BUILD_DIR "${CMAKE_BINARY_DIR}/ps2gl_build")
     set(PS2GL_LIB "${PS2GL_BUILD_DIR}/libps2gl.a" CACHE INTERNAL "Path to the built ps2gl static library")
 
+    # The toolchain's own masp recurses into itself on any input and dies; the
+    # repo carries a working build. See docs/ps2/MASP.md.
+    set(_MASP "${CMAKE_SOURCE_DIR}/tools/ps2/masp")
+    if(EXISTS "${_MASP}")
+        set(_MASP_ARG "-DMASP_FOUND=${_MASP}")
+    else()
+        set(_MASP_ARG "")
+    endif()
+
     add_custom_command(
         OUTPUT "${PS2GL_LIB}"
         COMMAND ${CMAKE_COMMAND} -E env "PS2DEV=${_PS2DEV}" "PS2SDK=${_PS2SDK}" "PATH=${_PS2_PATH}"
             ${CMAKE_COMMAND} -S "${CMAKE_SOURCE_DIR}/external/ps2gl" -B "${PS2GL_BUILD_DIR}"
-            -DBUILD_TESTS=OFF -DBUILD_GLUT=OFF -DBUILD_EXAMPLES=OFF
+            -DBUILD_TESTS=OFF -DBUILD_GLUT=OFF -DBUILD_EXAMPLES=OFF ${_MASP_ARG}
         COMMAND ${CMAKE_COMMAND} -E env "PS2DEV=${_PS2DEV}" "PS2SDK=${_PS2SDK}" "PATH=${_PS2_PATH}"
             ${CMAKE_COMMAND} --build "${PS2GL_BUILD_DIR}" --target ps2gl
         DEPENDS "${_PS2STUFF_STAMP}"
@@ -64,4 +74,3 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         DEPENDS "${PS2GL_LIB}"
     )
     add_dependencies(ps2gl_build ps2stuff_build)
-endif()

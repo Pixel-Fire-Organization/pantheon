@@ -1,0 +1,41 @@
+name: PS2 CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: ghcr.io/ps2dev/ps2sdk-ports@sha256:cb24a07ad515e2144d7bd02c9bf5854f393c3c069897ba1a48a6a6796e5339af
+
+    strategy:
+      matrix:
+        build_type: [debug, release]
+        region: [PAL, NTSC]
+
+    steps:
+      - name: Install Git
+        run: apk add --no-cache git
+
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+
+      - name: Run Build Action
+        uses: ./.github/actions/build-ps2
+        with:
+          build_type: ${{ matrix.build_type }}
+          region: ${{ matrix.region }}
+
+      - name: Upload ELF & ISO
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-${{ matrix.build_type }}-${{ matrix.region }}
+          path: dist/

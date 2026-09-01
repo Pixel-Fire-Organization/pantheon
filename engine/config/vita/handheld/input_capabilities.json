@@ -1,0 +1,16 @@
+{
+  "description": "What tools/actions.py may bind an action to on the Vita handheld variant. Read only by Python tooling at build time; the engine never sees this file. Derived from engine/include/platform/vita/handheld/Platform.h's TranslatePadButtons, which promotes the two shoulder-trigger bits onto L1/R1 and masks L2/R2 out entirely, and from the handheld hardware itself, which has no clickable-stick L3/R3. HasTouchSurfaces() is true here (front and rear panels); PlatformCapability::AnalogTriggers is false for the whole Vita family, so there are no trigger sources.",
+  "gamepad": {
+    "buttons": [
+      "select", "start",
+      "dpad_up", "dpad_right", "dpad_down", "dpad_left",
+      "l1", "r1",
+      "triangle", "circle", "cross", "square"
+    ],
+    "sticks": ["stick_left", "stick_right"],
+    "triggers": []
+  },
+  "keyboard": false,
+  "mouse": false,
+  "touch": { "surfaces": ["front", "rear"] }
+}

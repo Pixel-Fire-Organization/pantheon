@@ -3,7 +3,7 @@
 The core is bake_mesh(), which turns per-corner (pos, normal, uv) triangle arrays
 into a degenerate-stitched GL_TRIANGLE_STRIP (when that is a win) or an unindexed
 list, emitting vec4 positions (16-byte stride) + vec3 normals + vec2 uvs and an
-object-space bounding sphere. It is shared by the OBJ->BKM2 baker (pack_assets)
+object-space bounding sphere. It is shared by the OBJ->BKM2 baker (cook_assets)
 and the level compiler's per-sector meshes (compile_level), so both go through
 exactly one stripifier.
 """
@@ -261,7 +261,7 @@ def bake_mesh(out_v, out_n, out_t):
 def bake_obj_model(source_path, has_texture):
     """Parse a .obj and bake it as BKM2 v2. Positions are vec4 (x,y,z,1). One
     mesh, one material (materialIndex 0) when has_texture. Byte-compatible with
-    the historical pack_assets output (golden-tested)."""
+    the historical cooker output (golden-tested)."""
     out_v, out_n, out_t = parse_obj(source_path)
     m = bake_mesh(out_v, out_n, out_t)
 

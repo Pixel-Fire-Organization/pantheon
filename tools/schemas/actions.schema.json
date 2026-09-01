@@ -1,0 +1,167 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Action declaration",
+  "description": "One description of a title's action map, compiled into the binary as a generated identifier header and table. Source names are checked against the engine's own input enumerations rather than listed again here, so a control the engine does not have fails the build. See docs/subsystems/ACTION.md.",
+  "type": "object",
+  "required": ["contexts", "actions"],
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema": { "type": "string" },
+    "description": { "type": "string" },
+
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "combinationWindow": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 0.5,
+          "default": 0.1,
+          "description": "Seconds a binding waits when its sources are a subset of a combination's. Seconds, never frames: two platform variants differ only in refresh rate. Above half a second the delay is perceptible as unresponsiveness rather than as disambiguation."
+        },
+        "opposing": {
+          "type": "string",
+          "enum": ["neutral", "lastWins"],
+          "default": "neutral",
+          "description": "How two opposite directions held at once resolve. Neutral cancels both and is the default because it cannot be exploited."
+        }
+      }
+    },
+
+    "contexts": {
+      "type": "array",
+      "description": "Declared outermost first. The stack is pushed and popped at run time; this only names them and says what each suppresses.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["key", "blocks"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Za-z0-9]*$",
+            "description": "The enumerator game code uses to push this context."
+          },
+          "blocks": {
+            "type": "string",
+            "enum": ["nothing", "digital", "everything"],
+            "description": "What this context suppresses in contexts beneath it. 'digital' lets analog actions through, for an overlay that should not freeze the camera. Suppression forces held actions to release rather than freezing them."
+          }
+        }
+      }
+    },
+
+    "actions": {
+      "type": "array",
+      "description": "Dense, starting at zero. A gap is a build error: an identifier with no entry behind it cannot be recovered from at run time, and the overlay record stores the index rather than the name.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "key", "context", "kind", "bindings"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "The value a game names. Fixed for the life of the title: changing one silently reassigns whatever a player has already rebound, which the overlay's map digest is there to catch."
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Za-z0-9]*$",
+            "description": "The enumerator game code uses. Distinct from any display name so that rewording cannot break the build."
+          },
+          "context": {
+            "type": "string",
+            "description": "Must name a declared context."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["digital", "axis1d", "axis2d", "scalar"],
+            "description": "digital is held or not; scalar is unipolar, for a trigger; axis1d is bipolar; axis2d is a direction. The kind determines which query answers and which binding shapes are legal."
+          },
+          "combination": {
+            "type": "string",
+            "enum": ["deferred", "immediate"],
+            "default": "deferred",
+            "description": "Whether this action waits when its sources are a subset of a combination's. 'immediate' trades ambiguity for latency and is reported when the action is in fact a subset."
+          },
+          "rebindable": {
+            "type": "boolean",
+            "default": true,
+            "description": "False keeps a control out of the rebinding interface. Set it on whatever cancels that interface: a player who rebinds the cancel control cannot leave the screen that rebound it."
+          },
+          "repeat": {
+            "type": "object",
+            "required": ["delay", "interval"],
+            "additionalProperties": false,
+            "description": "Retick a held action. Seconds, matching the interface theme's own repeat metrics.",
+            "properties": {
+              "delay": { "type": "number", "exclusiveMinimum": 0.0 },
+              "interval": { "type": "number", "exclusiveMinimum": 0.0 }
+            }
+          },
+          "bindings": {
+            "type": "array",
+            "description": "Candidates in preference order. The first whose every source exists on the running hardware answers; an action with no viable candidate on a target platform fails that platform's build rather than becoming unreachable.",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "oneOf": [
+                { "required": ["sources"] },
+                { "required": ["composite"] }
+              ],
+              "properties": {
+                "sources": {
+                  "type": "array",
+                  "description": "All must be satisfied together. More than one is a combination, which claims its sources against narrower bindings and holds that claim until every source is released.",
+                  "minItems": 1,
+                  "maxItems": 4,
+                  "items": { "type": "string" }
+                },
+                "composite": {
+                  "type": "object",
+                  "description": "Four controls forming a direction. Legal only for axis2d; the pair form is legal for axis1d.",
+                  "additionalProperties": false,
+                  "properties": {
+                    "up": { "type": "string" },
+                    "down": { "type": "string" },
+                    "left": { "type": "string" },
+                    "right": { "type": "string" },
+                    "positive": { "type": "string" },
+                    "negative": { "type": "string" }
+                  }
+                },
+                "normalize": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Clamp a composite direction to unit length, so a diagonal is not faster than a cardinal."
+                },
+                "scale": {
+                  "type": "number",
+                  "exclusiveMinimum": 0.0,
+                  "default": 1.0,
+                  "description": "Multiplier applied after the platform's own deadzone. Sensitivity for a pointer delta, response for a stick."
+                },
+                "threshold": {
+                  "type": "number",
+                  "minimum": 0.0,
+                  "maximum": 1.0,
+                  "description": "Magnitude at which an analog source counts as held. Narrows the platform's deadzone and can never widen it; a value below the platform's own gets the platform's, and is reported at build time rather than silently ignored."
+                },
+                "invert": {
+                  "type": "boolean",
+                  "default": false
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

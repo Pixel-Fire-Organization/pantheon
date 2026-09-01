@@ -3,10 +3,10 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../../include/core/EngineDebug.h"
 #include "../include/graphics/PrimitiveGeometry.h"
-#include "EngineDebug.h"
 
-DrawLists::DrawLists() : untexturedPrims{}, texturedPrims{}, models{}, uiItems{}
+DrawLists::DrawLists() : untexturedPrims{}, texturedPrims{}, models{}
 {
     // Initialise every 3D camera slot to the same sane default so an unset
     // active slot still renders a valid view.
@@ -177,18 +177,6 @@ bool DrawLists::AddModel(const ModelDrawEntry& entry)
     return true;
 }
 
-bool DrawLists::AddUIDraw(const UIDrawEntry& entry)
-{
-    if (uiCount >= GFX_MAX_DRAW_LIST_LENGTH)
-    {
-        Engine_LogError("DrawLists: Max UI items reached (%d). Rejecting.", GFX_MAX_DRAW_LIST_LENGTH);
-        return false;
-    }
-
-    uiItems[uiCount++] = entry;
-    return true;
-}
-
 bool DrawLists::SetSkyboxTexture(int32_t skyboxTextureId)
 {
     if (skyboxTextureId > 0)
@@ -239,7 +227,6 @@ void DrawLists::Reset(const bool resetSkybox)
     untexturedCount = 0;
     texturedCount = 0;
     modelCount = 0;
-    uiCount = 0;
 
     if (resetSkybox)
         skyboxResourceId = -1;

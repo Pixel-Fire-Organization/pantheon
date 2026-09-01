@@ -1,0 +1,16 @@
+{
+  "description": "What tools/actions.py may bind an action to on this platform. Read only by Python tooling at build time; the engine never sees this file. Derived from engine/src/platform/ps2/Input.cpp and Platform.cpp: the pad mask passes through unmodified (m_pads[port].buttons = ~data->btns), so every DualShock 2 button is a real, distinct source. PlatformCapability::AnalogTriggers is false, so L2/R2 exist only as digital buttons, never as trigger sources.",
+  "gamepad": {
+    "buttons": [
+      "select", "l3", "r3", "start",
+      "dpad_up", "dpad_right", "dpad_down", "dpad_left",
+      "l2", "r2", "l1", "r1",
+      "triangle", "circle", "cross", "square"
+    ],
+    "sticks": ["stick_left", "stick_right"],
+    "triggers": []
+  },
+  "keyboard": false,
+  "mouse": false,
+  "touch": false
+}

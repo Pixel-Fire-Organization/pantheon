@@ -1,0 +1,216 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Platform package config",
+  "description": "Title metadata for one platform that distributes an installable package: identity, store-front presentation and achievements. Describes the GAME, not the hardware - the cook list under engine/config/<name>/ is the hardware half. See docs/vita/PACKAGING.md.",
+  "type": "object",
+  "required": ["platform", "title"],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "description": "Only the containers that carry a title identifier require one; a homebrew nx executable has none.",
+      "if": {
+        "required": ["platform"],
+        "properties": { "platform": { "enum": ["vita", "psp"] } }
+      },
+      "then": {
+        "properties": { "title": { "required": ["id"] } }
+      }
+    }
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "platform": {
+      "type": "string",
+      "description": "Platform family this config applies to, lower case."
+    },
+    "description": { "type": "string" },
+
+    "title": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Z]{4}[0-9]{5}$",
+          "description": "Nine characters: four author characters then five digits. Also names the writable data directory. Supplied by the shared title declaration, not written here; a variant may still override the name. Required of the platforms whose containers carry one."
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "Who made the title, as a launcher shows it. Supplied by the shared title declaration's developer, not written here."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "Display name under the bubble."
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9][0-9]\\.[0-9][0-9]$",
+          "description": "##.## - the console rejects anything else."
+        }
+      }
+    },
+
+    "self": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "safe": {
+          "type": "boolean",
+          "description": "Restrict the executable to the ordinary user API. Clear only if the title genuinely needs more."
+        },
+        "compress": { "type": "boolean" },
+        "extended_memory": {
+          "type": "boolean",
+          "description": "Request the larger main-memory allowance. Off by default; the engine budget fits comfortably without it."
+        },
+        "memsize": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "sfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "category": { "type": "string", "description": "'gd' for an application." },
+        "parental_level": { "type": "integer", "minimum": 0, "maximum": 11 },
+        "extra": {
+          "type": "object",
+          "description": "Raw metadata key-values passed through unchanged. Integers become DWORDs, strings become strings.",
+          "additionalProperties": { "type": ["string", "integer"] }
+        }
+      }
+    },
+
+    "nro": {
+      "type": "object",
+      "required": ["icon"],
+      "additionalProperties": false,
+      "description": "nx homebrew executable container metadata. The name, author and version come from the shared title declaration. See docs/nx/PACKAGING.md.",
+      "properties": {
+        "icon": {
+          "type": "string",
+          "description": "256x256 JPEG the launcher shows beside the name."
+        }
+      }
+    },
+
+    "eboot": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "PSP container slots. The container is a fixed sequence of slots and an absent one is filled with a placeholder rather than omitted, so the reader emits them positionally.",
+      "properties": {
+        "icon": {
+          "type": "string",
+          "description": "144x80 PNG shown in the system menu."
+        },
+        "icon_anim": {
+          "type": "string",
+          "description": "Animated icon (.pmf). Optional."
+        },
+        "overlay": {
+          "type": "string",
+          "description": "480x272 PNG drawn over the menu background. Optional."
+        },
+        "picture": {
+          "type": "string",
+          "description": "480x272 PNG background for the menu entry."
+        },
+        "sound": {
+          "type": "string",
+          "description": "Menu audio (.at3). Optional."
+        }
+      }
+    },
+    "livearea": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Store-front presentation. Image sizes are exact and are checked before packaging; see docs/vita/PACKAGING.md.",
+      "properties": {
+        "icon": { "type": "string", "description": "128x128 indexed, no alpha." },
+        "background": { "type": "string", "description": "840x500 indexed." },
+        "startup": { "type": "string", "description": "280x158 indexed; the only layer that may be transparent." },
+        "picture": { "type": "string", "description": "960x544 indexed. Optional." },
+        "style": {
+          "type": "string",
+          "enum": ["a1", "psmobile"],
+          "description": "Layout used when generating a template: a1 centres the startup image, psmobile right-aligns it."
+        },
+        "template": {
+          "type": "string",
+          "description": "A hand-written layout, used verbatim. Generated from 'style' when absent."
+        }
+      }
+    },
+
+    "trophies": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Achievements. Requires software the player installs, and never reaches the online service - see docs/subsystems/ACHIEVEMENT.md.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "np_communication_id": {
+          "type": "string",
+          "pattern": "^NPWR[0-9]{5}_00$",
+          "description": "Declared, not allocated. Must match the identifier baked into the pack."
+        },
+        "trp": {
+          "type": "string",
+          "description": "A pre-built pack, staged as-is. Mutually exclusive with 'list'."
+        },
+        "icon": {
+          "type": "string",
+          "description": "The set's own icon, packed as ICON0.PNG and distinct from the per-trophy icons. Defaults to the store-front icon when absent."
+        },
+        "detail": {
+          "type": "string",
+          "description": "The set's description, shown beside its name. Defaults to the title name."
+        },
+        "list": {
+          "type": "array",
+          "description": "Trophy definitions, from which the pack is generated. Mutually exclusive with 'trp'.",
+          "items": {
+            "type": "object",
+            "required": ["id", "grade", "name"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "integer", "minimum": 0, "maximum": 127 },
+              "grade": { "type": "string", "enum": ["platinum", "gold", "silver", "bronze"] },
+              "name": { "type": "string", "minLength": 1 },
+              "detail": { "type": "string" },
+              "hidden": { "type": "boolean" },
+              "icon": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "files": {
+      "type": "array",
+      "description": "Extra content staged into the package. Adding content here rather than in the build fragment keeps what ships described in one place.",
+      "items": {
+        "type": "object",
+        "required": ["src", "dst"],
+        "additionalProperties": false,
+        "properties": {
+          "src": { "type": "string" },
+          "dst": { "type": "string" }
+        }
+      }
+    },
+
+    "variants": {
+      "type": "object",
+      "description": "Per-variant overrides, deep-merged over the base. Keyed by the lower-case platform name.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  }
+}

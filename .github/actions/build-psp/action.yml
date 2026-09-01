@@ -1,0 +1,25 @@
+name: 'Build PSP'
+description: 'Installs dependencies and runs the engine build script inside the pspdev container'
+
+inputs:
+  build_type:
+    description: 'Type of build (debug, release)'
+    required: true
+    default: 'debug'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install build dependencies
+      shell: bash
+      run: |
+        apt-get update
+        apt-get install -y --no-install-recommends genisoimage python3-pil python3-jsonschema
+
+    - name: Trust workspace for git (container runs as root; workspace owned by host user)
+      shell: bash
+      run: git config --global --add safe.directory '*'
+
+    - name: Build engine via Script
+      shell: bash
+      run: python3 ./tools/build.py ${{ inputs.build_type }} --platforms PSP

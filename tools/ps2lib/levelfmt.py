@@ -25,6 +25,15 @@ CHUNK_NAMES = {
 SECTOR_MAGIC = 0x43455350  # "PSEC"
 SECTOR_VERSION = 1
 
+# Mirrors LEVEL_CHUNK_ALIGN / LEVEL_MAX_MATERIALS / LEVEL_MAX_MESHES_PER_SECTOR
+# / LEVEL_FARFIELD_MAX_ATLASES in engine/include/level/EngineLevelFormat.h. The
+# runtime refuses a core or a sector that breaks any of them, so the cook must
+# not produce one.
+CHUNK_ALIGN = 16
+MAX_MATERIALS = 64
+MAX_MESHES_PER_SECTOR = 32
+FARFIELD_MAX_ATLASES = 4
+
 # Struct formats (little-endian). Sizes asserted against EngineLevelFormat.h.
 _HDR = "<IIII"                    # LevelFileHeaderV2 (16)
 _CHUNK = "<IIII"                  # LevelChunkEntry (16)
@@ -48,7 +57,7 @@ assert struct.calcsize(_FARFCLUSTER) == 24
 
 
 def _align16(n):
-    return (n + 15) & ~15
+    return (n + CHUNK_ALIGN - 1) & ~(CHUNK_ALIGN - 1)
 
 
 def _cstr(s, size):
@@ -64,6 +73,8 @@ def pack_info(name, origin_x, origin_z, cell_size, cells_x, cells_z, material_co
 
 
 def pack_materials(keys):
+    if len(keys) > MAX_MATERIALS:
+        raise ValueError(f"level declares {len(keys)} materials, the engine table holds {MAX_MATERIALS}")
     return b"".join(struct.pack(_MATERIAL, _cstr(k, 64)) for k in keys)
 
 
@@ -145,6 +156,8 @@ def pack_sector(meshes):
     """meshes: list of {material_index, topology, vert_count, vbytes, nbytes,
     tbytes, center(3), radius}. Returns the PSEC blob. Sector AABB is derived
     from the union of mesh bounding spheres."""
+    if len(meshes) > MAX_MESHES_PER_SECTOR:
+        raise ValueError(f"sector holds {len(meshes)} meshes, the resident ring holds {MAX_MESHES_PER_SECTOR}")
     header_size = struct.calcsize(_SECHDR)
     entry_size = struct.calcsize(_MESHENTRY)
     geom_start = _align16(header_size + entry_size * len(meshes))
@@ -195,7 +208,12 @@ def pack_sector(meshes):
 def pack_farfield(atlas_materials, azimuth_count, clusters, frames):
     """clusters: list of {center(3), half_w, half_h, atlas_index, first_frame}.
     frames: flat list of (u0, v0, u1, v1)."""
-    atlas = list(atlas_materials[:4]) + [0] * (4 - len(atlas_materials))
+    if len(atlas_materials) > FARFIELD_MAX_ATLASES:
+        raise ValueError(f"far field names {len(atlas_materials)} atlases, the header holds {FARFIELD_MAX_ATLASES}")
+    for c in clusters:
+        if c["first_frame"] + azimuth_count > len(frames):
+            raise ValueError(f"far-field cluster at frame {c['first_frame']} needs {azimuth_count} frames, {len(frames)} exist")
+    atlas = list(atlas_materials) + [0] * (FARFIELD_MAX_ATLASES - len(atlas_materials))
     out = bytearray()
     out += struct.pack(_FARFHDR, len(clusters), len(atlas_materials),
                        atlas[0], atlas[1], atlas[2], atlas[3], azimuth_count, 0)
@@ -268,3 +286,29 @@ def parse_sector(blob):
                        "center": (cxx, cyy, czz), "radius": rad})
     return {"magic": magic, "version": version, "mesh_count": mesh_count,
             "aabb_min": (mnx, mny, mnz), "aabb_max": (mxx, mxy, mxz), "meshes": meshes}
+
+
+def parse_farfield(blob, chunk):
+    """Header, clusters and frames of a FARF chunk. The frame count is whatever
+    the chunk has room for after the clusters, exactly as the runtime derives it."""
+    base = chunk["offset"]
+    cluster_count, atlas_count, a0, a1, a2, a3, azimuth_count, ground = struct.unpack_from(_FARFHDR, blob, base)
+    header_size = struct.calcsize(_FARFHDR)
+    cluster_size = struct.calcsize(_FARFCLUSTER)
+    frame_size = struct.calcsize(_FARFFRAME)
+    clusters = []
+    pos = base + header_size
+    for _ in range(cluster_count):
+        cx, cy, cz, hw, hh, ai, ff = struct.unpack_from(_FARFCLUSTER, blob, pos)
+        pos += cluster_size
+        clusters.append({"center": (cx, cy, cz), "half_w": hw, "half_h": hh,
+                         "atlas_index": ai, "first_frame": ff})
+    frame_bytes = chunk["size"] - header_size - cluster_size * cluster_count
+    frames = []
+    for _ in range(frame_bytes // frame_size):
+        frames.append(struct.unpack_from(_FARFFRAME, blob, pos))
+        pos += frame_size
+    return {"cluster_count": cluster_count, "atlas_count": atlas_count,
+            "atlas_materials": (a0, a1, a2, a3)[:atlas_count],
+            "azimuth_count": azimuth_count, "ground_offset": ground,
+            "clusters": clusters, "frames": frames, "frame_bytes": frame_bytes}

@@ -1,0 +1,36 @@
+{
+  "$schema": "../../../../tools/schemas/package.schema.json",
+  "platform": "vita",
+  "description": "Title identity, store-front presentation and achievements for the Vita family. Describes the game, not the hardware - the cook list in engine/config/vita/ is the hardware half. See docs/vita/PACKAGING.md.",
+
+  "self": {
+    "safe": true,
+    "compress": true,
+    "extended_memory": false
+  },
+
+  "sfo": {
+    "category": "gd",
+    "parental_level": 1
+  },
+
+  "livearea": {
+    "icon": "sce_sys/icon0.png",
+    "background": "sce_sys/livearea/contents/bg0.png",
+    "startup": "sce_sys/livearea/contents/startup.png",
+    "picture": "sce_sys/pic0.png",
+    "style": "a1"
+  },
+
+  "trophies": {
+    "enabled": false
+  },
+
+  "variants": {
+    "vitatv": {
+      "title": {
+        "name": "PS2 Engine (PS TV)"
+      }
+    }
+  }
+}

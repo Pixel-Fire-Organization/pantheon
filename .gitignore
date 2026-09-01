@@ -46,6 +46,18 @@ build_log.txt
 # PCSX2 artefacts
 .pcsx2/**
 
+# NVIDIA Cache
+NVIDIA Corporation/**
+
+# Vita shader compiler.
+#
+# psp2cgc is Sony's Cg compiler, redistributed by third parties rather than
+# licensed for redistribution. The Vita graphics backends need it to compile
+# shaders at build time, but this project must not carry another copy of it:
+# each developer fetches their own, and the build requires it explicitly rather
+# than falling back to something worse. See docs/vita/BUILD.md.
+external/psp2cgc/
+
 # Python bytecode cache
 __pycache__/
 .pytest_cache/

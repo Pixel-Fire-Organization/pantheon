@@ -1,0 +1,47 @@
+name: Vita CI (configure smoke test)
+
+# Configure-only: no build, no .vpk. See "Continuous integration" in
+# docs/vita/BUILD.md for why (psp2cgc, Sony's shader compiler, cannot be
+# fetched in CI) and for what this step does and deliberately does not do.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    container: vitasdk/vitasdk@sha256:825493cc9aa8ec2e6ce6ae2e92cf6bf5c7f5b2175d30f191ab590f2b729e99ec # 2026.08-20260916.2
+
+    strategy:
+      matrix:
+        build_type: [debug, release]
+
+    steps:
+      - name: Trust workspace for git (container runs as root; workspace owned by host user)
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+
+      - name: Install jsonschema (optional extra validation pass in tools/vita_package.py)
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3-jsonschema
+
+      - name: Configure (VITA + VITATV, no build)
+        env:
+          PSP2CGC: /bin/true
+        run: |
+          debug_flag=ON
+          if [ "${{ matrix.build_type }}" = "release" ]; then debug_flag=OFF; fi
+          cmake -DCMAKE_TOOLCHAIN_FILE=toolchains/vitasdk.cmake \
+                -DDEBUG=$debug_flag \
+                "-DPLATFORMS_TO_SUPPORT=VITA;VITATV" \
+                -B build/vitasdk-${{ matrix.build_type }}

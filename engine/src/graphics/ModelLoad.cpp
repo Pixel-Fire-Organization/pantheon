@@ -2,16 +2,17 @@
 
 #include <cmath>
 #include <cstring>
-#include <malloc.h>
 
-#include "EngineDebug.h"
+#include "../../include/core/EngineDebug.h"
+#include "../../include/core/EngineMemory.h"
+#include "platform/Platform.h"
 
 namespace
 {
     float* AllocFloats(size_t count)
     {
         // 16-byte aligned so the arrays are safe for qword DMA / cache ops.
-        return static_cast<float*>(memalign(16, count * sizeof(float)));
+        return static_cast<float*>(Engine_PlatformAlloc(count * sizeof(float), 16));
     }
 
     // Bounding sphere of a strided vertex array: AABB midpoint as center, exact
@@ -155,12 +156,6 @@ bool Model_LoadBaked(const void* data, size_t size, Model* outModel, ModelTextur
             me.topology = BAKED_TOPOLOGY_LIST;
         }
 
-        Mesh& mesh = outModel->meshes[i];
-        mesh.vertexCount = static_cast<int>(me.vertexCount);
-        mesh.indices = nullptr;
-        mesh.topology = (me.topology == BAKED_TOPOLOGY_STRIP) ? MESH_TOPOLOGY_STRIP : MESH_TOPOLOGY_LIST;
-        mesh.vertexComponents = static_cast<unsigned char>(posComponents);
-
         if (me.vertexCount == 0 || me.vertsOffset == 0)
         {
             Engine_LogError("Model: mesh %u has no vertices.", i);
@@ -168,20 +163,28 @@ bool Model_LoadBaked(const void* data, size_t size, Model* outModel, ModelTextur
             return false;
         }
 
-        const size_t vBytes = static_cast<size_t>(me.vertexCount) * posComponents * sizeof(float);
-        if (static_cast<size_t>(me.vertsOffset) + vBytes > size)
+        // Widen before multiplying: both fields come straight off disc, and the
+        // product wraps a 32-bit size_t long before it exceeds the blob.
+        const uint64_t vBytes = static_cast<uint64_t>(me.vertexCount) * posComponents * sizeof(float);
+        if (static_cast<uint64_t>(me.vertsOffset) + vBytes > size)
         {
             Engine_LogError("Model: mesh %u vertices out of bounds.", i);
             Model_FreeBaked(outModel);
             return false;
         }
+
+        Mesh& mesh = outModel->meshes[i];
+        mesh.vertexCount = static_cast<int>(me.vertexCount);
+        mesh.indices = nullptr;
+        mesh.topology = (me.topology == BAKED_TOPOLOGY_STRIP) ? MESH_TOPOLOGY_STRIP : MESH_TOPOLOGY_LIST;
+        mesh.vertexComponents = static_cast<unsigned char>(posComponents);
         mesh.vertices = AllocFloats(static_cast<size_t>(me.vertexCount) * posComponents);
         if (!mesh.vertices)
         {
             Model_FreeBaked(outModel);
             return false;
         }
-        std::memcpy(mesh.vertices, base + me.vertsOffset, vBytes);
+        std::memcpy(mesh.vertices, base + me.vertsOffset, static_cast<size_t>(vBytes));
 
         if (isV2)
         {
@@ -196,8 +199,8 @@ bool Model_LoadBaked(const void* data, size_t size, Model* outModel, ModelTextur
 
         if (me.normsOffset != 0)
         {
-            const size_t nBytes = static_cast<size_t>(me.vertexCount) * 3 * sizeof(float);
-            if (static_cast<size_t>(me.normsOffset) + nBytes > size)
+            const uint64_t nBytes = static_cast<uint64_t>(me.vertexCount) * 3 * sizeof(float);
+            if (static_cast<uint64_t>(me.normsOffset) + nBytes > size)
             {
                 Engine_LogError("Model: mesh %u normals out of bounds.", i);
                 Model_FreeBaked(outModel);
@@ -209,13 +212,13 @@ bool Model_LoadBaked(const void* data, size_t size, Model* outModel, ModelTextur
                 Model_FreeBaked(outModel);
                 return false;
             }
-            std::memcpy(mesh.normals, base + me.normsOffset, nBytes);
+            std::memcpy(mesh.normals, base + me.normsOffset, static_cast<size_t>(nBytes));
         }
 
         if (me.uvsOffset != 0)
         {
-            const size_t uBytes = static_cast<size_t>(me.vertexCount) * 2 * sizeof(float);
-            if (static_cast<size_t>(me.uvsOffset) + uBytes > size)
+            const uint64_t uBytes = static_cast<uint64_t>(me.vertexCount) * 2 * sizeof(float);
+            if (static_cast<uint64_t>(me.uvsOffset) + uBytes > size)
             {
                 Engine_LogError("Model: mesh %u texcoords out of bounds.", i);
                 Model_FreeBaked(outModel);
@@ -227,7 +230,7 @@ bool Model_LoadBaked(const void* data, size_t size, Model* outModel, ModelTextur
                 Model_FreeBaked(outModel);
                 return false;
             }
-            std::memcpy(mesh.texcoords, base + me.uvsOffset, uBytes);
+            std::memcpy(mesh.texcoords, base + me.uvsOffset, static_cast<size_t>(uBytes));
         }
 
         uint32_t matIdx = me.materialIndex;
@@ -288,9 +291,12 @@ void Model_FreeBaked(Model* model)
     {
         for (int i = 0; i < model->meshCount; ++i)
         {
-            free(model->meshes[i].vertices);
-            free(model->meshes[i].normals);
-            free(model->meshes[i].texcoords);
+            // Mesh pointers stay raw: renderers consume them as views, and a
+            // sector's Mesh points into an arena slot instead. Ownership is
+            // expressed by pairing these with Engine_PlatformAlloc.
+            Engine_PlatformFree(model->meshes[i].vertices);
+            Engine_PlatformFree(model->meshes[i].normals);
+            Engine_PlatformFree(model->meshes[i].texcoords);
         }
         free(model->meshes);
     }

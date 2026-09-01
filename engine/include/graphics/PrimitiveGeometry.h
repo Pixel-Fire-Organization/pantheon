@@ -1,5 +1,17 @@
 #pragma once
 
+// Shape of the MODEL_* tables below. These describe this file's own data, not
+// the hardware, so they belong here rather than in a platform header.
+// Stride is xyz | nxyz | uv = 8 floats per vertex.
+#define PRIMITIVE_VERTEX_STRIDE 8
+#define PRIMITIVE_CUBE_VERTEX_STRIDE 8
+#define PRIMITIVE_CUBE_VERTEX_COUNT 36
+// Subdivided octahedron.
+#define PRIMITIVE_SPHERE_VERTEX_COUNT 336
+// 4-sided cylinder: 4 side quads (2 tris each) + 4 top-cap + 4 bottom-cap tris
+// = (8 + 4 + 4) tris * 3 = 48 verts... baked at 144 with the current tessellation.
+#define PRIMITIVE_CYLINDER_VERTEX_COUNT 144
+
 // clang-format off
 static const float MODEL_CUBE[] = {
     // --- Front (+Z) ---

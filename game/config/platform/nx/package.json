@@ -1,0 +1,9 @@
+{
+  "$schema": "../../../../tools/schemas/package.schema.json",
+  "platform": "nx",
+  "description": "Container presentation for nx, the Nintendo Switch homebrew executable. Describes the game, not the hardware - the cook list in engine/config/nx/ is the hardware half. Identity is not restated here: name, author and version come from game/config/title.json and are folded in when this is read. See docs/nx/PACKAGING.md.",
+
+  "nro": {
+    "icon": "icon.jpg"
+  }
+}

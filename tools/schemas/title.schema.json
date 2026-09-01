@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Title identity",
+  "description": "One declaration of who made the title and what it is called. Every platform's packaging and every platform's writable-storage location are built from it, so the identity a console shows and the identity a save is filed under cannot disagree.",
+  "type": "object",
+  "required": ["developer", "name", "version", "ids"],
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema": { "type": "string" },
+    "description": { "type": "string" },
+
+    "developer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\\\/:*?\"<>|]+$",
+      "description": "Author or studio. Names a directory on platforms that file saves under the developer, so it excludes the characters a path cannot carry."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[^\\\\/:*?\"<>|]+$",
+      "description": "Display name, and a directory name on the same platforms."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9][0-9]\\.[0-9][0-9]$",
+      "description": "##.## - one console rejects anything else, so the stricter rule is the shared one."
+    },
+
+    "ids": {
+      "type": "object",
+      "description": "Per-platform identifiers. A platform that files saves under an identifier rather than a name needs one; a platform that does not is absent here.",
+      "additionalProperties": false,
+      "properties": {
+        "ps2": {
+          "type": "string",
+          "pattern": "^[A-Z]{4}[0-9]{5}$",
+          "description": "Names the memory-card directory."
+        },
+        "vita": {
+          "type": "string",
+          "pattern": "^[A-Z]{4}[0-9]{5}$",
+          "description": "Nine characters: four author characters then five digits. Also names the writable data directory."
+        },
+        "psp": {
+          "type": "string",
+          "pattern": "^[A-Z]{4}[0-9]{5}$",
+          "description": "Names the memory-card directory the title is installed into, and the writable location inside it."
+        }
+      }
+    }
+  }
+}

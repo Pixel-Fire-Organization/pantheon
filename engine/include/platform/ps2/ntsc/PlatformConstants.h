@@ -1,0 +1,10 @@
+#pragma once
+
+#include "../PlatformConstantsPs2.h"
+
+#define GFX_SCREEN_WIDTH GFX_SCREEN_NTSC_WIDTH
+#define GFX_SCREEN_HEIGHT GFX_SCREEN_NTSC_HEIGHT
+#define GFX_SCREEN_REGION_STR "NTSC"
+
+// 60 Hz.
+#define PLATFORM_TARGET_FRAME_MICROS 16667

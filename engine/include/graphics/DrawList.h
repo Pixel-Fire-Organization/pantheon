@@ -8,12 +8,15 @@ struct DrawStats
     uint16_t primitiveCount; // primitives rendered last frame
     uint16_t modelCount; // model mesh draw calls last frame (one per unindexed mesh)
     uint16_t entriesCulled; // draw entries rejected before submission (frustum cull)
-    uint16_t texBinds; // TEX0/glBindTexture writes issued last frame
-    uint32_t trisSubmitted; // triangles actually emitted to the GS / ps2gl
+    uint16_t texBinds; // texture binds issued last frame
+    uint32_t trisSubmitted; // triangles actually emitted by the backend
     uint32_t trisCulled; // triangles dropped (near-plane, frustum, backface)
     uint32_t vertsTransformed; // vertices run through the transform path
-    uint32_t packetQwordsUsed; // GIFTAG: geometry packet fill; PS2GL: 0
-    float gsWaitMs; // time the EE spent blocked on GS/vsync inside EndFrame
+    uint32_t submitBufferUsedBytes; // backend submission buffer fill; 0 = not reported
+    uint32_t submitBufferCapacityBytes; // what the above is measured against; 0 = N/A
+    float presentWaitMs; // time blocked waiting on presentation inside EndFrame
+    float geometryBuildMs; // CPU time staging this frame's geometry; 0 = not reported
+    float geometryUploadMs; // CPU time copying it into GPU memory; 0 = not reported
 };
 
 struct PrimitiveDrawEntry
@@ -30,16 +33,8 @@ struct ModelDrawEntry
     Transform3D transform;
 };
 
-struct UIDrawEntry
-{
-    UI ui;
-    Vector2 offset;
-    float scale;
-};
-
-// Separated (stride-0) geometry arrays for one primitive shape. Both renderer
-// backends consume these: the PS2GL renderer compiles them into ps2gl display
-// lists; the GIFTAG renderer transforms + packs them into GS packets directly.
+// Separated (stride-0) geometry arrays for one primitive shape. Every backend
+// consumes these; what each does with them is in its own renderer spec.
 struct PrimitiveArrays
 {
     const float* verts; // 3 floats per vertex
@@ -53,11 +48,9 @@ class DrawLists
     PrimitiveDrawEntry untexturedPrims[GFX_MAX_DRAW_LIST_LENGTH];
     PrimitiveDrawEntry texturedPrims[GFX_MAX_DRAW_LIST_LENGTH];
     ModelDrawEntry models[GFX_MAX_DRAW_LIST_LENGTH];
-    UIDrawEntry uiItems[GFX_MAX_DRAW_LIST_LENGTH]{};
     uint16_t untexturedCount = 0;
     uint16_t texturedCount = 0;
     uint16_t modelCount = 0;
-    uint16_t uiCount = 0;
     int32_t skyboxResourceId = -1;
 
     // Fixed 3D camera slots; exactly one is active (rendered) per frame.
@@ -70,7 +63,7 @@ class DrawLists
 
     // Separated vertex / normal / UV arrays extracted from MODEL_* at init.
     // Pointers into the renderer arena buffer; persistent for the primitive
-    // geometry lifetime. Backend-neutral — no GL/GS handles live here.
+    // geometry lifetime. Backend-neutral — no device handles live here.
     float* m_cubeVerts = nullptr;
     float* m_cubeNorms = nullptr;
     float* m_cubeUVs = nullptr;
@@ -98,7 +91,7 @@ public:
     DrawLists& operator=(DrawLists&&) = delete;
 
     // Populate the separated primitive geometry arrays from the given
-    // pre-allocated arena buffer. Backend-neutral: performs no GL/GS calls.
+    // pre-allocated arena buffer. Backend-neutral: performs no graphics calls.
     // Call once before the renderer compiles/uploads primitive geometry.
     void Init(float* megaBatch);
 
@@ -107,7 +100,6 @@ public:
 
     bool AddPrimitive(const PrimitiveDrawEntry& entry);
     bool AddModel(const ModelDrawEntry& entry);
-    bool AddUIDraw(const UIDrawEntry& entry);
     bool SetSkyboxTexture(int32_t skyboxTextureId);
 
     // Camera control (fixed-slot model).
@@ -140,8 +132,6 @@ public:
     const ModelDrawEntry* GetModels() const { return models; }
     uint16_t GetModelCount() const { return modelCount; }
 
-    const UIDrawEntry* GetUIItems() const { return uiItems; }
-    uint16_t GetUICount() const { return uiCount; }
 
     int32_t GetSkyboxResourceId() const { return skyboxResourceId; }
     const Camera3D& GetCamera3D() const { return cameras3D[activeCamera3D]; } // active slot

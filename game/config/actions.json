@@ -1,0 +1,279 @@
+{
+  "$schema": "../../tools/schemas/actions.schema.json",
+  "description": "The title's action map, declared once for every platform. Game code names an action; this says what satisfies it. Binding candidates are ordered by preference and the first one whose sources exist on the running hardware answers, so a platform missing a control is handled here rather than by a platform test in game code. See docs/subsystems/ACTION.md.",
+  "settings": {
+    "combinationWindow": 0.1,
+    "opposing": "neutral"
+  },
+  "contexts": [
+    {
+      "key": "Global",
+      "blocks": "nothing"
+    },
+    {
+      "key": "Gameplay",
+      "blocks": "everything"
+    },
+    {
+      "key": "Menu",
+      "blocks": "everything"
+    },
+    {
+      "key": "Overlay",
+      "blocks": "digital"
+    }
+  ],
+  "actions": [
+    {
+      "id": 0,
+      "key": "OpenMenu",
+      "context": "Gameplay",
+      "kind": "digital",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.start"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "key": "Move",
+      "context": "Gameplay",
+      "kind": "axis2d",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.stick_left"
+          ]
+        },
+        {
+          "composite": {
+            "up": "keyboard.w",
+            "down": "keyboard.s",
+            "left": "keyboard.a",
+            "right": "keyboard.d"
+          },
+          "normalize": true
+        },
+        {
+          "composite": {
+            "up": "gamepad.dpad_up",
+            "down": "gamepad.dpad_down",
+            "left": "gamepad.dpad_left",
+            "right": "gamepad.dpad_right"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "key": "Look",
+      "context": "Gameplay",
+      "kind": "axis2d",
+      "bindings": [
+        {
+          "sources": [
+            "mouse.delta"
+          ],
+          "scale": 0.08
+        },
+        {
+          "sources": [
+            "gamepad.stick_right"
+          ],
+          "scale": 2.5
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "key": "Fire",
+      "context": "Gameplay",
+      "kind": "scalar",
+      "combination": "immediate",
+      "bindings": [
+        {
+          "sources": [
+            "mouse.left"
+          ]
+        },
+        {
+          "sources": [
+            "gamepad.trigger_right"
+          ],
+          "threshold": 0.55
+        },
+        {
+          "sources": [
+            "gamepad.r1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "key": "Jump",
+      "context": "Gameplay",
+      "kind": "digital",
+      "combination": "immediate",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.cross"
+          ]
+        },
+        {
+          "sources": [
+            "keyboard.space"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "key": "Sprint",
+      "context": "Gameplay",
+      "kind": "digital",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.l3"
+          ]
+        },
+        {
+          "sources": [
+            "gamepad.l1"
+          ]
+        },
+        {
+          "sources": [
+            "keyboard.leftshift"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "key": "MenuNavigate",
+      "context": "Menu",
+      "kind": "axis2d",
+      "repeat": {
+        "delay": 0.4,
+        "interval": 0.09
+      },
+      "bindings": [
+        {
+          "composite": {
+            "up": "gamepad.dpad_up",
+            "down": "gamepad.dpad_down",
+            "left": "gamepad.dpad_left",
+            "right": "gamepad.dpad_right"
+          }
+        },
+        {
+          "sources": [
+            "gamepad.stick_left"
+          ],
+          "threshold": 0.5
+        },
+        {
+          "composite": {
+            "up": "keyboard.up",
+            "down": "keyboard.down",
+            "left": "keyboard.left",
+            "right": "keyboard.right"
+          }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "key": "MenuConfirm",
+      "context": "Menu",
+      "kind": "digital",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.cross"
+          ]
+        },
+        {
+          "sources": [
+            "keyboard.enter"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "key": "MenuCancel",
+      "context": "Menu",
+      "kind": "digital",
+      "rebindable": false,
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.circle"
+          ]
+        },
+        {
+          "sources": [
+            "keyboard.escape"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "key": "EngineDebugPerfSnapshot",
+      "context": "Global",
+      "kind": "digital",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.l1",
+            "gamepad.r1",
+            "gamepad.select"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "key": "EngineDebugOverlayToggle",
+      "context": "Global",
+      "kind": "digital",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.l1",
+            "gamepad.r1",
+            "gamepad.start"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "key": "EngineDebugMenu",
+      "context": "Global",
+      "kind": "digital",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.select",
+            "gamepad.start"
+          ]
+        },
+        {
+          "sources": [
+            "keyboard.tab",
+            "keyboard.escape"
+          ]
+        }
+      ]
+    }
+  ]
+}

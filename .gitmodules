@@ -5,3 +5,9 @@
 [submodule "external/ps2stuff"]
 	path = external/ps2stuff
 	url = https://github.com/ps2dev/ps2stuff.git
+[submodule "external/vitaGL"]
+	path = external/vitaGL
+	url = https://github.com/Rinnegatamante/vitaGL
+[submodule "external/trpwork"]
+	path = external/trpwork
+	url = https://github.com/TTEMMA/TRPWork

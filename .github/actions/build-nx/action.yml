@@ -1,0 +1,19 @@
+name: 'Build nx'
+description: 'Runs the engine build script, which builds/uses its own pinned devkitA64 container image via Docker'
+
+inputs:
+  build_type:
+    description: 'Type of build (debug, release)'
+    required: true
+    default: 'debug'
+
+runs:
+  using: "composite"
+  steps:
+    # Deliberately not a `container:` job: tools/build.py drives its own
+    # pinned devkitA64 image with `docker build`/`docker run` (see
+    # docs/nx/BUILD.md and tools/docker/devkita64/Dockerfile), so this step
+    # needs the Docker daemon on the runner itself, not nested inside one.
+    - name: Build engine via Script
+      shell: bash
+      run: python3 ./tools/build.py ${{ inputs.build_type }} --platforms NX
