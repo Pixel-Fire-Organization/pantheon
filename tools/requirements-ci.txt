@@ -1,0 +1,6 @@
+# Pinned so a CI run installs the same tool chain every time: an unpinned
+# install makes the host-side checks depend on whatever was published that day.
+# Bump deliberately, and re-run tools/tests locally before committing a change.
+pillow==12.3.0
+pytest==9.1.1
+jsonschema==4.26.0

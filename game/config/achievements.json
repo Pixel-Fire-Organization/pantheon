@@ -1,0 +1,34 @@
+{
+  "$schema": "../../tools/schemas/achievements.schema.json",
+  "description": "The title's achievement set, declared once for every platform. The engine reads this for its own record and its display; each platform's packaging reads it for whatever container that platform needs. See docs/subsystems/ACHIEVEMENT.md.",
+
+  "achievements": [
+    {
+      "id": 0,
+      "key": "EngineComplete",
+      "name": "Engine Complete",
+      "detail": "Unlock every other achievement.",
+      "grade": "platinum",
+      "hidden": false,
+      "icon": "platform/vita/trophy/icons/TROP000.PNG"
+    },
+    {
+      "id": 1,
+      "key": "WorldTraveller",
+      "name": "World Traveller",
+      "detail": "Load a streamed world and return to the menu.",
+      "grade": "gold",
+      "hidden": false,
+      "icon": "platform/vita/trophy/icons/TROP001.PNG"
+    },
+    {
+      "id": 2,
+      "key": "FirstFrame",
+      "name": "First Frame",
+      "detail": "Render the scene menu.",
+      "grade": "bronze",
+      "hidden": false,
+      "icon": "platform/vita/trophy/icons/TROP002.PNG"
+    }
+  ]
+}

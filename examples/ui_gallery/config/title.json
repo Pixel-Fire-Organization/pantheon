@@ -1,0 +1,12 @@
+{
+  "$schema": "../../../tools/schemas/title.schema.json",
+  "description": "Identity for the standalone 'ui_gallery' example. See docs/guidelines/NEW_EXAMPLE.md.",
+  "developer": "Pixel Fire",
+  "name": "Example - UI Gallery",
+  "version": "01.00",
+  "ids": {
+    "ps2": "PSEX00002",
+    "vita": "PSEX00002",
+    "psp": "PSEX00002"
+  }
+}

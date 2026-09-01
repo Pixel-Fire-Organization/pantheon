@@ -3,7 +3,6 @@ project(ps2_engine C CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(DEBUG "Enable debug features" ON)
@@ -13,166 +12,121 @@ if(DEBUG)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 endif()
 
-set(REGION "PAL" CACHE STRING "Target region (PAL or NTSC)")
-set_property(CACHE REGION PROPERTY STRINGS "PAL" "NTSC")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
-# Renderer backend selection. PS2GL drives the GS via the ps2gl library; GIFTAG
-# builds GS packets directly with the PS2SDK packet2/draw libraries. Chosen at
-# configure time and propagated as a compile define the engine reads.
-set(RENDERER_BACKEND "PS2GL" CACHE STRING "Renderer backend (PS2GL or GIFTAG)")
-set_property(CACHE RENDERER_BACKEND PROPERTY STRINGS "PS2GL" "GIFTAG")
-if(RENDERER_BACKEND STREQUAL "GIFTAG")
-    add_definitions(-DRENDERER_BACKEND_GIFTAG=1)
-    message(STATUS "Renderer backend: GIFTAG (direct GS packets)")
-else()
-    add_definitions(-DRENDERER_BACKEND_PS2GL=1)
-    message(STATUS "Renderer backend: PS2GL (ps2gl)")
-endif()
+# Decides ENGINE_ACTIVE_PLATFORMS from PLATFORMS_TO_SUPPORT and the toolchain.
+include(Platforms)
 
-if(NOT REGION STREQUAL "PAL" AND NOT REGION STREQUAL "NTSC")
-    message(FATAL_ERROR "REGION must be PAL or NTSC, but found: '${REGION}'")
-endif()
-string(STRIP "${REGION}" REGION)
-message(STATUS "CHECK: Current Region set to: ${REGION}")
+# --- Platform fragments -----------------------------------------------------
+# Loaded before any engine target, so a platform can pull in its own third-party
+# dependencies first. Variants share a base fragment, so include each once.
+#
+# Each fragment defines platform_configure(), plus optional platform_dependencies(),
+# platform_package(), platform_run() and platform_debug_symbols(). Fixed names,
+# because a configure only ever has one toolchain and therefore one base fragment.
+set(_loadedFragments "")
+foreach(PLATFORM ${ENGINE_ACTIVE_PLATFORMS})
+    if(PLATFORM_${PLATFORM}_BASE STREQUAL "")
+        set(_fragment "engine/config/${PLATFORM_${PLATFORM}_DIR}/platform.cmake")
+    else()
+        set(_fragment "engine/config/${PLATFORM_${PLATFORM}_BASE}/platform.cmake")
+    endif()
 
-if(REGION STREQUAL "PAL")
-    add_definitions(-DREGION_PAL=1)
-else()
-    add_definitions(-DREGION_NTSC=1)
-endif()
+    if(NOT "${_fragment}" IN_LIST _loadedFragments)
+        include("${CMAKE_SOURCE_DIR}/${_fragment}")
+        list(APPEND _loadedFragments "${_fragment}")
+        if(COMMAND platform_dependencies)
+            platform_dependencies()
+        endif()
+    endif()
+endforeach()
 
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
-    message(WARNING "You should build this project using the PS2 toolchain file. E.g.: cmake -DCMAKE_TOOLCHAIN_FILE=ps2dev.cmake -B build")
-else()
-    add_definitions(-DPLATFORM_PLAYSTATION2)
-endif()
-
-set(APP_EXE_NAME "main.elf")
-set(APP_ISO_NAME "engine.iso")
-set(APP_REGION ${REGION})
-set(APP_SERIAL ${APP_EXE_NAME})
-
-option(USERETAILNAME "Changes the executable's name to the retail scheme." OFF)
-if(USERETAILNAME)
-
-# PS2 game serial — used as the boot executable name inside the ISO and as the
-# disc volume label.  OPL2 Manager (and OPL itself) parse the BOOT2 field of
-# SYSTEM.CNF to extract a serial; a plain "MAIN.ELF" name fails that parse.
-# Format: XXYY_NNN.NN  (e.g. SLES_508.77 for retail, SLHB_000.00 for homebrew).
-# Override with -DAPP_SERIAL=... when configuring for a distinct release.
-set(APP_SERIAL "SLHB_000.00" CACHE STRING "PS2 game serial placed inside the ISO (format XXYY_NNN.NN)")
-string(TOUPPER "${APP_SERIAL}" APP_SERIAL)
-# Derive the volume-label form: SLHB_000.00 -> SLHB-00000
-string(REPLACE "." "" _APP_SERIAL_NODOT "${APP_SERIAL}")
-string(REPLACE "_" "-" APP_SERIAL_LABEL "${_APP_SERIAL_NODOT}")
-
-endif()
-
-# PS2 cdvdman (IOP) performs case-sensitive UPPERCASE lookups in the ISO 9660
-# directory.  mkisofs -l preserves the case it is given, so a lowercase serial
-# (e.g. "main.elf") produces a lowercase directory entry that cdvdman cannot
-# find, causing "open fail" and a BIOS crash loop.  Always normalise APP_SERIAL
-# to uppercase here so SYSTEM.CNF and the ISO directory entry always match.
-# When USERETAILNAME=ON the serial is already uppercase; this is idempotent.
-string(TOUPPER "${APP_SERIAL}" APP_SERIAL)
-
-# Ensure APP_SERIAL_LABEL is always defined.  When USERETAILNAME=ON it is
-# derived from the retail serial above.  When OFF derive a safe default from
-# APP_ISO_NAME (e.g. "engine.iso" -> "ENGINE") so mkisofs -V never receives an
-# empty string, which would produce an invalid ISO volume label.
-if(NOT DEFINED APP_SERIAL_LABEL)
-    string(REPLACE ".iso" "" _APP_ISO_STEM "${APP_ISO_NAME}")
-    string(TOUPPER "${_APP_ISO_STEM}" APP_SERIAL_LABEL)
-endif()
-
-file(WRITE "${CMAKE_BINARY_DIR}/SYSTEM.CNF" "BOOT2 = cdrom0:\\${APP_SERIAL};1\r\nVER = 1.00\r\nVMODE = ${APP_REGION}\r\n")
-
-add_subdirectory(external)
 add_subdirectory(engine)
 add_subdirectory(game)
+add_subdirectory(examples)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
+# --- One library, one executable and one bundle per active platform ---------
+foreach(PLATFORM ${ENGINE_ACTIVE_PLATFORMS})
+    platform_configure(${PLATFORM})
 
-    find_program(PYTHON3_BIN python3)
-    if(NOT PYTHON3_BIN)
-        set(PYTHON3_BIN "python3")
+    engine_add_library(${PLATFORM} _engineTarget)
+
+    # Cook and package are per platform, because what a platform wants cooked
+    # differs. Declared before the executable, which depends on them.
+    game_add_cook_target(${PLATFORM})
+    game_add_executable(${PLATFORM} ${_engineTarget} _appTarget _distDir)
+
+    # Targets this platform's executable must wait on, declared by its fragment.
+    if(DEFINED PLATFORM_${PLATFORM}_LINK_DEPS)
+        add_dependencies(${_appTarget} ${PLATFORM_${PLATFORM}_LINK_DEPS})
+    endif()
+    if(COMMAND platform_package)
+        platform_package(${PLATFORM} ${_appTarget} "${_distDir}")
+    endif()
+    if(COMMAND platform_run)
+        platform_run(${PLATFORM} ${_appTarget} "${_distDir}")
+    endif()
+    if(COMMAND platform_debug_symbols)
+        platform_debug_symbols(${PLATFORM} ${_appTarget} "${_distDir}")
     endif()
 
-    add_custom_target(run-emulator
-        COMMAND ${PYTHON3_BIN} "${CMAKE_SOURCE_DIR}/tools/runEmulator.py" "${CMAKE_SOURCE_DIR}/dist/engine.iso"
-        COMMENT "Launching PCSX2 with ISO..."
-        VERBATIM
-    )
+    message(STATUS "  ${PLATFORM}: ${_engineTarget} -> dist/${PLATFORM_${PLATFORM}_DIST}/${PLATFORM_${PLATFORM}_EXE}")
 
-    add_custom_target(run-emulator-elf
-        COMMAND ${PYTHON3_BIN} "${CMAKE_SOURCE_DIR}/tools/runEmulator.py" "${CMAKE_SOURCE_DIR}/dist/${APP_EXE_NAME}"
-        COMMENT "Launching PCSX2 with ELF..."
-        VERBATIM
-    )
+    # Every registered example, for this same platform, linking the same
+    # engine library. Never touches PLATFORM_<P>_PACKAGE_TARGET or the `dist`
+    # target below -- examples build on request via `examples`, not as part
+    # of the shipping path. See examples/CMakeLists.txt.
+    foreach(_EXAMPLE ${EXAMPLE_NAMES})
+        example_add_cook_target(${_EXAMPLE} ${PLATFORM})
+        example_add_executable(${_EXAMPLE} ${PLATFORM} ${_engineTarget} _exampleTarget _exampleDistDir)
+        if(DEFINED PLATFORM_${PLATFORM}_LINK_DEPS)
+            add_dependencies(${_exampleTarget} ${PLATFORM_${PLATFORM}_LINK_DEPS})
+        endif()
+        example_stage(${PLATFORM} ${_EXAMPLE} ${_exampleTarget} "${_exampleDistDir}")
+    endforeach()
+endforeach()
 
-    # NOTE: CMake reserves the name "clean" for its own built-in target, so this
-    # extended target is named "clean-all".  It cleans every artefact that the
-    # built-in "clean" misses: external source objects and dist/ outputs.
-    #
-    # Usage:  cmake --build build --target clean-all
-    add_custom_target(clean-all
-        COMMENT "Cleaning all build artefacts for a full from-scratch rebuild..."
-        # 1. CMake-tracked objects and libraries (engine, lua, .o files in build/).
-        COMMAND ${CMAKE_MAKE_PROGRAM} clean
-        # 2. ps2gl's own out-of-tree CMake build dir — deleting it forces a full
-        #    reconfigure + rebuild next time (it has no Makefile of its own to clean).
-        COMMAND ${CMAKE_COMMAND} -E rm -rf
-            "${CMAKE_BINARY_DIR}/ps2gl_build"
-        # 5. Final outputs in dist/.
-        COMMAND ${CMAKE_COMMAND} -E rm -f
-            "${CMAKE_SOURCE_DIR}/dist/${APP_EXE_NAME}"
-            "${CMAKE_SOURCE_DIR}/dist/${APP_ISO_NAME}"
-            "${CMAKE_SOURCE_DIR}/dist/main.sym"
-        COMMAND ${CMAKE_COMMAND} -E rm -rf
-            "${CMAKE_SOURCE_DIR}/dist/iso_contents"
-        VERBATIM
-    )
-endif()
+# `cmake --build . --target examples` builds every example for every active
+# platform, staged and runnable, without touching the game's own `dist`.
+add_custom_target(examples)
+foreach(PLATFORM ${ENGINE_ACTIVE_PLATFORMS})
+    string(TOLOWER "${PLATFORM}" _lower)
+    foreach(_EXAMPLE ${EXAMPLE_NAMES})
+        add_dependencies(examples stage-example-${_EXAMPLE}-${_lower})
+    endforeach()
+endforeach()
 
-if(DEFINED ENV{PS2DEV})
-    if(DEFINED ENV{PS2SDK})
-        set(_CLANGD_SDK_PATH "$ENV{PS2SDK}")
-    else()
-        set(_CLANGD_SDK_PATH "$ENV{PS2DEV}/ps2sdk")
+# `cmake --build . --target dist` builds every active platform end to end.
+add_custom_target(dist)
+foreach(PLATFORM ${ENGINE_ACTIVE_PLATFORMS})
+    string(TOLOWER "${PLATFORM}" _lower)
+    add_dependencies(dist app_${_lower})
+    # Whichever packaging target that platform declared (ISO, staged bundle...).
+    if(DEFINED PLATFORM_${PLATFORM}_PACKAGE_TARGET AND TARGET ${PLATFORM_${PLATFORM}_PACKAGE_TARGET})
+        add_dependencies(dist ${PLATFORM_${PLATFORM}_PACKAGE_TARGET})
     endif()
+endforeach()
 
-    find_program(WSLPATH_BIN wslpath)
-    if(WSLPATH_BIN)
-        execute_process(
-            COMMAND ${WSLPATH_BIN} -w "${CMAKE_SOURCE_DIR}"
-            OUTPUT_VARIABLE _CLANGD_ENG_PATH
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-        )
-        execute_process(
-            COMMAND ${WSLPATH_BIN} -w "${_CLANGD_SDK_PATH}"
-            OUTPUT_VARIABLE _CLANGD_SDK_PATH_WIN
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-        )
-        string(REPLACE "\\" "/" _CLANGD_ENG_PATH "${_CLANGD_ENG_PATH}")
-        string(REPLACE "\\" "/" _CLANGD_SDK_PATH "${_CLANGD_SDK_PATH_WIN}")
-    else()
-        set(_CLANGD_ENG_PATH "${CMAKE_SOURCE_DIR}")
+# --- Housekeeping -----------------------------------------------------------
+# Extra paths come from the active platforms, so the root names none of them.
+set(_extraClean "")
+foreach(PLATFORM ${ENGINE_ACTIVE_PLATFORMS})
+    if(DEFINED PLATFORM_${PLATFORM}_CLEAN_PATHS)
+        list(APPEND _extraClean ${PLATFORM_${PLATFORM}_CLEAN_PATHS})
     endif()
+endforeach()
+list(REMOVE_DUPLICATES _extraClean)
 
-    file(WRITE "${CMAKE_SOURCE_DIR}/.clangd"
-        "CompileFlags:\n"
-        "  Add:\n"
-        "    - \"-I${_CLANGD_ENG_PATH}/engine/include\"\n"
-        "    - \"-I${_CLANGD_ENG_PATH}/external/ps2gl/include\"\n"
-        "    - \"-I${_CLANGD_SDK_PATH}/ee/include\"\n"
-        "    - \"-I${_CLANGD_SDK_PATH}/common/include\"\n"
-        "    - \"-I${_CLANGD_SDK_PATH}/ports/include\"\n"
-        "    - \"-D_PS2\"\n"
-        "    - \"-D_EE\"\n"
-        "    - \"-DPLATFORM_PLAYSTATION2\"\n"
-        "    - \"-DRENDERER_BACKEND_PS2GL\"\n"
-        "\n"
-        "  CompilationDatabase: build\n"
-    )
-    message(STATUS "Generated .clangd for IDE support")
-endif()
+add_custom_target(test-tools
+    COMMAND ${PYTHON3_BIN} -m pytest "${CMAKE_SOURCE_DIR}/tools/tests" -q
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Running the tool test suite"
+    VERBATIM
+)
+
+add_custom_target(clean-all
+    COMMENT "Cleaning all build artefacts for a full from-scratch rebuild..."
+    COMMAND ${CMAKE_MAKE_PROGRAM} clean
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${_extraClean} "${CMAKE_SOURCE_DIR}/dist"
+    VERBATIM
+)

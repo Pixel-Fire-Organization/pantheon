@@ -1,0 +1,16 @@
+{
+  "description": "What tools/actions.py may bind an action to on nx. Read only by Python tooling at build time; the engine never sees this file. Derived from engine/src/platform/nx/Input.cpp, which accepts only controller styles with the full set of controls and maps them by label: A to cross, B to circle, X to triangle, Y to square, L/R to l1/r1, ZL/ZR to l2/r2, the stick clicks to l3/r3, minus/plus to select/start. ZL and ZR are digital, so PlatformCapability::AnalogTriggers is false and there are no trigger sources. The front touchscreen exists but is answered live from the operation mode; touch is informational here.",
+  "gamepad": {
+    "buttons": [
+      "select", "l3", "r3", "start",
+      "dpad_up", "dpad_right", "dpad_down", "dpad_left",
+      "l2", "r2", "l1", "r1",
+      "triangle", "circle", "cross", "square"
+    ],
+    "sticks": ["stick_left", "stick_right"],
+    "triggers": []
+  },
+  "keyboard": false,
+  "mouse": false,
+  "touch": { "surfaces": ["front"] }
+}

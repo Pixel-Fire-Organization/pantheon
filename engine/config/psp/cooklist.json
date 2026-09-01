@@ -1,0 +1,30 @@
+{
+  "$schema": "../../../tools/schemas/cooklist.schema.json",
+  "platform": "psp",
+  "description": "The graphics engine samples palettised textures natively, reading a colour table and one index per pixel with no expansion step. 'source' therefore keeps the format each asset was authored with, exactly as on the PlayStation 2, rather than flattening everything to 32-bit colour the way the desktop and Vita lists do - on a machine with roughly 20 MB of usable main memory that is worth four times the storage. 512 in each axis is a hardware sampler limit, not a budget: a larger texture cannot be sampled at all, so it is capped here rather than left to fail at upload. The budget is main memory, not video memory, and is shared with everything else on the C heap. level_textures caps brush materials baked by the level compiler separately from standalone TEXTURE assets, since a level pins every one of its materials for its whole lifetime; 128 sits between the PlayStation 2's 64 and the Vita's 512, which suits a 480x272 display without spending the whole budget on one level's material set.",
+  "assets": {
+    "TEXTURE": {
+      "enabled": true,
+      "format": "source",
+      "max_width": 512,
+      "max_height": 512,
+      "budget_bytes": 2097152
+    },
+    "MODEL": {
+      "enabled": true
+    },
+    "SOUND": {
+      "enabled": false
+    },
+    "FONT": {
+      "enabled": true
+    },
+    "THEME": {
+      "enabled": true
+    }
+  },
+  "level_textures": {
+    "max_width": 128,
+    "max_height": 128
+  }
+}

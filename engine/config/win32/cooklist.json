@@ -1,0 +1,25 @@
+{
+  "platform": "win32",
+  "description": "An ordinary graphics processor has no reason to carry the console storage modes, and expanding them at load time is wasted work. Textures are cooked directly uploadable. The ceiling is a policy budget, not hardware. level_textures (brush materials baked by the level compiler) is intentionally absent: desktop memory has no reason to cap what a level can pin.",
+  "assets": {
+    "TEXTURE": {
+      "enabled": true,
+      "format": "rgba32",
+      "max_width": 4096,
+      "max_height": 4096,
+      "budget_bytes": 268435456
+    },
+    "MODEL": {
+      "enabled": true
+    },
+    "SOUND": {
+      "enabled": false
+    },
+    "FONT": {
+      "enabled": true
+    },
+    "THEME": {
+      "enabled": true
+    }
+  }
+}

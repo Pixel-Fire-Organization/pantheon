@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Fixed issues log",
+  "description": "Engine and tooling defects found and fixed while building an example, kept for regression lookup. See docs/guidelines/NEW_EXAMPLE.md and docs/EXAMPLES.md.",
+  "type": "object",
+  "required": ["issues"],
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema": { "type": "string" },
+    "description": { "type": "string" },
+
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "discovered_in", "date", "platforms", "symptom", "root_cause", "fix_summary", "files_changed", "regression_check"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^EX-[0-9]{4}$",
+            "description": "Sequential, namespaced to 'found via examples' so it never collides with an unrelated id sequence (actions.json, achievements.json)."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "description": "One line summary."
+          },
+          "discovered_in": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The example (or other build) that surfaced it, e.g. 'examples/primitives'."
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "description": "YYYY-MM-DD, the date it was fixed."
+          },
+          "platforms": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "enum": ["ps2pal", "ps2ntsc", "win32", "vita", "vitatv", "psp", "all"]
+            },
+            "description": "Which platforms showed the symptom. 'all' when it was platform-independent."
+          },
+          "symptom": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What was actually observed going wrong."
+          },
+          "root_cause": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why it happened."
+          },
+          "fix_summary": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What changed, in prose."
+          },
+          "files_changed": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Repo-relative paths touched by the fix."
+          },
+          "regression_check": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Which example/scene and platform to run, and what to look for, to confirm this hasn't come back."
+          }
+        }
+      }
+    }
+  }
+}

@@ -8,7 +8,7 @@
 // Both renderer backends compose the same column-major (OpenGL-convention)
 // view / projection matrices; these helpers are the single source of truth so
 // the CPU-side frustum used for culling always matches what is rasterized
-// (the PS2GL backend mirrors ApplyProjection/ApplyCameraTransform, the GIFTAG
+// (each backend mirrors ApplyProjection/ApplyCameraTransform, the packet
 // backend transforms vertices with these matrices directly).
 // ---------------------------------------------------------------------------
 

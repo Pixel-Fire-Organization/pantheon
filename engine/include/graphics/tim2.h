@@ -17,7 +17,7 @@
 // Multi-picture TIM2 files are rejected.
 //
 // The parser is zero-copy: all pointers point INTO the supplied blob, which
-// must remain valid until UploadTexture has copied the data to GS VRAM.
+// must remain valid until UploadTexture has copied the data to the device.
 // ---------------------------------------------------------------------------
 
 struct Tim2Image
@@ -29,6 +29,7 @@ struct Tim2Image
     int width; // level-0 width
     int height; // level-0 height
     PixelFormat format;
+    TextureFilter filter; // Linear unless the asset asked for something else
     uint32_t imageSize; // bytes of level-0 pixel payload
 };
 

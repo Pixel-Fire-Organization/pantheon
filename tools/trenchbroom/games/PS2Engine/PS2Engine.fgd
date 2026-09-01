@@ -12,11 +12,44 @@
     ]
 ]
 
+@BaseClass = TransformComponent [
+    position(string) : "Position of the entity/object" : "0.0 0.0 0.0"
+    angles(string) : "Rotation of the entity/object" : "0 0 0"
+    scale(string) : "Scale of the entity/object" : "1.0 1.0 1.0"
+]
+
 @BaseClass model({ "path": model }) = ModelComponent [
     model(string) : "Path to the 3D model file" : "models/barrel.mdl"
+    is_static(choices) : 1 = [
+        0 : "No"
+        1 : "Yes"
+    ]
+]
+
+@BaseClass = ButtonComponent [
+]
+
+@BaseClass = LevelComponent [
+    level_name(string) : "The name of the next level to be loaded" : ""
+    wait_time(integer) : "Time in seconds that the level will be loaded after. 0 is immediate" : 0
+    args(string) : "Space separated arguments that will be passed to the scene." : ""
+]
+
+@BaseClass = DoorComponent [
+    door_weight(string) : "The door's weight. The heavier the door, the more force it will need to open it." : 1.0
+    is_locked(choices) : 0 = [
+        0 : "No"
+        1 : "Yes"
+    ]
 ]
 
 @PointClass base(HealthComponent, CollisionComponent, ModelComponent) size(-16 -16 -16, 16 16 16) = prop_barrel : "An explosive barrel" []
 
-@PointClass base(CollisionComponent, ModelComponent) size(-16 -16 -16, 16 16 16) = prop_model : "An static model" []
+@PointClass base(TransformComponent, CollisionComponent, ModelComponent) size(-16 -16 -16, 16 16 16) = prop_model : "An static model" []
+
+@SolidClass base(ButtonComponent) = func_button : "An interactive button" []
+
+@SolidClass base(LevelComponent) = func_changeLevel : "A trigger that will change the level on player interaction" []
+
+@SolidClass base(CollisionComponent) = func_door : "Door that can be interacted by a player, NPCs or other physics objecs" []
 

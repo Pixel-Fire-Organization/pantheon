@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Generate the PlayStation 2 save icon a memory card browser needs.
+
+A save directory the console can browse must contain `icon.sys` naming an icon
+model, and that model must exist. Without them the browser reports the save as
+corrupted -- not because the data is damaged, but because it cannot present it.
+
+Both are built from the title declaration so the name on the card is the name
+the title declares, and emitted as a C header so the engine can write them when
+it first creates the directory: no dependency on the disc, and the same bytes
+whatever device the title was launched from.
+
+    python3 tools/ps2/save_icon.py --declaration game/config/title.json --emit-header out/Ps2SaveIcon.h
+"""
+
+import argparse
+import json
+import os
+import struct
+import sys
+
+ICON_SYS_SIZE = 964
+TITLE_MAX = 68
+NAME_MAX = 64
+
+# The icon is a small flat-shaded card. It exists to be a valid model, not to be
+# art: a browser only ever draws it a few centimetres across.
+ICON_FILE = "icon.icn"
+TEX_SIZE = 128
+TEX_TYPE_UNCOMPRESSED = 0x07
+
+FIXED = 4096.0
+
+
+def _fixed(v):
+    return int(round(v * FIXED))
+
+
+def _card_geometry():
+    """Two triangles forming a card, with a colour ramp so it is not a flat blob."""
+    # Corner positions in icon space; the browser looks down -Z.
+    quad = [
+        (-1.0, 1.0, 0.0), (1.0, 1.0, 0.0), (-1.0, -1.0, 0.0),
+        (1.0, 1.0, 0.0), (1.0, -1.0, 0.0), (-1.0, -1.0, 0.0),
+    ]
+    uvs = [(0, 0), (1, 0), (0, 1), (1, 0), (1, 1), (0, 1)]
+    # Cool blue-to-cyan, matching the interface's default theme.
+    colors = [
+        (60, 90, 150, 128), (90, 160, 220, 128), (40, 60, 110, 128),
+        (90, 160, 220, 128), (70, 130, 190, 128), (40, 60, 110, 128),
+    ]
+
+    data = b""
+    for i, (x, y, z) in enumerate(quad):
+        data += struct.pack("<hhhh", _fixed(x), _fixed(y), _fixed(z), 0)      # vertex
+        data += struct.pack("<hhhh", 0, 0, _fixed(-1.0), 0)                   # normal
+        u, v = uvs[i]
+        data += struct.pack("<hh", _fixed(u), _fixed(v))                      # texcoord
+        data += struct.pack("<BBBB", *colors[i])                              # colour
+    return data, len(quad)
+
+
+def build_icon():
+    """The icon model, without its texture; the caller appends that."""
+    geometry, vertex_count = _card_geometry()
+
+    header = struct.pack("<IIIII", 0x010000, 1, TEX_TYPE_UNCOMPRESSED, 0, vertex_count)
+
+    # One shape, one key: a still icon. An animated one would only distract in a
+    # browser the player is passing through.
+    animation = struct.pack("<IIfII", 1, 1, 1.0, 0, 1)
+    animation += struct.pack("<II", 0, 1)
+    animation += struct.pack("<ff", 0.0, 0.0)
+
+    return header + geometry + animation
+
+
+def build_icon_sys(name, line_break):
+    """The descriptor the browser reads: the title, and which model to draw."""
+    encoded = name.encode("shift_jis", "replace")
+    if len(encoded) >= TITLE_MAX:
+        raise ValueError(f"title '{name}' is {len(encoded)} bytes, at most {TITLE_MAX - 1} fit")
+
+    blob = b"PS2D"
+    blob += struct.pack("<HH", 0, line_break)
+    blob += struct.pack("<II", 0, 0)  # reserved, background transparency (opaque)
+
+    # Background: four corner colours, deliberately dark so the title reads.
+    for rgba in ((32, 40, 56, 128), (32, 40, 56, 128), (16, 20, 28, 128), (16, 20, 28, 128)):
+        blob += struct.pack("<IIII", *rgba)
+
+    # Three lights, then ambient. Straight-on plus two fills, so a flat card is
+    # lit evenly rather than half black.
+    for direction in ((0.0, 0.0, -1.0, 0.0), (-0.5, -0.5, -1.0, 0.0), (0.5, 0.5, -1.0, 0.0)):
+        blob += struct.pack("<ffff", *direction)
+    for colour in ((0.9, 0.9, 0.9, 1.0), (0.4, 0.4, 0.5, 1.0), (0.3, 0.3, 0.4, 1.0)):
+        blob += struct.pack("<ffff", *colour)
+    blob += struct.pack("<ffff", 0.5, 0.5, 0.5, 1.0)  # ambient
+
+    blob += encoded + b"\x00" * (TITLE_MAX - len(encoded))
+    for _ in range(3):  # normal, copy and delete icons are all the same model
+        blob += ICON_FILE.encode("ascii") + b"\x00" * (NAME_MAX - len(ICON_FILE))
+    blob += b"\x00" * (ICON_SYS_SIZE - len(blob))
+
+    if len(blob) != ICON_SYS_SIZE:
+        raise ValueError(f"icon.sys is {len(blob)} bytes, expected {ICON_SYS_SIZE}")
+    return blob
+
+
+def _c_array(name, data):
+    lines = [f"static const unsigned char {name}[{len(data)}] = {{"]
+    for i in range(0, len(data), 16):
+        chunk = ", ".join(f"0x{b:02X}" for b in data[i:i + 16])
+        lines.append(f"    {chunk},")
+    lines.append("};")
+    return "\n".join(lines)
+
+
+def emit_header(declaration, out_path):
+    with open(declaration, "r", encoding="utf-8-sig") as fh:
+        title = json.load(fh)
+
+    name = title.get("name") or "UNTITLED"
+    icon_sys = build_icon_sys(name, len(name.encode("shift_jis", "replace")))
+    icon = build_icon()
+
+    text = "\n".join([
+        "#pragma once",
+        "",
+        "// Generated by tools/ps2/save_icon.py from the title declaration.",
+        "// Do not edit: regenerate by building.",
+        "",
+        "// A save directory the console can browse needs a descriptor naming an icon",
+        "// model, and that model. Without them the browser calls the save corrupted",
+        "// even though its data is intact.",
+        "",
+        f'#define PS2_SAVE_ICON_NAME "{ICON_FILE}"',
+        f"#define PS2_SAVE_ICON_TEX_DIM {TEX_SIZE}",
+        "",
+        "// The model carries no texture bytes: the engine writes a single colour for",
+        "// every texel rather than storing 32 KB of identical data in the binary.",
+        "#define PS2_SAVE_ICON_TEXEL 0x5EF7u",
+        "",
+        _c_array("PS2_SAVE_ICON_SYS", icon_sys),
+        "",
+        _c_array("PS2_SAVE_ICON_MODEL", icon),
+        "",
+    ])
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+    return out_path
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Generate the PS2 memory card save icon")
+    ap.add_argument("--declaration", required=True)
+    ap.add_argument("--emit-header", required=True)
+    args = ap.parse_args(argv)
+
+    try:
+        path = emit_header(args.declaration, args.emit_header)
+    except (ValueError, OSError) as e:
+        print(f"save_icon: {e}", file=sys.stderr)
+        return 1
+    print("save_icon: wrote", path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

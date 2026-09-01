@@ -1,0 +1,34 @@
+name: PSP CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: pspdev/pspdev@sha256:b22811072ea0721d7f6c666a5a279b6def2b0cd95892b819d9570f8ffc4452c0 # v20260901
+
+    strategy:
+      matrix:
+        build_type: [debug, release]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run Build Action
+        uses: ./.github/actions/build-psp
+        with:
+          build_type: ${{ matrix.build_type }}
+
+      - name: Upload EBOOT.PBP, memory-card tree & disc image
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-psp-${{ matrix.build_type }}
+          path: dist/psp/

@@ -11,7 +11,20 @@ To reliably build this engine from source, you must have the PS2 toolchain prope
    - **Environment:** Ensure your shell exports the `PS2DEV` environment variable (e.g. `export PS2DEV=/usr/local/ps2dev`).
    - **IDE Setup (Automatic):** Simply running `python3 ./tools/build.py` (see below) will automatically generate a `.clangd` file that configures your editor's highlighting for both WSL and Windows.
 
-2. **Dependencies:**
+2. **PS Vita Toolchain (optional, for Vita builds):**
+   - Install [VitaSDK](https://vitasdk.org) via `vdpm`, then `vdpm install vitaShaRK taihen libmathneon`.
+   - **Environment:** export `VITASDK` (e.g. `export VITASDK=/usr/local/vitasdk`) and add `$VITASDK/bin` to `PATH`.
+   - The default Vita renderer also needs an offline shader compiler (`psp2cgc`) placed in `external/psp2cgc/`.
+     It is not committed. See [docs/vita/BUILD.md](docs/vita/BUILD.md).
+
+3. **Nintendo Switch Toolchain (optional, for `nx` builds):**
+   - **Easiest:** Docker Engine in WSL (`sudo apt install docker.io`, then add yourself to the `docker` group).
+     `tools/build.py` builds `nx` inside devkitPro's pinned image when no host toolchain is installed.
+   - **Or on the host:** install devkitPro pacman, then `sudo dkp-pacman -S switch-dev switch-mesa switch-glad`
+     (`DEVKITPRO=/opt/devkitpro` is exported by the package manager's own profile script).
+   - Nothing is vendored and no submodule is needed. See [docs/nx/BUILD.md](docs/nx/BUILD.md).
+
+4. **Dependencies:**
    - **CMake (3.10+)**
    - **genisoimage** (Provides the `mkisofs` utility required for automatically bundling bootable `.iso` files):
      ```bash
@@ -20,8 +33,10 @@ To reliably build this engine from source, you must have the PS2 toolchain prope
      sudo apt-get install genisoimage
      ```
 
-3. **Submodules (Third-Party Dependencies):**
+5. **Submodules (Third-Party Dependencies):**
    - The engine links statically with custom local compilations of `ps2gl` and `ps2stuff` located within the `external/` directory to ensure perfect compatibility.
+   - Vita builds additionally use `external/vitaGL` for the fallback renderer. Fetch all of them with
+     `git submodule update --init --recursive`.
 
 ## Build Instructions
 
@@ -31,36 +46,87 @@ We provide a convenient script in the `tools/` directory to effortlessly wipe ol
 `tools/build.py` detects Windows and automatically re-invokes itself inside WSL, so the same command works everywhere:
 
 ```bash
-python3 ./tools/build.py [debug|release] [pal|ntsc]
+# Every platform the toolchain supports (PS2: both PAL and NTSC)
+python3 ./tools/build.py [debug|release]
+
+# One region only
+python3 ./tools/build.py debug pal
+python3 ./tools/build.py debug --platforms PS2NTSC
+
+# Other platforms
+python3 ./tools/build.py debug --platforms WIN32          # -> dist/win32/
+python3 ./tools/build.py debug --platforms VITA,VITATV    # -> dist/vita/, dist/vitatv/
+python3 ./tools/build.py debug --platforms NX             # -> dist/nx/game.nro
 ```
 
-Alternatively, you can execute the CMake generation sequence manually:
+Or drive CMake directly. `PLATFORMS_TO_SUPPORT` defaults to every known platform and is
+filtered against the toolchain, so it usually needs no flag:
 
 ```bash
-# 1. Generates the Makefile build cache targeting the custom toolchain
-cmake -DCMAKE_TOOLCHAIN_FILE=ps2dev.cmake -B build/debug-pal
-
-# 2. Compiles the static library and test application
-cmake --build build/debug-pal
+cmake -DCMAKE_TOOLCHAIN_FILE=toolchains/ps2dev.cmake -B build/ps2
+cmake --build build/ps2 --target dist
 ```
 
 ## Running the Emulator
 
-A script is provided to quickly launch the generated ISO in PCSX2.
+Every platform has a `run-<platform>` target that launches its own artifact -
+PCSX2 for a PS2 disc image, Vita3K for a Vita package, Ryujinx for an nx container,
+the executable itself on Windows. The emulator is chosen from the artifact, so the command is the same
+shape everywhere:
 
 ```bash
-python3 ./tools/runEmulator.py dist/engine.iso
+cmake --build build/ps2dev-debug  --target run-ps2pal
+cmake --build build/vitasdk-debug --target run-vita
+cmake --build build/mingww64-debug --target run-win32
+python3 ./tools/run_target.py dist/nx/game.nro   # nx builds in a container, so launch from WSL
 ```
+
+The launcher can also be called directly, and takes an explicit emulator path as
+an optional second argument:
+
+```bash
+python3 ./tools/run_target.py dist/ps2pal/engine.iso
+```
+
+Set `PCSX2_PATH`, `VITA3K_PATH` or `RYUJINX_PATH` if an emulator is installed somewhere the
+search paths do not cover.
 
 ## Build Artifacts
 
-All successfully linked targets are automatically routed away from the build sludge into the dedicated `dist/` directory located at the root of the project workspace.
+Each platform gets its own self-contained bundle under `dist/`, so builds never mix:
 
-- `dist/main.elf` - The raw, unpacked PS2 executable (Recommended for rapid testing over network using `ps2client`).
-- `dist/engine.iso` - A completely bundled, self-bootable disk image ready for PCSX2 or mounting on authentic hardware (relies on `SYSTEM.CNF`).
+```
+dist/ps2pal/    main.elf  engine.iso  main.sym     SYSTEM.CNF VMODE=PAL
+dist/ps2ntsc/   main.elf  engine.iso  main.sym     SYSTEM.CNF VMODE=NTSC
+dist/win32/     game.exe  RASSETS.PS2R
+dist/nx/        game.nro  main.elf     (the archive is inside game.nro)
+```
+
+- `main.elf` - the raw PS2 executable (handy for rapid testing over the network with `ps2client`).
+- `engine.iso` - a self-bootable disc image for PCSX2 or real hardware.
 
 ### Custom ISO Assets
 
-Any custom assets (textures, scripts, data files) that you want to include in the generated `.iso` should be placed in `game/cd_files/`. These files will be automatically bundled at the **root** of the ISO filesystem during the build process.
+Any loose file you want to include verbatim in the generated `.iso` should be placed directly under `assets/` — not
+inside `assets/maps/`, `assets/textures/`, or `assets/models/`, which are consumed by the level and cook pipelines
+instead. Loose files are automatically bundled at the **root** of the ISO filesystem during the build process.
 
-For example, a file at `game/cd_files/levels/map.bin` will be accessible on the PS2 as `cdrom0:\\LEVELS\\MAP.BIN;1`.
+For example, a file at `assets/config.txt` will be accessible on the PS2 as `cdrom0:\\CONFIG.TXT;1`.
+
+## Documentation
+
+[docs/PLATFORMS.md](docs/PLATFORMS.md) indexes everything. Start there, or jump to:
+
+| | |
+|---|---|
+| [Architecture](docs/ENGINE.md) | Layers, startup order, subsystems, the constants rule |
+| [Guidelines](docs/guidelines/) | How to add a system, a platform or an example; how to write code that reads untrusted bytes, and how to audit for it; what a change on the frame path must obey, and how to check it — read before starting |
+| [Game API](docs/APP_API.md) | The surface game code uses |
+| [Build pipeline](docs/PIPELINE.md) | Compile, cook, package, distribute |
+| [Authoring assets](docs/ASSET_AUTHORING.md) | Adding content |
+| [PlayStation 2](docs/ps2/PLATFORM.md) | Platform spec, budgets, renderers |
+| [Win32](docs/win32/PLATFORM.md) | Platform spec, budgets, renderers |
+
+Specs carry the reasoning that is deliberately not in the source — hardware
+quirks, race conditions, renderer limits, budget ceilings. Read the relevant one
+before changing what it describes.

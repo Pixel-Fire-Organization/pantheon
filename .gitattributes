@@ -6,10 +6,16 @@
 # CMake and source files
 *.cmake text eol=lf
 CMakeLists.txt text eol=lf
-
 # Generated TrenchBroom FGD: keep LF so the build-time regenerate + copy_if_different
 # is a no-op on a clean tree (the generator always writes LF).
 *.fgd text eol=lf
-
 # Default: normalize to LF on all platforms
 * text=auto
+# Git LFS: large binary formats (textures, vendored TrenchBroom binaries)
+*.png filter=lfs diff=lfs merge=lfs -text
+*.jpg filter=lfs diff=lfs merge=lfs -text
+*.jpeg filter=lfs diff=lfs merge=lfs -text
+*.gif filter=lfs diff=lfs merge=lfs -text
+*.exe filter=lfs diff=lfs merge=lfs -text
+*.dll filter=lfs diff=lfs merge=lfs -text
+*.pdb filter=lfs diff=lfs merge=lfs -text

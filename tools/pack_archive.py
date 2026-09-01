@@ -14,7 +14,7 @@ dependency string ("RASSETS/BOX.PS2A") resolves to the same entry.
 
 Usage:
     # Pack every file in a directory under a disc prefix:
-    python3 tools/pack_archive.py --dir game/cd_files/rassets --prefix RASSETS \\
+    python3 tools/pack_archive.py --dir dist/cooked/win32/rassets --prefix RASSETS \\
         --dst build/.../RASSETS.PS2R
 
     # Or from an explicit ordered manifest (controls disc order for locality):

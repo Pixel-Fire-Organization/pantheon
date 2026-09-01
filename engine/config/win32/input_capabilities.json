@@ -1,0 +1,16 @@
+{
+  "description": "What tools/actions.py may bind an action to on this platform. Read only by Python tooling at build time; the engine never sees this file. Derived from engine/src/platform/win32/Platform.cpp's HasCapability: Gamepad, Keyboard, Mouse and AnalogTriggers (XInput reports real trigger pressure) all answer true; Touch answers false.",
+  "gamepad": {
+    "buttons": [
+      "select", "l3", "r3", "start",
+      "dpad_up", "dpad_right", "dpad_down", "dpad_left",
+      "l2", "r2", "l1", "r1",
+      "triangle", "circle", "cross", "square"
+    ],
+    "sticks": ["stick_left", "stick_right"],
+    "triggers": ["trigger_left", "trigger_right"]
+  },
+  "keyboard": true,
+  "mouse": true,
+  "touch": false
+}

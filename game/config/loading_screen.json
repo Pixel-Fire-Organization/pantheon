@@ -1,0 +1,8 @@
+{
+  "$schema": "../../tools/schemas/loading_screen.schema.json",
+  "description": "Images the built-in loading screen cycles through while a scene's declared resources are outstanding. See docs/subsystems/SCENE.md.",
+  "images": [
+    "RASSETS/BOX.PS2A"
+  ],
+  "cycleSeconds": 3.0
+}

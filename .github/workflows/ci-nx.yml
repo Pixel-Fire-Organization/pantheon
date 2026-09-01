@@ -1,0 +1,33 @@
+name: nx CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        build_type: [debug, release]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run Build Action
+        uses: ./.github/actions/build-nx
+        with:
+          build_type: ${{ matrix.build_type }}
+
+      - name: Upload game.nro
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-nx-${{ matrix.build_type }}
+          path: dist/nx/

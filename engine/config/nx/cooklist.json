@@ -1,0 +1,29 @@
+{
+  "platform": "nx",
+  "description": "A programmable graphics processor sharing one memory pool with the main processor, so a texture budget is a carve-out of main memory rather than a separate video region. It has no reason to carry the PS2 storage modes, so textures are cooked directly uploadable as 32-bit colour. The hardware samples compressed formats natively and would spend far less of that shared pool, but the cook list has no vocabulary for them yet - see docs/nx/PLATFORM.md. 1024 in each axis keeps the largest texture inside one 8 MB read with its asset header. level_textures caps brush materials baked by the level compiler separately from standalone TEXTURE assets, since a level pins every one of its materials for its whole lifetime; 1024 matches the standalone ceiling because a 1080p framebuffer shows the difference.",
+  "assets": {
+    "TEXTURE": {
+      "enabled": true,
+      "format": "rgba32",
+      "max_width": 1024,
+      "max_height": 1024,
+      "budget_bytes": 134217728
+    },
+    "MODEL": {
+      "enabled": true
+    },
+    "SOUND": {
+      "enabled": false
+    },
+    "FONT": {
+      "enabled": true
+    },
+    "THEME": {
+      "enabled": true
+    }
+  },
+  "level_textures": {
+    "max_width": 1024,
+    "max_height": 1024
+  }
+}

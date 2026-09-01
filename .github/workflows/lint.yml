@@ -5,13 +5,16 @@ on:
     branches: [ "main" ]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   check-style:
     name: Clang-Format Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install clang-format
         run: sudo apt-get install -y clang-format
@@ -32,13 +35,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
 
       - name: Run Cppcheck Analysis
         run: |
-          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace ghcr.io/ps2dev/ps2sdk-ports:latest sh -c "
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace ghcr.io/ps2dev/ps2sdk-ports@sha256:cb24a07ad515e2144d7bd02c9bf5854f393c3c069897ba1a48a6a6796e5339af sh -c "
             apk add --no-cache build-base cmake cppcheck python3
           
             cmake -B build -S . -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
@@ -58,7 +61,7 @@ jobs:
           "
 
       - name: Convert Cppcheck XML to SARIF
-        uses: Flast/cppcheck-sarif@v2
+        uses: Flast/cppcheck-sarif@2845d63261f33914953ac34cbfb2c6b105b6780e # v2
         with:
           input: 'cppcheck-report.xml'
           output: 'cppcheck.sarif'
@@ -80,7 +83,7 @@ jobs:
           ))' cppcheck.sarif > cppcheck-cleaned.sarif
 
       - name: Upload Analysis to GitHub Security Tab
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
         with:
           sarif_file: 'cppcheck-cleaned.sarif'
           category: 'cppcheck'

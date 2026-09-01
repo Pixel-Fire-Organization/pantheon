@@ -1,126 +1,872 @@
 {
-    "version": 6,
-    "cmakeMinimumRequired": {
-        "major": 3,
-        "minor": 10,
-        "patch": 0
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 10,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Unix Makefiles"
     },
-    "configurePresets": [
-        {
-            "name": "ps2-base",
-            "hidden": true,
-            "generator": "Unix Makefiles",
-            "toolchainFile": "${sourceDir}/ps2dev.cmake",
-            "environment": {
-                "PS2DEV": "/usr/local/ps2dev"
-            },
-            "vendor": {
-                "jetbrains.com/clion": {
-                    "toolchain": "WSL"
-                }
-            }
-        },
-        {
-            "name": "ps2-base-linux",
-            "hidden": true,
-            "generator": "Unix Makefiles",
-            "toolchainFile": "${sourceDir}/ps2dev.cmake",
-            "environment": {
-                "PS2DEV": "/usr/local/ps2dev"
-            },
-            "vendor": {
-                "jetbrains.com/clion": {
-                    "toolchain": "Default"
-                }
-            }
-        },
-        {
-            "name": "ps2-debug-pal",
-            "displayName": "PS2 Debug (PAL)",
-            "description": "Debug build, PAL region",
-            "inherits": "ps2-base",
-            "binaryDir": "${sourceDir}/build/debug-pal",
-            "cacheVariables": {
-                "DEBUG": "ON",
-                "REGION": "PAL"
-            }
-        },
-        {
-            "name": "ps2-debug-ntsc",
-            "displayName": "PS2 Debug (NTSC)",
-            "description": "Debug build, NTSC region",
-            "inherits": "ps2-base",
-            "binaryDir": "${sourceDir}/build/debug-ntsc",
-            "cacheVariables": {
-                "DEBUG": "ON",
-                "REGION": "NTSC"
-            }
-        },
-        {
-            "name": "ps2-release-pal",
-            "displayName": "PS2 Release (PAL)",
-            "description": "Release build, PAL region",
-            "inherits": "ps2-base",
-            "binaryDir": "${sourceDir}/build/release-pal",
-            "cacheVariables": {
-                "DEBUG": "OFF",
-                "REGION": "PAL"
-            }
-        },
-        {
-            "name": "ps2-release-ntsc",
-            "displayName": "PS2 Release (NTSC)",
-            "description": "Release build, NTSC region",
-            "inherits": "ps2-base",
-            "binaryDir": "${sourceDir}/build/release-ntsc",
-            "cacheVariables": {
-                "DEBUG": "OFF",
-                "REGION": "NTSC"
-            }
-        },
-        {
-            "name": "ps2-debug-pal-linux",
-            "displayName": "PS2 Debug (PAL) [Linux]",
-            "description": "Debug build, PAL region — native Linux toolchain",
-            "inherits": "ps2-base-linux",
-            "binaryDir": "${sourceDir}/build/debug-pal",
-            "cacheVariables": {
-                "DEBUG": "ON",
-                "REGION": "PAL"
-            }
-        },
-        {
-            "name": "ps2-debug-ntsc-linux",
-            "displayName": "PS2 Debug (NTSC) [Linux]",
-            "description": "Debug build, NTSC region — native Linux toolchain",
-            "inherits": "ps2-base-linux",
-            "binaryDir": "${sourceDir}/build/debug-ntsc",
-            "cacheVariables": {
-                "DEBUG": "ON",
-                "REGION": "NTSC"
-            }
-        },
-        {
-            "name": "ps2-release-pal-linux",
-            "displayName": "PS2 Release (PAL) [Linux]",
-            "description": "Release build, PAL region — native Linux toolchain",
-            "inherits": "ps2-base-linux",
-            "binaryDir": "${sourceDir}/build/release-pal",
-            "cacheVariables": {
-                "DEBUG": "OFF",
-                "REGION": "PAL"
-            }
-        },
-        {
-            "name": "ps2-release-ntsc-linux",
-            "displayName": "PS2 Release (NTSC) [Linux]",
-            "description": "Release build, NTSC region — native Linux toolchain",
-            "inherits": "ps2-base-linux",
-            "binaryDir": "${sourceDir}/build/release-ntsc",
-            "cacheVariables": {
-                "DEBUG": "OFF",
-                "REGION": "NTSC"
-            }
+    {
+      "name": "cfg-debug",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "DEBUG": "ON"
+      }
+    },
+    {
+      "name": "cfg-release",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "DEBUG": "OFF"
+      }
+    },
+    {
+      "name": "host-wsl",
+      "hidden": true,
+      "vendor": {
+        "jetbrains.com/clion": {
+          "toolchain": "WSL"
         }
-    ]
+      }
+    },
+    {
+      "name": "host-linux",
+      "hidden": true,
+      "vendor": {
+        "jetbrains.com/clion": {
+          "toolchain": "Default"
+        }
+      }
+    },
+    {
+      "name": "tc-ps2dev",
+      "hidden": true,
+      "toolchainFile": "${sourceDir}/toolchains/ps2dev.cmake",
+      "environment": {
+        "PS2DEV": "/usr/local/ps2dev"
+      }
+    },
+    {
+      "name": "tc-mingw-w64",
+      "hidden": true,
+      "toolchainFile": "${sourceDir}/toolchains/mingw-w64.cmake"
+    },
+    {
+      "name": "tc-vitasdk",
+      "hidden": true,
+      "toolchainFile": "${sourceDir}/toolchains/vitasdk.cmake",
+      "environment": {
+        "VITASDK": "/usr/local/vitasdk"
+      }
+    },
+    {
+      "name": "tc-pspdev",
+      "hidden": true,
+      "toolchainFile": "${sourceDir}/toolchains/pspdev.cmake",
+      "environment": {
+        "PSPDEV": "/usr/local/pspdev"
+      }
+    },
+    {
+      "name": "tc-devkita64",
+      "hidden": true,
+      "toolchainFile": "${sourceDir}/toolchains/devkita64.cmake",
+      "environment": {
+        "DEVKITPRO": "/opt/devkitpro"
+      }
+    },
+    {
+      "name": "ps2-debug",
+      "displayName": "PS2 Debug (PAL + NTSC)",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-debug",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-debug",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2PAL;PS2NTSC"
+      }
+    },
+    {
+      "name": "ps2-debug-linux",
+      "displayName": "PS2 Debug (PAL + NTSC) [Linux]",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-debug",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-debug",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2PAL;PS2NTSC"
+      }
+    },
+    {
+      "name": "ps2-release",
+      "displayName": "PS2 Release (PAL + NTSC)",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-release",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-release",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2PAL;PS2NTSC"
+      }
+    },
+    {
+      "name": "ps2-release-linux",
+      "displayName": "PS2 Release (PAL + NTSC) [Linux]",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-release",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-release",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2PAL;PS2NTSC"
+      }
+    },
+    {
+      "name": "ps2-debug-pal",
+      "displayName": "PS2 Debug (PAL)",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-debug",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-debug-pal",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2PAL"
+      }
+    },
+    {
+      "name": "ps2-debug-pal-linux",
+      "displayName": "PS2 Debug (PAL) [Linux]",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-debug",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-debug-pal",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2PAL"
+      }
+    },
+    {
+      "name": "ps2-release-pal",
+      "displayName": "PS2 Release (PAL)",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-release",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-release-pal",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2PAL"
+      }
+    },
+    {
+      "name": "ps2-release-pal-linux",
+      "displayName": "PS2 Release (PAL) [Linux]",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-release",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-release-pal",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2PAL"
+      }
+    },
+    {
+      "name": "ps2-debug-ntsc",
+      "displayName": "PS2 Debug (NTSC)",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-debug",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-debug-ntsc",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2NTSC"
+      }
+    },
+    {
+      "name": "ps2-debug-ntsc-linux",
+      "displayName": "PS2 Debug (NTSC) [Linux]",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-debug",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-debug-ntsc",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2NTSC"
+      }
+    },
+    {
+      "name": "ps2-release-ntsc",
+      "displayName": "PS2 Release (NTSC)",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-release",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-release-ntsc",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2NTSC"
+      }
+    },
+    {
+      "name": "ps2-release-ntsc-linux",
+      "displayName": "PS2 Release (NTSC) [Linux]",
+      "inherits": [
+        "tc-ps2dev",
+        "cfg-release",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/ps2dev-release-ntsc",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PS2NTSC"
+      }
+    },
+    {
+      "name": "win32-debug",
+      "displayName": "Win32 Debug",
+      "inherits": [
+        "tc-mingw-w64",
+        "cfg-debug",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/mingww64-debug",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "WIN32"
+      }
+    },
+    {
+      "name": "win32-debug-linux",
+      "displayName": "Win32 Debug [Linux]",
+      "inherits": [
+        "tc-mingw-w64",
+        "cfg-debug",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/mingww64-debug",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "WIN32"
+      }
+    },
+    {
+      "name": "win32-release",
+      "displayName": "Win32 Release",
+      "inherits": [
+        "tc-mingw-w64",
+        "cfg-release",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/mingww64-release",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "WIN32"
+      }
+    },
+    {
+      "name": "win32-release-linux",
+      "displayName": "Win32 Release [Linux]",
+      "inherits": [
+        "tc-mingw-w64",
+        "cfg-release",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/mingww64-release",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "WIN32"
+      }
+    },
+    {
+      "name": "vita-debug",
+      "displayName": "Vita Debug (Handheld + PS TV)",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-debug",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-debug",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITA;VITATV"
+      }
+    },
+    {
+      "name": "vita-debug-linux",
+      "displayName": "Vita Debug (Handheld + PS TV) [Linux]",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-debug",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-debug",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITA;VITATV"
+      }
+    },
+    {
+      "name": "vita-release",
+      "displayName": "Vita Release (Handheld + PS TV)",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-release",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-release",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITA;VITATV"
+      }
+    },
+    {
+      "name": "vita-release-linux",
+      "displayName": "Vita Release (Handheld + PS TV) [Linux]",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-release",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-release",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITA;VITATV"
+      }
+    },
+    {
+      "name": "vita-debug-handheld",
+      "displayName": "Vita Debug (Handheld)",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-debug",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-debug-handheld",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITA"
+      }
+    },
+    {
+      "name": "vita-debug-handheld-linux",
+      "displayName": "Vita Debug (Handheld) [Linux]",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-debug",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-debug-handheld",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITA"
+      }
+    },
+    {
+      "name": "vita-release-handheld",
+      "displayName": "Vita Release (Handheld)",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-release",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-release-handheld",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITA"
+      }
+    },
+    {
+      "name": "vita-release-handheld-linux",
+      "displayName": "Vita Release (Handheld) [Linux]",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-release",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-release-handheld",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITA"
+      }
+    },
+    {
+      "name": "vita-debug-tv",
+      "displayName": "Vita Debug (PS TV)",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-debug",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-debug-tv",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITATV"
+      }
+    },
+    {
+      "name": "vita-debug-tv-linux",
+      "displayName": "Vita Debug (PS TV) [Linux]",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-debug",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-debug-tv",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITATV"
+      }
+    },
+    {
+      "name": "vita-release-tv",
+      "displayName": "Vita Release (PS TV)",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-release",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-release-tv",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITATV"
+      }
+    },
+    {
+      "name": "vita-release-tv-linux",
+      "displayName": "Vita Release (PS TV) [Linux]",
+      "inherits": [
+        "tc-vitasdk",
+        "cfg-release",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/vitasdk-release-tv",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "VITATV"
+      }
+    },
+    {
+      "name": "psp-debug",
+      "displayName": "PSP Debug",
+      "inherits": [
+        "tc-pspdev",
+        "cfg-debug",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/pspdev-debug",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PSP"
+      }
+    },
+    {
+      "name": "psp-release",
+      "displayName": "PSP Release",
+      "inherits": [
+        "tc-pspdev",
+        "cfg-release",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/pspdev-release",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PSP"
+      }
+    },
+    {
+      "name": "psp-debug-linux",
+      "displayName": "PSP Debug (Linux)",
+      "inherits": [
+        "tc-pspdev",
+        "cfg-debug",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/pspdev-debug",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PSP"
+      }
+    },
+    {
+      "name": "psp-release-linux",
+      "displayName": "PSP Release (Linux)",
+      "inherits": [
+        "tc-pspdev",
+        "cfg-release",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/pspdev-release",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "PSP"
+      }
+    },
+    {
+      "name": "nx-debug",
+      "displayName": "nx Debug",
+      "inherits": [
+        "tc-devkita64",
+        "cfg-debug",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/devkita64-debug",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "NX"
+      }
+    },
+    {
+      "name": "nx-release",
+      "displayName": "nx Release",
+      "inherits": [
+        "tc-devkita64",
+        "cfg-release",
+        "host-wsl"
+      ],
+      "binaryDir": "${sourceDir}/build/devkita64-release",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "NX"
+      }
+    },
+    {
+      "name": "nx-debug-linux",
+      "displayName": "nx Debug (Linux)",
+      "inherits": [
+        "tc-devkita64",
+        "cfg-debug",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/devkita64-debug",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "NX"
+      }
+    },
+    {
+      "name": "nx-release-linux",
+      "displayName": "nx Release (Linux)",
+      "inherits": [
+        "tc-devkita64",
+        "cfg-release",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/devkita64-release",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "NX"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "ps2-debug",
+      "configurePreset": "ps2-debug",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "ps2-debug-linux",
+      "configurePreset": "ps2-debug-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "ps2-release",
+      "configurePreset": "ps2-release",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "ps2-release-linux",
+      "configurePreset": "ps2-release-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "ps2-debug-pal",
+      "configurePreset": "ps2-debug-pal",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "ps2-debug-pal-linux",
+      "configurePreset": "ps2-debug-pal-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "ps2-release-pal",
+      "configurePreset": "ps2-release-pal",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "ps2-release-pal-linux",
+      "configurePreset": "ps2-release-pal-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "ps2-debug-ntsc",
+      "configurePreset": "ps2-debug-ntsc",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "ps2-debug-ntsc-linux",
+      "configurePreset": "ps2-debug-ntsc-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "ps2-release-ntsc",
+      "configurePreset": "ps2-release-ntsc",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "ps2-release-ntsc-linux",
+      "configurePreset": "ps2-release-ntsc-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "win32-debug",
+      "configurePreset": "win32-debug",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "win32-debug-linux",
+      "configurePreset": "win32-debug-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "win32-release",
+      "configurePreset": "win32-release",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "win32-release-linux",
+      "configurePreset": "win32-release-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-debug",
+      "configurePreset": "vita-debug",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-debug-linux",
+      "configurePreset": "vita-debug-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-release",
+      "configurePreset": "vita-release",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-release-linux",
+      "configurePreset": "vita-release-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-debug-handheld",
+      "configurePreset": "vita-debug-handheld",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-debug-handheld-linux",
+      "configurePreset": "vita-debug-handheld-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-release-handheld",
+      "configurePreset": "vita-release-handheld",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-release-handheld-linux",
+      "configurePreset": "vita-release-handheld-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-debug-tv",
+      "configurePreset": "vita-debug-tv",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-debug-tv-linux",
+      "configurePreset": "vita-debug-tv-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-release-tv",
+      "configurePreset": "vita-release-tv",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "vita-release-tv-linux",
+      "configurePreset": "vita-release-tv-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "run-ps2pal",
+      "displayName": "Run PS2 (PAL)",
+      "configurePreset": "ps2-debug",
+      "targets": [
+        "run-ps2pal"
+      ]
+    },
+    {
+      "name": "run-ps2ntsc",
+      "displayName": "Run PS2 (NTSC)",
+      "configurePreset": "ps2-debug",
+      "targets": [
+        "run-ps2ntsc"
+      ]
+    },
+    {
+      "name": "run-win32",
+      "displayName": "Run Win32",
+      "configurePreset": "win32-debug",
+      "targets": [
+        "run-win32"
+      ]
+    },
+    {
+      "name": "run-vita",
+      "displayName": "Run Vita (Handheld)",
+      "configurePreset": "vita-debug",
+      "targets": [
+        "run-vita"
+      ]
+    },
+    {
+      "name": "run-vitatv",
+      "displayName": "Run Vita (PS TV)",
+      "configurePreset": "vita-debug",
+      "targets": [
+        "run-vitatv"
+      ]
+    },
+    {
+      "name": "test-tools",
+      "displayName": "Run tool tests",
+      "configurePreset": "win32-debug",
+      "targets": [
+        "test-tools"
+      ]
+    },
+    {
+      "name": "psp-debug",
+      "configurePreset": "psp-debug",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "psp-release",
+      "configurePreset": "psp-release",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "psp-debug-linux",
+      "configurePreset": "psp-debug-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "psp-release-linux",
+      "configurePreset": "psp-release-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "run-psp",
+      "displayName": "Run PSP",
+      "configurePreset": "psp-debug",
+      "targets": [
+        "run-psp"
+      ]
+    },
+    {
+      "name": "nx-debug",
+      "configurePreset": "nx-debug",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "nx-release",
+      "configurePreset": "nx-release",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "nx-debug-linux",
+      "configurePreset": "nx-debug-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "nx-release-linux",
+      "configurePreset": "nx-release-linux",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "run-nx",
+      "displayName": "Run nx",
+      "configurePreset": "nx-debug",
+      "targets": [
+        "run-nx"
+      ]
+    }
+  ]
 }

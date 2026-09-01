@@ -32,7 +32,7 @@ pa = _load()
     ("RASSETS/BOX.PS2A", "RASSETS/BOX.PS2A"),
     ("RASSETS\\BOX.PS2A", "RASSETS/BOX.PS2A"),
     ("cdrom0:\\RASSETS\\box.ps2a;1", "RASSETS/BOX.PS2A"),
-    ("mass0:/LEVELS/CITY.PS2R", "LEVELS/CITY.PS2R"),
+    ("mass0:/DLC/EXPANSION.PS2R", "DLC/EXPANSION.PS2R"),
     ("/RASSETS/BOX.PS2A", "RASSETS/BOX.PS2A"),
 ])
 def test_canonical_key(raw, expected):

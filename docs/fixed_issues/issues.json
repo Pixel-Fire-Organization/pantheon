@@ -1,0 +1,342 @@
+{
+  "$schema": "../../tools/schemas/fixed_issues.schema.json",
+  "description": "Engine and tooling defects found and fixed while building an example, kept for regression lookup. See docs/guidelines/NEW_EXAMPLE.md and docs/EXAMPLES.md.",
+  "issues": [
+    {
+      "id": "EX-0001",
+      "title": "Example executables missing PLATFORM_<P>_LINK_DEPS, so a clean build fails to link on PS2/Vita",
+      "discovered_in": "examples/primitives",
+      "date": "2026-09-16",
+      "platforms": [
+        "ps2pal",
+        "ps2ntsc",
+        "vita",
+        "vitatv"
+      ],
+      "symptom": "On a clean build directory, 'cmake --build . --target app_ps2pal_example_primitives' failed at link time with \"No rule to make target 'ps2gl_build/libps2gl.a'\" even though the same build produced ps2gl fine for the game target in the same configure. Would recur identically for vitaGL on Vita/VitaTV.",
+      "root_cause": "The root CMakeLists.txt's per-platform loop adds PLATFORM_<P>_LINK_DEPS (the submodule build a platform's fragment declares, e.g. ps2gl, vitaGL) as a dependency of the game's app target only. The per-example loop added alongside it called example_add_executable() but never repeated that add_dependencies() call, so an example's executable could race ahead of the submodule build on a clean tree — it happened to work in this session only because the game target had already forced ps2gl_build to run first.",
+      "fix_summary": "Added the same 'if(DEFINED PLATFORM_${PLATFORM}_LINK_DEPS) add_dependencies(${_exampleTarget} ${PLATFORM_${PLATFORM}_LINK_DEPS}) endif()' call to the per-example loop in the root CMakeLists.txt, mirroring the existing call for the game's app target.",
+      "files_changed": [
+        "CMakeLists.txt"
+      ],
+      "regression_check": "From a clean build directory (no prior game build in it), configure for ps2pal or vita and build only an example target directly, e.g. 'cmake --build <dir> --target app_ps2pal_example_primitives' without building app_ps2pal first. It should build and link end to end without a missing-library error."
+    },
+    {
+      "id": "EX-0002",
+      "title": "A scrolling region followed a focused row belonging to another region, so a long list would not stay scrolled",
+      "discovered_in": "engine/src/debug/scenes/SceneAssetBrowser.cpp (Testbed asset browser)",
+      "date": "2026-09-17",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "The archive entry list could not be scrolled usefully. Stick-scrolling it past a certain point snapped it straight back the next frame, and the band also jumped on its own while focus sat on a row in a different panel. Most visible in the asset browser because its entry list is the longest in the engine and there are other focusable rows on screen beside it. A first attempted fix (below, same day) addressed the snap-back but left a second bug of the same shape: scrolling any one region with the right stick moved every open scrolling region on screen by the same amount whenever focus was not currently inside any of them.",
+      "root_cause": "Ui_EndScroll read the frame-global focusRowTop/focusRowHeight/focusRowValid, which UiInternal_ActivatableRow sets for whichever row is focused anywhere in the frame, and treated it as its own. The only guard was positional ('focusRowTop >= scrollTop - scrollY'), which a row outside the region passes as soon as the band has scrolled far enough — fixed by adding UiFrameState::focusRowScrollId, the id of the scrolling region a focused row was registered inside, and gating focus-follow on it matching the region's own id. The right-stick path was fixed at the same time but with the wrong signal: it fell back to moving the band whenever focusRowScrollId == 0, meant to cover 'nothing focusable in this lone region' but also true, indistinguishably, whenever focus was simply on an ordinary widget outside every region (an ARCHIVES row, say) — so every open region answered the stick at once the moment focus left them all, rather than none of them.",
+      "fix_summary": "Added UiFrameState::focusRowScrollId (set alongside the other focus-row fields) so focus-follow only pulls the band a focused row was actually registered inside. The stick-delta fallback now reads UiFrameState::focusId instead — the frame's own 'nothing focused anywhere' sentinel (zero), set once in Ui_EndFrame's focus resolution and already used that way elsewhere — rather than the per-row, per-region focusRowScrollId, which cannot distinguish 'no scroll region owns this' from 'nothing is focused at all'. docs/subsystems/UI.md states the corrected rule.",
+      "files_changed": [
+        "engine/src/ui/UiInternal.h",
+        "engine/src/ui/Ui.cpp",
+        "engine/src/ui/UiLayout.cpp",
+        "docs/subsystems/UI.md"
+      ],
+      "regression_check": "Open the Testbed asset browser on any platform with a gamepad connected, select the boot archive, and: (1) scroll the ENTRIES list with the right stick while focus sits on an ARCHIVES row above it -- only ENTRIES may move; (2) focus a row inside ENTRIES and scroll with the stick -- only ENTRIES may move, not the ENTRY detail panel's own region on the right; (3) with focus on an ARCHIVES row (outside both scrolling regions), scroll with the stick -- neither region may move, since focus is not ambiguous, it is simply elsewhere. Walking a list with Up/Down must still pull its own band along one row at a time."
+    },
+    {
+      "id": "EX-0003",
+      "title": "A tree node drew no open/closed caret, so its state was invisible",
+      "discovered_in": "engine/src/debug/scenes/SceneAssetBrowser.cpp (Testbed asset browser)",
+      "date": "2026-09-16",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "Ui_BeginTree nodes looked identical whether open or closed. With several collapsed sections in a row there was no way to tell which would expand, short of toggling each one.",
+      "root_cause": "Ui_BeginTree formatted a '+ label' / '- label' string into a local buffer and then never drew it — it called Ui_Selectable(label, open) instead. An incomplete refactor: the comment beside it said the caret was drawn separately precisely so the label would not change identity as it toggled, but the separate draw was never written, leaving the buffer dead.",
+      "fix_summary": "Dropped the dead buffer and drew the node with Ui_SelectableValue(label, open ? \"-\" : \"+\", open), whose whole purpose is a row with a fixed label and a changing right-hand value — which is exactly the identity-stability property the original comment was reaching for.",
+      "files_changed": [
+        "engine/src/ui/UiLayout.cpp"
+      ],
+      "regression_check": "Any screen with a tree — the Testbed asset browser's ENTRY panel, or the ui_gallery example's 'A TREE' row. A collapsed node must show '+' and an expanded one '-', and toggling one must leave focus on it rather than jumping away."
+    },
+    {
+      "id": "EX-0004",
+      "title": "Engine_ResetRuntimeState never unloaded the current level, so it kept rendering behind every Testbed scene",
+      "discovered_in": "engine/src/debug/scenes/SceneAssetBrowser.cpp (Testbed asset browser)",
+      "date": "2026-09-17",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "A level loaded before the Testbed opened (by the running game, or by the Level Stream Testbed scene on an earlier visit) kept drawing behind the Testbed menu and every scene, asset browser included, even though nothing in the active scene requested it and the reset the whole subsystem is built around had already run.",
+      "root_cause": "Every renderer backend's Render() checks Engine_Level_Current() and, if non-null, draws the resident sector ring directly -- by design (docs/subsystems/LEVEL.md: 'Renderer -- draws the current level resident sectors'), independent of GameUpdate/Scene, which is exactly why it kept happening while those were correctly suppressed for the whole time Testbed is open. Engine_ResetRuntimeState() reset ARENA_LEVEL_DATA (Engine_ResetArena: bump offset to zero, every slot's usedSize/locked cleared) but never called Engine_Level_Unload, and Engine_ResetArena does not memset the underlying bytes -- only Engine_ClearSlot does, and Engine_Level_Unload uses that, not the generic arena reset. So the level's chunk-view pointers (s_CurrentLevel, module-private to EngineLevel.cpp) kept pointing at memory the reset called 'empty' by bookkeeping but had not actually touched, and the resident sector ring EngineSector.cpp tracks was never told to end either. The level did not corrupt; it simply never left.",
+      "fix_summary": "Added Engine_Level_ForgetCurrent() (EngineLevel.h/.cpp): unloads s_CurrentLevel through the existing Engine_Level_Unload(level, false) path when one is current, a no-op otherwise. Engine_ResetRuntimeState() now calls it, guarded on EngineSubsystem::Level, before Resource is torn down (unloading unpins material textures through it). docs/subsystems/LEVEL.md's Lifecycle section states that a runtime reset unloads the current level as part of it.",
+      "files_changed": [
+        "engine/include/level/EngineLevel.h",
+        "engine/src/level/EngineLevel.cpp",
+        "engine/src/core/EngineCore.cpp",
+        "docs/subsystems/LEVEL.md"
+      ],
+      "regression_check": "In the Level Stream Testbed scene, load a level, then back out to the Testbed menu (or straight to the asset browser). The 3D viewport must show only what the new scene itself draws -- nothing from the level -- and re-entering Level Stream afterward must load cleanly rather than finding a level already 'current'. Also check the ordinary path: start the game with a level loaded (LevelScene or equivalent), open the Testbed chord, and confirm the level is gone from every scene's background, not only the ones that happen to clear the frame themselves."
+    },
+    {
+      "id": "EX-0005",
+      "title": "Archive string-table offsets were never validated, so a corrupt TOC read past the mounted string block",
+      "discovered_in": "docs/backlog/security_findings.md (full-codebase security pass)",
+      "date": "2026-09-16",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "A mounted .PS2R whose TOC named a string offset at or past the end of the string table made every key lookup compare against bytes past the allocated block, and an entry enumeration copy them out. With a container whose entryCount was large enough to wrap the 32-bit size_t on PS2/PSP/Vita (0x10000001 * 16 bytes), the mount allocated 16 bytes but recorded the full count, and every later lookup walked far past the allocation.",
+      "root_cause": "Engine_Archive_Mount read the header, TOC and string table and published the mount without checking any field against another. Engine_Archive_Find did a strcmp against strings + nameOffset and Engine_Archive_GetEntry a strncpy from the same address, both trusting an on-disc number. The TOC byte count was computed as entryCount * sizeof(ArchiveTocEntry) in size_t, and Engine_PlatformArray<T> multiplied count by sizeof(T) with no overflow guard either, so a wrapped product produced a short allocation that passed the null check.",
+      "fix_summary": "Mount now rejects a container whose entry byte count cannot be represented on the target, rejects one declaring entries with no string table, terminates the string table at its last byte, and validates every entry nameOffset against stringsSize before the mount is published -- one bad entry refuses the whole container. Engine_PlatformArray<T> returns an empty array when count * sizeof(T) would wrap. ArchiveMountInfo::payloadBytes widened to 64-bit so the diagnostic sum cannot wrap either. docs/formats/ARCHIVE_FORMAT.md gained a section on what a reader must establish, and docs/subsystems/ARCHIVE.md the matching guarantee and failure modes.",
+      "files_changed": [
+        "engine/src/resources/EngineArchive.cpp",
+        "engine/include/resources/EngineArchive.h",
+        "engine/include/core/EngineMemory.h",
+        "engine/src/debug/scenes/SceneAssetBrowser.cpp",
+        "docs/formats/ARCHIVE_FORMAT.md",
+        "docs/subsystems/ARCHIVE.md"
+      ],
+      "regression_check": "Open the Testbed asset browser, select the boot archive and walk its ENTRIES list -- every key must read correctly and the PAYLOAD total must match tools/inspect_archive.py. Then corrupt a copy of dist/cooked/<platform>/RASSETS.PS2R by setting a TOC entry nameOffset past stringsSize: the mount must be refused with a message naming the entry, and the game must fall back to loose files rather than reading garbage keys."
+    },
+    {
+      "id": "EX-0006",
+      "title": "Level core and sector loaders trusted every on-disc offset, producing out-of-bounds views and MIPS alignment traps",
+      "discovered_in": "docs/backlog/security_findings.md (full-codebase security pass)",
+      "date": "2026-09-16",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "A corrupt or hand-modified .PS2L made the engine publish chunk views pointing outside the arena slot: a core with no MATL chunk dereferenced a null materials pointer as soon as the info chunk declared any material, a crafted ENTS chunk drove entity counts, property indices and string offsets unchecked straight into the game spawn handler, and a chunk offset shifted by one byte made a LevelInfoChunk* / LevelGridCell* cast trap outright on PS2 EE and PSP. A zero cellSize divided every world position by zero and converted the infinity to an int. On the sector side, vertsOffset/normsOffset/uvsOffset and vertexCount became the renderer vertex source with no comparison to the blob size.",
+      "root_cause": "Internal_ReadCore walked the chunk table and assigned core + table[i].offset to each view without comparing offset or size to the core own size or checking alignment, and nothing downstream re-derived those bounds. Internal_SpawnEntities read count/stringsOffset/stringsSize out of the ENTS chunk and indexed records, props and strings from them directly. Internal_LoadSector clamped meshCount to LEVEL_MAX_MESHES_PER_SECTOR (silently losing geometry) and built Mesh views from the entry offsets with no bound at all. Internal_CellOf divided by LevelInfoChunk::cellSize, which was never checked.",
+      "fix_summary": "Added engine/include/level/EngineLevelSpan.h -- Level_SpanFits (offsets and lengths widened past size_t before they are added) and Level_OffsetAligned -- shared by both loaders, plus LEVEL_CHUNK_ALIGN as a format constant mirrored by tools/ps2lib/levelfmt.py. Internal_ReadCore now validates the header, chunk table, every chunk span and every chunk offset alignment, then the INFO cell size (finite and positive), grid extent, SGRD size against cellsX*cellsZ, materialCount against LEVEL_MAX_MATERIALS and MATL size against it, and the whole ENTS chunk (records, property array, string table, every classname/key/value offset and every propFirst+propCount) before any view is published. Fixed-width key fields and the ENTS string table are terminated in place. Internal_LoadSector refuses rather than clamps an over-large mesh count and validates every geometry array span and 16-byte alignment. Internal_CellOf clamps the cell index to the int16 grid range. The cooker enforces the same material and mesh ceilings so content cannot reach the runtime that the runtime will refuse. docs/subsystems/LEVEL.md, docs/subsystems/SECTOR.md and docs/formats/LEVEL_FORMAT.md state the contract and the new failure modes.",
+      "files_changed": [
+        "engine/include/level/EngineLevelSpan.h",
+        "engine/include/level/EngineLevelFormat.h",
+        "engine/src/level/EngineLevel.cpp",
+        "engine/src/level/EngineSector.cpp",
+        "tools/ps2lib/levelfmt.py",
+        "tools/compile_level.py",
+        "docs/subsystems/LEVEL.md",
+        "docs/subsystems/SECTOR.md",
+        "docs/formats/LEVEL_FORMAT.md"
+      ],
+      "regression_check": "Run the Level Stream Testbed scene on each platform and walk the streaming centre across several cell boundaries: geometry, materials and entities must be identical to before. Then use tools/dump_level.py on a cooked .PS2L, hand-edit a copy to shift one chunk offset by one byte, and confirm the load is refused with a message naming the chunk rather than crashing. Cook a map with more than 64 materials and confirm compile_level.py fails rather than producing a level the runtime refuses."
+    },
+    {
+      "id": "EX-0007",
+      "title": "Model and TIM2 offset arithmetic wrapped on 32-bit targets, letting a bounds check pass on an out-of-range read",
+      "discovered_in": "docs/backlog/security_findings.md (full-codebase security pass)",
+      "date": "2026-09-16",
+      "platforms": [
+        "ps2pal",
+        "ps2ntsc",
+        "psp",
+        "vita"
+      ],
+      "symptom": "On the three 32-bit-size_t targets, a baked model declaring a vertexCount near 2^28 made vertexCount * 16 and vertsOffset + that wrap, so the out-of-bounds check passed and the following memcpy read from past the shared IO buffer. The same shape appeared in the TIM2 parser: an imageSize near the 32-bit maximum made imgOffset + imageSize wrap, the payload bound passed trivially, and the per-mip-level check became meaningless -- the renderer then uploaded width*height bytes read from past the buffer. A picture header whose headerSize was not a multiple of 16 handed every backend a misaligned pixel pointer, which Gfx_ExpandToRgba8 reads as uint16_t* (a trap on PSP) and the PS2 GIFTAG DMA source requires 16-byte aligned.",
+      "root_cause": "Both parsers did their span arithmetic in size_t, which is 32 bits on PS2, PSP and Vita, using counts and offsets taken straight from the blob. ModelLoad.cpp also assigned mesh.vertexCount from me.vertexCount before the bound was checked. tim2.cpp checked headerSize only for a minimum, never for alignment, even though the cooker always writes 0x30.",
+      "fix_summary": "Widened every offset-plus-length comparison in ModelLoad.cpp and tim2.cpp to uint64_t before the addition, moved the model vertexCount assignment after its bound check, made the TIM2 mip walk accumulate in uint64_t, and required imgOffset (picBase + headerSize) to be 16-byte aligned. Added a static_assert that sizeof(AssetFileHeader) is a multiple of 16, since that is what carries the IO read buffer alignment through to the payload a transfer path consumes in place. docs/formats/ASSET_FORMAT.md and docs/formats/TIM2_TEXTURE.md state what each reader establishes.",
+      "files_changed": [
+        "engine/src/graphics/ModelLoad.cpp",
+        "engine/src/graphics/tim2.cpp",
+        "engine/include/resources/EngineResource.h",
+        "docs/formats/ASSET_FORMAT.md",
+        "docs/formats/TIM2_TEXTURE.md"
+      ],
+      "regression_check": "Load every cooked model and texture in the Testbed asset browser on a 32-bit target (PS2 or PSP) and confirm each previews identically to before. Then hand-edit a copy of a .ps2a so a mesh vertexCount is 0x10000001, and confirm the load is refused with a vertices-out-of-bounds message rather than reading past the buffer; do the same with a TIM2 headerSize of 0x31 and confirm the alignment refusal."
+    },
+    {
+      "id": "EX-0008",
+      "title": "Unloading a still-streaming resource left the async completion to write into a slot it no longer owned",
+      "discovered_in": "docs/backlog/security_findings.md (full-codebase security pass)",
+      "date": "2026-09-16",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "Unloading a resource whose read was still in flight cleared the slot but did not cancel the read. When the read completed, the callback wrote type, handle and READY state into a slot that was by then empty or occupied by a different asset -- so a texture id could be released later by the wrong owner. Reachable from a level unload while its materials were still streaming, and from Ui_LoadTheme, which issued an async load and unloaded it on the same call. Ui_LoadTheme in fact depended on the bug: its first call always cancelled its own load, the stale callback resurrected the slot as READY, and only a second call found and applied it.",
+      "root_cause": "ResourceLoadContext carried only the slot index. Internal_OnAsyncLoadComplete indexed s_Entries with it and wrote unconditionally. Dependency references already carried a generation counter for exactly this class of problem (DepHandle), but the load context did not. Engine_Resource_UnloadAll also memset every slot without advancing its generation, so even the dependency mechanism had a hole.",
+      "fix_summary": "ResourceLoadContext now records the slot generation at queue time, and the completion discards its result when the slot is no longer LOADING or its generation has moved on. Engine_Resource_UnloadAll advances each slot generation like Internal_UnloadEntry does. Ui_LoadTheme no longer relies on the stale callback: it drains IO after issuing the load, so the call either applies the theme or refuses it. docs/subsystems/RESOURCE.md states the cancellation contract.",
+      "files_changed": [
+        "engine/src/resources/EngineResource.cpp",
+        "engine/src/ui/UiTheme.cpp",
+        "engine/include/ui/EngineUi.h",
+        "docs/subsystems/RESOURCE.md"
+      ],
+      "regression_check": "In the ui_gallery example theme panel, press LOAD THEME_SLATE once: the theme must apply on that single press, not the second. Then in the Level Stream Testbed scene, load a level and back out to the Testbed menu within the first frames while materials are still streaming -- no texture may be released by the wrong owner and the next level load must be clean."
+    },
+    {
+      "id": "EX-0009",
+      "title": "Engine teardown and runtime reset raced the IO worker over the archive and the arenas",
+      "discovered_in": "docs/backlog/security_findings.md (full-codebase security pass)",
+      "date": "2026-09-16",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "Quitting, or switching scene, while a load was in flight -- which is exactly what a loading screen is -- let the IO worker keep resolving and reading through state the main thread was tearing down. Engine_Close shut Resource, then Archive, then IO, with no drain first. Engine_ResetRuntimeState drained but ignored the false Engine_IO_Drain returns after IO_DRAIN_MAX_SPINS and shut Archive down regardless. Win32 ThreadDestroy closes the handle without waiting and the PS2 one cannot join at all, so on both the worker was still running when GetMemory().Release() freed the arenas its reads land in.",
+      "root_cause": "Three gaps at once. The worker resolved every request through Engine_Archive_Find, which read the mount table with no lock; Engine_Archive_Unmount held the file semaphore only around FileClose, freeing the TOC and string table and clearing inUse outside it; and Engine_Archive_ReadSync read the mount file handle after passing its inUse check but before taking the semaphore, so a worker blocked on the semaphore during an unmount continued with a closed handle. Engine_IO_Shutdown had no way to know the worker had actually stopped. docs/subsystems/IO.md claimed shutdown drained outstanding requests and released the semaphores; neither happened.",
+      "fix_summary": "Engine_Archive_Find, Mount, Unmount, GetMount and GetEntry now take the IO file-access semaphore, Unmount holds it across the whole teardown, and ReadSync reads its mount inside the lock rather than before taking it. The IO worker sets an exit flag as its last act and Engine_IO_Shutdown waits for it (bounded by IO_DRAIN_MAX_SPINS) before destroying the thread handle and the three semaphores -- a worker that never acknowledges leaves them allocated and is reported, since leaking at process exit beats freeing state a live thread reads. Engine_Close drains IO first and stops the worker before Archive shutdown. Engine_ResetRuntimeState panics on a failed drain rather than continuing. docs/subsystems/IO.md and docs/subsystems/ARCHIVE.md now state what shutdown actually does.",
+      "files_changed": [
+        "engine/src/resources/EngineArchive.cpp",
+        "engine/include/resources/EngineArchive.h",
+        "engine/src/core/EngineIO.cpp",
+        "engine/src/core/EngineCore.cpp",
+        "docs/subsystems/IO.md",
+        "docs/subsystems/ARCHIVE.md"
+      ],
+      "regression_check": "On each platform, open a level through the Level Stream Testbed scene and immediately press the Testbed chord to switch scene while its materials are still streaming; repeat several times. Nothing may crash or log an archive read failure. Then quit the process the same way (during a load) and confirm a clean exit. On Win32, run under a debugger and confirm no access occurs after GetMemory().Release()."
+    },
+    {
+      "id": "EX-0010",
+      "title": "LRU eviction reused a resource slot behind handles the game still held, so a stale handle aliased a different asset",
+      "discovered_in": "docs/backlog/security_findings.md (full-codebase security pass)",
+      "date": "2026-09-16",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "With the 64-slot resource table full, loading another asset evicted the least recently used unpinned, unreferenced entry and reused its slot. A game still holding the evicted handle then saw Engine_Resource_IsReady answer true and Engine_Resource_Get return whatever had moved in -- a texture where a model was expected, or a different level material. Reachable in normal play on PS2 and PSP: a level with many materials plus a handful of game-loaded models reaches 64 slots.",
+      "root_cause": "Dependency references carry a generation counter for exactly this case, but public handles are bare slot indices with no generation, so nothing downstream could tell a reused slot from the original. The resource management philosophy in .github/copilot-instructions.md (No silent eviction, No implicit LRU) and the Reference counting with pinning and LRU paragraph in docs/subsystems/RESOURCE.md had been contradicting each other, and the implementation followed the spec rather than the source of truth.",
+      "fix_summary": "Resolved in favour of the instructions file, which is the repo single source of truth: Internal_EvictLRU is gone. A full table is now an error returning -1, naming the unpinned, unreferenced, least recently used entry so the caller knows what to release -- the same actionable shape the texture-budget error already had. Recency is still tracked, but only to name that candidate. docs/subsystems/RESOURCE.md was rewritten to match, and .github/copilot-instructions.md now says explicitly that the no-implicit-LRU rule covers the handle table and not only the texture budget. The Pin/Unpin declarations in EngineResource.h no longer describe an LRU.",
+      "files_changed": [
+        "engine/src/resources/EngineResource.cpp",
+        "engine/include/resources/EngineResource.h",
+        "docs/subsystems/RESOURCE.md",
+        ".github/copilot-instructions.md"
+      ],
+      "regression_check": "Open the Testbed resources scene and load assets until the table is full (64 on PS2/PSP). The next load must fail with a message naming a slot to unload, and every handle held before that must still resolve to the asset it named. Nothing may be evicted. Then unload the named slot and confirm the load succeeds."
+    },
+    {
+      "id": "EX-0011",
+      "title": "Theme decode installed font roles before validation, so a refused or merely inspected theme still changed the interface",
+      "discovered_in": "docs/backlog/security_findings.md (full-codebase security pass)",
+      "date": "2026-09-16",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "Every font reference in a cooked theme was copied into the live role table as part of decoding. Decoding runs in the async completion callback, so the roles changed the moment a theme asset finished loading -- before the metric sanity check, before the theme was applied, and even for a theme that was only ever inspected, which the Testbed asset browser does every time someone previews one. A theme refused for a bad metric left its font keys installed, and those keys are what the interface next asks the resource manager to load.",
+      "root_cause": "Ui_ThemeDecode wrote directly into the file-static s_RoleFont array while filling the caller UiStyle, so the style block was staged and the fonts were not. docs/subsystems/UI.md and docs/formats/THEME_FORMAT.md both stated that a theme is validated whole before anything is written and that a refused theme changes nothing.",
+      "fix_summary": "Added struct UiTheme (style block plus the font key per role) as what a decoded theme actually is -- a theme is colours, metrics and fonts together -- and made it the resource union member for RES_THEME. Ui_ThemeDecode now validates every font role before writing anything and stages the keys into the caller object, touching no live state. Ui_LoadTheme commits the style and the roles together, after MetricsAreSane. The Testbed asset browser reads the style through the new type. docs/subsystems/UI.md and docs/formats/THEME_FORMAT.md state that the fonts commit with the rest.",
+      "files_changed": [
+        "engine/include/ui/EngineUi.h",
+        "engine/src/ui/UiTheme.cpp",
+        "engine/src/resources/EngineResource.cpp",
+        "engine/src/debug/scenes/SceneAssetBrowser.cpp",
+        "docs/subsystems/UI.md",
+        "docs/formats/THEME_FORMAT.md"
+      ],
+      "regression_check": "In the ui_gallery example, preview a cooked theme in the Testbed asset browser and confirm Ui_RoleFont is unchanged afterwards -- the interface must still draw in the previous theme fonts. Then load a theme whose metrics are out of range and confirm both its colours and its font roles are refused together."
+    },
+    {
+      "id": "EX-0012",
+      "title": "Font loader validated 16-bit metrics then stored them as bytes, so a lineHeight of 256 became zero",
+      "discovered_in": "docs/backlog/security_findings.md (full-codebase security pass)",
+      "date": "2026-09-16",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "A cooked font whose lineHeight was 256 passed the non-zero check and was stored as 0, so Ui_TextHeight reported zero-height text and every row sized from it collapsed. baseline and spaceAdvance had the same gap. No unbounded loop resulted (Ui_LabelWrapped forces progress), so it presented as a layout collapse rather than a hang.",
+      "root_cause": "Font_LoadBaked read lineHeight, baseline and spaceAdvance as uint16_t, checked lineHeight against zero at that width, and then truncated all three to uint8_t when filling the Font. The check ran on the value read, not the value kept. docs/formats/FONT_FORMAT.md says a header that disagrees with its data is refused, not trusted.",
+      "fix_summary": "Font_LoadBaked now refuses a payload whose lineHeight, baseline or spaceAdvance exceeds UINT8_MAX, checking at the width the value is stored at. docs/formats/FONT_FORMAT.md states the byte range and why the check runs there.",
+      "files_changed": [
+        "engine/src/graphics/FontLoad.cpp",
+        "docs/formats/FONT_FORMAT.md"
+      ],
+      "regression_check": "Every cooked font must still load and draw identically in the ui_gallery example and the Testbed. Hand-edit a copy of a .ps2a font payload to set lineHeight to 256 and confirm the load is refused naming the field, rather than producing zero-height rows."
+    },
+    {
+      "id": "EX-0013",
+      "title": "Win32 local-app-data lookup passed SHGetFolderPathA a buffer shorter than its contract requires",
+      "discovered_in": "docs/backlog/security_findings.md (full-codebase security pass)",
+      "date": "2026-09-16",
+      "platforms": [
+        "win32"
+      ],
+      "symptom": "Win32Platform::BuildWritablePath passed a 256-byte stack buffer to SHGetFolderPathA, whose contract is a buffer of MAX_PATH (260) characters. A profile whose local-app-data folder resolves to more than 255 characters overran the stack buffer by up to four bytes.",
+      "root_cause": "The buffer was declared with IO_FILE_MAX_PATH, which is 256 -- a format constant that has nothing to do with the required size of the Win32 shell API. Only the current user can redirect their own shell folders, so this is a robustness defect rather than a privilege boundary.",
+      "fix_summary": "Declared the buffer as MAX_PATH, the size the API documents. Everything downstream already bounds its own snprintf against IO_FILE_MAX_PATH.",
+      "files_changed": [
+        "engine/src/platform/win32/Filesystem.cpp"
+      ],
+      "regression_check": "Run dist/win32/game.exe and confirm the save and achievement files still land under the local-app-data developer/title directory and are read back on the next launch."
+    },
+    {
+      "id": "EX-0014",
+      "title": "Build and CI supply chain: an unquoted shell relay, eval on a header string, and every action, container and package unpinned",
+      "discovered_in": "docs/backlog/security_findings.md (full-codebase security pass)",
+      "date": "2026-09-16",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "No runtime symptom -- these are build and CI hardening items found in the same pass. tools/build.py embedded the repository path in a single-quoted shell string passed to wsl bash -lc, so a quote character in the checkout path broke out of the string. tools/tests/test_compile_level.py ran eval on a regex-extracted expression from a platform header. All three workflows pinned actions/checkout, actions/setup-python and actions/upload-artifact by major-version tag; lint.yml additionally ran the third-party Flast/cppcheck-sarif@v2 -- a mutable BRANCH, not a tag -- inside a job holding security-events: write, had no top-level permissions block, and both it and ci.yml pulled the ps2sdk-ports container by the latest tag; tools-ci.yml installed pillow, pytest and jsonschema unpinned.",
+      "root_cause": "Each is the default shape of its construct: f-string interpolation into a shell command, eval as the quickest way to evaluate a product of two literals, and tag references as the documented way to name an action. None had been revisited against a supply-chain threat model.",
+      "fix_summary": "tools/build.py quotes the checkout path and every forwarded argument with shlex.quote, and quotes the command substitution that converts the path, so a checkout path containing a space reaches cd as one argument rather than two. The test parses the constant as a product of integer literals instead of calling eval. Every action is pinned to a commit SHA with the tag retained as a trailing comment, including Flast/cppcheck-sarif (whose v2 is a branch) and github/codeql-action/upload-sarif. Both uses of the build container are pinned by digest. lint.yml gained a top-level contents: read permissions block so check-style no longer runs with the default token scope; the cppcheck job keeps its own wider block. tools-ci.yml installs from a new pinned tools/requirements-ci.txt.",
+      "files_changed": [
+        "tools/build.py",
+        "tools/tests/test_compile_level.py",
+        "tools/requirements-ci.txt",
+        ".github/workflows/ci.yml",
+        ".github/workflows/lint.yml",
+        ".github/workflows/tools-ci.yml"
+      ],
+      "regression_check": "Run python3 tools/build.py debug from a Windows host and confirm it still re-invokes correctly inside WSL, including from a checkout path containing a space. Run python -m pytest tools/tests -q and confirm test_level_texture_max_bytes_matches_every_platform_header passes. Push a branch and confirm all three workflows still resolve their actions and container."
+    },
+    {
+      "id": "EX-0015",
+      "title": "Far-field chunk was published as a raw view with only its span checked, and the cooker could emit clusters short of frames",
+      "discovered_in": "docs/backlog/security_findings.md (verification pass over the security fixes)",
+      "date": "2026-09-16",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "No runtime symptom yet: nothing draws the far field. The level loader checked the FARF chunk's span and alignment like every other chunk, then published the raw pointer. Its header's cluster count, atlas count, atlas material indices and azimuth count, and every cluster's atlas index and first-frame index, were never compared to the chunk, the material table or each other -- so the first consumer would have inherited an unbounded view. The cooker made that concrete: once the impostor atlas filled it kept emitting clusters with fewer frames than the header's azimuth count, and the last ones with none, so a consumer indexing frames by cluster and azimuth would have read past the frame array on any level with more than six non-empty cells.",
+      "root_cause": "The security pass validated every chunk the runtime consumes today and left the one it does not. A view that is published is a view that will be consumed, and the consumer inherits whatever the publisher established -- nothing, in this case. The cooker's frame loop broke out per azimuth rather than per cluster, which is the natural way to fill an atlas and the wrong way to keep a cluster whole.",
+      "fix_summary": "The level loader validates the FARF chunk before publishing it: the header fits, no more atlases than the header holds, every atlas material inside the material table, a non-zero azimuth count, a cluster array that fits the chunk, a remainder that is a whole number of frames, and every cluster naming an atlas the header has and owning azimuthCount frames inside the frame array. LEVEL_FARFIELD_MAX_ATLASES is a format constant mirrored by tools/ps2lib/levelfmt.py. The cooker stops emitting clusters once the atlas cannot hold a full azimuth set, and the packer refuses a cluster short of frames, so the runtime never sees one. levelfmt.py gained a FARF reader and tools/tests/test_compile_level.py checks a cooked level against the same invariants. docs/formats/LEVEL_FORMAT.md and docs/subsystems/LEVEL.md state the contract.",
+      "files_changed": [
+        "engine/include/level/EngineLevelFormat.h",
+        "engine/src/level/EngineLevel.cpp",
+        "tools/ps2lib/levelfmt.py",
+        "tools/compile_level.py",
+        "tools/tests/test_compile_level.py",
+        "docs/formats/LEVEL_FORMAT.md",
+        "docs/subsystems/LEVEL.md"
+      ],
+      "regression_check": "Run python -m pytest tools/tests -q and confirm test_farfield_clusters_reference_only_what_the_chunk_holds and test_pack_farfield_refuses_a_cluster_short_of_frames pass. Cook a map with more than six non-empty cells and confirm the cook warns that the atlas is full rather than producing a partial cluster; then load it in the Level Stream Testbed scene and confirm it loads. Hand-edit a copy of a cooked .PS2L so a FARF cluster's firstFrame is past the frame array and confirm the load is refused naming the cluster."
+    },
+    {
+      "id": "EX-0016",
+      "title": "The PS2 GIFTAG VU0 batch-transform self-test compared unit-mismatched values, so the vector path never ran",
+      "discovered_in": "docs/backlog/performance_findings.md (full-codebase performance pass), PF-05",
+      "date": "2026-09-17",
+      "platforms": [
+        "ps2pal",
+        "ps2ntsc"
+      ],
+      "symptom": "The emulator log always read 'VU0 batch transform disabled (self-test failed)', so the direct (giftag) backend transformed every vertex with scalar code on the main processor instead of the vector coprocessor, contrary to GIFTAG.md's description of the vector path as the backend's model.",
+      "root_cause": "ps2sdk's calculate_vertices (ee/math3d/src/math3d.c) divides its output vector's x/y/z by the homogeneous w as part of its own VU0 macro-mode clip-and-divide sequence, and leaves w undivided. GifTagRenderer::SelfTestVu0Transform compared that already-divided output directly against a scalar reference computing the raw, undivided clip-space x/y/z/w -- the two are in different units and only coincidentally agree when w is close to 1, which a perspective camera at a realistic distance essentially never produces, so the self-test failed regardless of platform or emulation. TransformStrip's guarded VU0 branch had the matching bug in the other direction: it multiplied calculate_vertices' already-divided x/y/z by the reciprocal of w a second time, which would have produced wrong (over-converged-to-centre) screen coordinates had the self-test ever passed.",
+      "fix_summary": "SelfTestVu0Transform now divides the scalar reference's x/y/z by its own w before comparing, and compares w directly against calculate_vertices' (undivided) output, matching its documented convention. One of the self-test's three fixed vertices projected outside calculate_vertices' own internal frustum test (|x| or |y| or |z| > |w|), which makes it return exactly (0,0,0,1) rather than a projected position; replaced that vertex with one that stays inside. TransformStrip's VU0 branch no longer re-multiplies calculate_vertices' x/y/z by the reciprocal w; that reciprocal is kept only for the GS Q register (perspective-correct texturing), which does need the undivided w. docs/ps2/renderers/GIFTAG.md and docs/ps2/PLATFORM.md's Performance section now describe the corrected behaviour and flag a related, unfixed gap: a vertex calculate_vertices clips internally reads to the surrounding code as a valid vertex at screen centre, not as something to discard, because the guard-band/visibility checks around it were written for the scalar path's convention.",
+      "files_changed": [
+        "engine/src/platform/ps2/renderer/GifTag.cpp",
+        "docs/ps2/renderers/GIFTAG.md",
+        "docs/ps2/PLATFORM.md",
+        "docs/backlog/performance_findings.md"
+      ],
+      "regression_check": "Build ps2pal (python3 tools/build.py debug pal) and run tools/ps2/emu_capture.py dist/ps2pal/engine.iso --renderer giftag --log <path>: the log's 'GifTagRenderer: VU0 batch transform ...' line must read ENABLED (self-test passed). Capture a frame from both --renderer giftag and --renderer ps2gl on the boot scene and confirm the geometry (crate position, size, perspective, UI layout) matches between them. If the self-test fails again or the frames diverge geometrically, revert this fix and re-open PF-05 rather than shipping an unverified guarded path."
+    },
+    {
+      "id": "EX-0017",
+      "title": "ps2gl passed a plain colour straight through GL's [0,1] range for textured draws, overexposing every texture the backend renders",
+      "discovered_in": "manual comparison of giftag and ps2gl captures of the boot scene while verifying EX-0016",
+      "date": "2026-09-17",
+      "platforms": [
+        "ps2pal",
+        "ps2ntsc"
+      ],
+      "symptom": "Every texture drawn by the ps2gl backend -- the main menu's background image, world/level geometry, models, standalone primitives, the skybox -- looked washed out and overexposed next to the same content on the giftag backend: brighter, lower contrast, with fine texture detail (wood grain) lost above roughly half intensity.",
+      "root_cause": "The GS's texture-modulate mode treats a vertex/material colour of 128, not 255, as \"no change\" against the sampled texel (the same hardware fact docs/ps2/renderers/GIFTAG.md already documented and GifTag.cpp already compensates for at every one of its own colour sites). Ps2Gl.cpp called glColor4f with colours normalised the ordinary GL way (255 -> 1.0, meaning \"unmodified\") at every textured draw site -- the UI's screen-space quads, RenderLevel's sector meshes, RenderPrimitives' textured primitives, RenderModels' meshes, and RenderSkybox -- with no equivalent scale. The vendored ps2gl library does know about this conversion (GetMaxColorValue() in external/ps2gl/include/ps2gl/base_renderer.h, returning 128.0f when texturing is enabled) but only applies it when scaling lighting colours (ambient/diffuse/specular) into the VU1 renderer context; the plain per-vertex/material colour path a flat, unlit, textured draw uses has no such scaling, in the library or in this engine's calls into it. A colour of 1.0 therefore reached the GS as an uncorrected 255, roughly doubling every texture's brightness.",
+      "fix_summary": "Added GL_TEX_MODULATE_UNITY (128.0f / 255.0f) to Ps2Gl.cpp and applied it wherever a colour feeds a textured GL_MODULATE draw: FlushQuads2D's screen-space quads (scaled by the quad's own colour, not just replacing it), RenderLevel and RenderModels' per-mesh colour (recomputed every mesh from that mesh's own resolved texture state, not gated behind the existing bind-skip optimization, since a model with no material table or a texture bind failure must not inherit a neighbouring mesh's colour), RenderPrimitives' textured-primitive loop (tracked per entry the same way), and RenderSkybox's single textured cube. Untextured draws (RenderPrimitives' untextured loop) were already correct and untouched -- there, colour is the final result, not a texture multiplier, and the full range is right. docs/ps2/renderers/PS2GL.md gained the quirk, and docs/ps2/renderers/GIFTAG.md now cross-references it as the same GS fact, not a giftag-specific one.",
+      "files_changed": [
+        "engine/src/platform/ps2/renderer/Ps2Gl.cpp",
+        "docs/ps2/renderers/PS2GL.md",
+        "docs/ps2/renderers/GIFTAG.md"
+      ],
+      "regression_check": "Build ps2pal and run tools/ps2/emu_capture.py dist/ps2pal/engine.iso --renderer ps2gl --shot <path> against the boot scene: the crate texture and the main-menu background must show full wood-grain contrast and detail, matching a --renderer giftag capture of the same scene rather than looking washed out next to it. Load a level with textured and untextured geometry in the Level Stream Testbed scene under ps2gl and confirm both still render at their correct, matching-to-giftag brightness."
+    }
+  ]
+}

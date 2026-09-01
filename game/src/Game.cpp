@@ -1,18 +1,21 @@
-// ---------------------------------------------------------------------------
-// Game.cpp — the C++ game module (GameInit / GameUpdate).
-//
-// This is now a thin shell over the scene system (Scene.h / SceneManager.cpp):
-// on boot the selector scene runs a menu to pick which test script to execute
-// (stress swarm, level system, ...). See game/src/scene_*.cpp to add tests.
-// ---------------------------------------------------------------------------
-
+#include "../../engine/include/core/EngineCore.h"
+#include "../../engine/include/core/EngineSubsystems.h"
+#include "../include/scenes/MainMenu.h"
 #include "GameAPI.h"
-#include "Scene.h"
 
-void GameInit()
+void GameConfigure(EngineConfig* config)
 {
-    game::Log("MAIN (C++) starting...");
-    SceneManager_Init(); // activates the selector scene
+    static constexpr EngineSubsystem kSubsystems[] = {
+        EngineSubsystem::Io,    EngineSubsystem::Archive, EngineSubsystem::Resource,    EngineSubsystem::Level,      EngineSubsystem::Sector,
+        EngineSubsystem::Input, EngineSubsystem::Ui,      EngineSubsystem::Achievement, EngineSubsystem::PerfLogger, EngineSubsystem::Scene,
+    };
+
+    config->subsystems = kSubsystems;
+    config->subsystemCount = sizeof(kSubsystems) / sizeof(kSubsystems[0]);
 }
 
-void GameUpdate(float dt) { SceneManager_Update(dt); }
+void GameInit() { game::SetMainScene((game::Scene*)MainMenu::GetInstance()); }
+
+// The Scene subsystem drives MainScene directly once GameInit registers it;
+// this is kept only because GameAPI.h still requires the symbol.
+void GameUpdate(float dt) { (void)dt; }

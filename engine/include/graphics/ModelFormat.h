@@ -8,8 +8,9 @@
 // Baked model format (.bkm) produced by pack_assets.py.
 //
 // Raylib's runtime OBJ/glTF loader is gone; models are baked offline into
-// separated, UNINDEXED triangle arrays — exactly the layout ps2gl needs
-// (stride-0 vertex/normal/uv pointers) and the GIFTAG builder consumes directly.
+// separated, UNINDEXED triangle arrays with stride-0 vertex/normal/uv pointers.
+// Baked unindexed because at least one supported backend cannot draw indexed
+// geometry at all; every other backend consumes this layout directly.
 //
 // On-disk layout (little-endian, all sections 16-byte aligned):
 //   BakedModelHeader
@@ -18,9 +19,8 @@
 //   <geometry payload>   (referenced by absolute byte offset from file start)
 //
 // Version 2 changes vs. version 1:
-//   * Positions are baked as vec4 (x, y, z, 1) — a 16-byte stride that feeds
-//     glVertexPointer(4,...), VU0 calculate_vertices, and (later) VIF UNPACK
-//     V4-32 in place with no per-frame repack.
+//   * Positions are baked as vec4 (x, y, z, 1) — a 16-byte stride that vector
+//     transform paths can consume in place, with no per-frame repack.
 //   * Each mesh may be a triangle STRIP (degenerate-stitched, one strip/mesh)
 //     or a triangle LIST (fallback), selected by `topology`.
 //   * Each mesh carries a baked object-space bounding sphere for frustum cull.

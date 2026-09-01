@@ -7,7 +7,9 @@
 ## 1. General Principles
 
 - **Design**: Encapsulation (hide state in `.c`), Abstraction, DRY, and KISS.
-- **Comments**: Only when necessary. Comment the **"why"**, not the **"what"**.
+- **Comments**: Comment the **function signature only** — a doc comment on the declaration giving the summary,
+  parameters and return value, so an editor can show it to a caller. No inline commentary or rationale; that belongs
+  in `docs/`. See the Comments section of `cpp-expert.instructions.md` for the full rule and an example.
 - **Error Handling**: Use **enums** for descriptive error codes or `bool` for simple success/fail. Avoid raw integers.
   Use `Engine_Panic` only for unrecoverable hardware/memory states.
 
@@ -28,7 +30,9 @@
 - **Fixed-width**: **ALWAYS** use `<stdint.h>` types (`uint32_t`, `int16_t`, `uint8_t`, etc.). Never plain `int`,
   `long`, or `unsigned`.
 - **Booleans**: Use `<stdbool.h>` (`bool`, `true`, `false`).
-- **Constants**: Place all engine-wide constants in `engine/include/Constants.h` (split by category `Constants.XXX.h`).
+- **Constants**: Format constants go next to the struct they describe (`EngineArchive.h`, `EngineLevelFormat.h`,
+  ...); platform constants go in `engine/include/platform/<name>/PlatformConstants*.h`, reached via
+  `#include "PlatformConstants.h"`. See the Constants standard in `.github/copilot-instructions.md`.
 - **Magic Numbers**: Prohibited. Use descriptive macros or enums.
 - **Bitwise**: Use enums or macros for bitmasks.
 - **Enums**: Always `typedef enum { ... } TypeName;` — prefix all values with the type name to avoid pollution:

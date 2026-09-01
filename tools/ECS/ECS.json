@@ -1,15 +1,28 @@
 {
   "$schema": "./schema.json",
-  "hooks": ["HurtEntity"],
+  "hooks": [
+    "HurtEntity",
+    "UnlockDoor",
+    "LockDoor",
+    "ButtonPressed"
+  ],
   "components": [
     {
       "name": "HealthComponent",
       "description": "Handles entity vitality",
       "properties": [
-        { "name": "max_health", "type": "int", "description": "Maximum health", "default": 100 }
+        {
+          "name": "max_health",
+          "type": "int",
+          "description": "Maximum health",
+          "default": 100
+        }
       ],
       "actions": [
-        { "name": "hurtPlayer", "engineHook": "HurtEntity" }
+        {
+          "name": "hurtPlayer",
+          "engineHook": "HurtEntity"
+        }
       ]
     },
     {
@@ -30,14 +43,106 @@
       ]
     },
     {
+      "name": "TransformComponent",
+      "description": "Handles Transform of an entity/object",
+      "properties": [
+        {
+          "name": "position",
+          "type": "string",
+          "description": "Position of the entity/object",
+          "default": "0.0 0.0 0.0"
+        },
+        {
+          "name": "angles",
+          "type": "string",
+          "description": "Rotation of the entity/object",
+          "default": "0 0 0"
+        },
+        {
+          "name": "scale",
+          "type": "string",
+          "description": "Scale of the entity/object",
+          "default": "1.0 1.0 1.0"
+        }
+      ]
+    },
+    {
       "name": "ModelComponent",
       "description": "Handles 3D mesh rendering",
       "properties": [
-        { 
-          "name": "model", 
-          "type": "studio", 
-          "description": "Path to the 3D model file", 
-          "default": "models/barrel.mdl" 
+        {
+          "name": "model",
+          "type": "studio",
+          "description": "Path to the 3D model file",
+          "default": "models/barrel.mdl"
+        },
+        {
+          "name": "is_static",
+          "type": "bool",
+          "description": "Is the model static?",
+          "default": true
+        }
+      ]
+    },
+    {
+      "name": "ButtonComponent",
+      "description": "Used by func_button",
+      "actions": [
+        {
+          "name": "buttonPressed",
+          "engineHook": "ButtonPressed"
+        }
+      ]
+    },
+    {
+      "name": "LevelComponent",
+      "description": "Carries info about a level. Used by func_changeLevel",
+      "properties": [
+        {
+          "name": "level_name",
+          "type": "string",
+          "description": "The name of the next level to be loaded",
+          "default": ""
+        },
+        {
+          "name": "wait_time",
+          "type": "int",
+          "description": "Time in seconds that the level will be loaded after. 0 is immediate",
+          "default": 0
+        },
+        {
+          "name": "args",
+          "type": "string",
+          "description": "Space separated arguments that will be passed to the scene.",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "name": "DoorComponent",
+      "description": "Has info, used by func_door",
+      "properties": [
+        {
+          "name": "door_weight",
+          "type": "float",
+          "description": "The door's weight. The heavier the door, the more force it will need to open it.",
+          "default": 1.0
+        },
+        {
+          "name": "is_locked",
+          "type": "bool",
+          "description": "Is the door locked? If so, the door will not open.",
+          "default": false
+        }
+      ],
+      "actions": [
+        {
+          "name": "unlockDoor",
+          "engineHook": "UnlockDoor"
+        },
+        {
+          "name": "lockDoor",
+          "engineHook": "LockDoor"
         }
       ]
     }
@@ -47,13 +152,45 @@
       "classname": "prop_barrel",
       "classType": "PointClass",
       "description": "An explosive barrel",
-      "components": ["HealthComponent", "CollisionComponent", "ModelComponent"]
+      "components": [
+        "HealthComponent",
+        "CollisionComponent",
+        "ModelComponent"
+      ]
     },
     {
       "classname": "prop_model",
       "classType": "PointClass",
       "description": "An static model",
-      "components": ["CollisionComponent", "ModelComponent"]
+      "components": [
+        "TransformComponent",
+        "CollisionComponent",
+        "ModelComponent"
+      ]
+    },
+    {
+      "classname": "func_button",
+      "classType": "SolidClass",
+      "description": "An interactive button",
+      "components": [
+        "ButtonComponent"
+      ]
+    },
+    {
+      "classname": "func_changeLevel",
+      "classType": "SolidClass",
+      "description": "A trigger that will change the level on player interaction",
+      "components": [
+        "LevelComponent"
+      ]
+    },
+    {
+      "classname": "func_door",
+      "classType": "SolidClass",
+      "description": "Door that can be interacted by a player, NPCs or other physics objecs",
+      "components": [
+        "CollisionComponent"
+      ]
     }
   ]
 }

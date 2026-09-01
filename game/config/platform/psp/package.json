@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../../tools/schemas/package.schema.json",
+  "platform": "psp",
+  "description": "Container presentation for the PlayStation Portable. Describes the game, not the hardware - the cook list in engine/config/psp/ is the hardware half. Identity is not restated here: it comes from game/config/title.json and is folded in when this is read. See docs/psp/PACKAGING.md.",
+
+  "sfo": {
+    "category": "MG",
+    "extra": {
+      "MEMSIZE": 1,
+      "BOOTABLE": 1,
+      "REGION": 32768,
+      "PSP_SYSTEM_VER": "1.00"
+    }
+  },
+
+  "eboot": {
+    "icon": "eboot/icon0.png",
+    "picture": "eboot/pic1.png"
+  }
+}

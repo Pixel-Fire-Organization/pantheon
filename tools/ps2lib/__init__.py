@@ -6,6 +6,6 @@ Modules:
   ps2a     the 2080-byte AssetFileHeader (.ps2a) writer
   mapparse Valve-220 .map parsing: brushes -> planes -> polygons with UVs
 
-These are consumed by tools/pack_assets.py and tools/compile_level.py so both
+These are consumed by tools/cook_assets.py and tools/compile_level.py so both
 produce byte-identical geometry/textures through one code path.
 """

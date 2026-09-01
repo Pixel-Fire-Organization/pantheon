@@ -1,0 +1,102 @@
+{
+  "$schema": "../../tools/schemas/actions.schema.json",
+  "description": "Shared action map for every standalone example under examples/. Extend this file in place rather than forking a per-example copy — see docs/guidelines/NEW_EXAMPLE.md. See docs/subsystems/ACTION.md.",
+  "settings": {
+    "combinationWindow": 0.1,
+    "opposing": "neutral"
+  },
+  "contexts": [
+    {
+      "key": "Global",
+      "blocks": "nothing"
+    }
+  ],
+  "actions": [
+    {
+      "id": 0,
+      "key": "CycleNext",
+      "context": "Global",
+      "kind": "digital",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.r1"
+          ]
+        },
+        {
+          "sources": [
+            "keyboard.right"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "key": "CyclePrev",
+      "context": "Global",
+      "kind": "digital",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.l1"
+          ]
+        },
+        {
+          "sources": [
+            "keyboard.left"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "key": "EngineDebugPerfSnapshot",
+      "context": "Global",
+      "kind": "digital",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.l1",
+            "gamepad.r1",
+            "gamepad.select"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "key": "EngineDebugOverlayToggle",
+      "context": "Global",
+      "kind": "digital",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.l1",
+            "gamepad.r1",
+            "gamepad.start"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "key": "EngineDebugMenu",
+      "context": "Global",
+      "kind": "digital",
+      "bindings": [
+        {
+          "sources": [
+            "gamepad.select",
+            "gamepad.start"
+          ]
+        },
+        {
+          "sources": [
+            "keyboard.tab",
+            "keyboard.escape"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Achievement declaration",
+  "description": "One description of a title's achievement set, read by the engine and by every platform's packaging. Platform packaging consumes this; it does not own it. See docs/subsystems/ACHIEVEMENT.md.",
+  "type": "object",
+  "required": ["achievements"],
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema": { "type": "string" },
+    "description": { "type": "string" },
+
+    "achievements": {
+      "type": "array",
+      "description": "Dense, starting at zero. A gap is a packaging error: nothing at runtime can recover from an identifier with no entry behind it.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "key", "name", "grade"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 127,
+            "description": "The value a game names. Fixed for the life of the title: changing one silently reassigns what a player has already earned."
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9]*$",
+            "description": "The enumerator the game code uses. Distinct from the display name so that rewording a name cannot break the build."
+          },
+          "name": { "type": "string", "minLength": 1 },
+          "detail": { "type": "string" },
+          "grade": {
+            "type": "string",
+            "enum": ["platinum", "gold", "silver", "bronze"],
+            "description": "Presentation tier. At most one platinum, awarded for earning everything else."
+          },
+          "hidden": { "type": "boolean" },
+          "icon": {
+            "type": "string",
+            "description": "Path relative to this declaration. Required by platforms that pack per-achievement icons."
+          }
+        }
+      }
+    }
+  }
+}
