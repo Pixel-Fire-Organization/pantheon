@@ -4,13 +4,13 @@
 #include <cstring>
 #include <malloc.h>
 
+#include "Macros.h"
+#include "PlatformConstants.h"
 #include "core/EngineDebug.h"
 #include "core/EngineMemory.h"
 #include "graphics/TextureExpand.h"
-#include "Macros.h"
 #include "platform/Platform.h"
 #include "platform/psp/UtilityDialog.h"
-#include "PlatformConstants.h"
 
 extern "C" {
 #include <pspdisplay.h>
@@ -65,30 +65,12 @@ namespace
             return GU_PSM_5551;
         return GU_PSM_8888;
     }
-}
+} // namespace
 
-GuRenderer::GuRenderer(const EngineConfig& config)
-    : m_drawBuffer(nullptr)
-    , m_dispBuffer(nullptr)
-    , m_depthBuffer(nullptr)
-    , m_listIndex(0)
-    , m_vertices(nullptr)
-    , m_vertexCapacity(0)
-    , m_count3D(0)
-    , m_count2D(0)
-    , m_whiteTexture(0)
-    , m_geometry()
-    , m_clearColor(Color3{0.0f, 0.0f, 0.0f})
-    , m_width(GFX_SCREEN_WIDTH)
-    , m_height(GFX_SCREEN_HEIGHT)
-    , m_frameStats()
-    , m_initialized(false)
-    , m_imageDisplayList(nullptr)
-    , m_imageColorBuffer(nullptr)
-    , m_imageDepthBuffer(nullptr)
-    , m_imageWidth(0)
-    , m_imageHeight(0)
-    , m_imageTextureSlot(-1)
+GuRenderer::GuRenderer(const EngineConfig& config) :
+    m_drawBuffer(nullptr), m_dispBuffer(nullptr), m_depthBuffer(nullptr), m_listIndex(0), m_vertices(nullptr), m_vertexCapacity(0), m_count3D(0), m_count2D(0), m_whiteTexture(0), m_geometry(),
+    m_clearColor(Color3{0.0f, 0.0f, 0.0f}), m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_frameStats(), m_initialized(false), m_imageDisplayList(nullptr), m_imageColorBuffer(nullptr),
+    m_imageDepthBuffer(nullptr), m_imageWidth(0), m_imageHeight(0), m_imageTextureSlot(-1)
 {
     UNUSED_VAR(config);
     memset(m_textures, 0, sizeof(m_textures));

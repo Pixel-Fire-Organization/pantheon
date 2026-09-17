@@ -4,8 +4,8 @@
 
 #include <cstring>
 
-#include "core/EngineDebug.h"
 #include "Macros.h"
+#include "core/EngineDebug.h"
 #include "graphics/NullRenderer.h"
 #include "platform/PlatformRegistry.h"
 #include "renderer/OpenGl.h"

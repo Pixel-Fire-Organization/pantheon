@@ -5,8 +5,8 @@
 
 #include "../../include/core/EngineDebug.h"
 #include "../../include/core/EngineInput.h"
-#include "core/EngineCore.h"
 #include "UiInternal.h"
+#include "core/EngineCore.h"
 #include "graphics/Renderer.h"
 #include "graphics/StagedGeometry.h"
 #include "platform/Platform.h"

@@ -1,9 +1,9 @@
 #include <cstdio>
 #include <cstring>
 
+#include "Platform.h"
 #include "core/EngineDebug.h"
 #include "core/EngineIO.h"
-#include "Platform.h"
 
 extern "C" {
 #include <psp2/io/dirent.h>
@@ -16,7 +16,7 @@ namespace
     FileHandle ToHandle(SceUID fd) { return reinterpret_cast<FileHandle>(static_cast<uintptr_t>(fd) + 1u); }
 
     SceUID ToFd(FileHandle handle) { return static_cast<SceUID>(reinterpret_cast<uintptr_t>(handle) - 1u); }
-}
+} // namespace
 
 bool VitaPlatform::BuildPath(const char* relativePath, char* outBuf, size_t bufSize) const
 {

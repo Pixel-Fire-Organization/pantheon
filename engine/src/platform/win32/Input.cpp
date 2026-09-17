@@ -1,9 +1,9 @@
 #include <cmath>
 #include <cstring>
 
-#include "core/EngineDebug.h"
 #include "Macros.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 #include <windows.h>
 #include <xinput.h>
@@ -142,15 +142,14 @@ namespace
     };
 
     const KeyPadBind kKeyboardPad[] = {
-        {KeyboardKey::Up, GamepadButton::DPadUp},     {KeyboardKey::W, GamepadButton::DPadUp},     {KeyboardKey::Down, GamepadButton::DPadDown},    {KeyboardKey::S, GamepadButton::DPadDown},
-        {KeyboardKey::Left, GamepadButton::DPadLeft}, {KeyboardKey::A, GamepadButton::DPadLeft},   {KeyboardKey::Right, GamepadButton::DPadRight},  {KeyboardKey::D, GamepadButton::DPadRight},
+        {KeyboardKey::Up, GamepadButton::DPadUp},     {KeyboardKey::W, GamepadButton::DPadUp},    {KeyboardKey::Down, GamepadButton::DPadDown},    {KeyboardKey::S, GamepadButton::DPadDown},
+        {KeyboardKey::Left, GamepadButton::DPadLeft}, {KeyboardKey::A, GamepadButton::DPadLeft},  {KeyboardKey::Right, GamepadButton::DPadRight},  {KeyboardKey::D, GamepadButton::DPadRight},
 
-        {KeyboardKey::Space, GamepadButton::Cross},   {KeyboardKey::Enter, GamepadButton::Cross},  {KeyboardKey::Backspace, GamepadButton::Circle}, {KeyboardKey::E, GamepadButton::Square},
+        {KeyboardKey::Space, GamepadButton::Cross},   {KeyboardKey::Enter, GamepadButton::Cross}, {KeyboardKey::Backspace, GamepadButton::Circle}, {KeyboardKey::E, GamepadButton::Square},
         {KeyboardKey::Q, GamepadButton::Triangle},
 
-        {KeyboardKey::Num1, GamepadButton::L1},       {KeyboardKey::Num2, GamepadButton::R1},      {KeyboardKey::Num3, GamepadButton::L2},          {KeyboardKey::Num4, GamepadButton::R2},
-        {KeyboardKey::Num5, GamepadButton::L3},       {KeyboardKey::Num6, GamepadButton::R3},
-        {KeyboardKey::Tab, GamepadButton::Select},    {KeyboardKey::Escape, GamepadButton::Start},
+        {KeyboardKey::Num1, GamepadButton::L1},       {KeyboardKey::Num2, GamepadButton::R1},     {KeyboardKey::Num3, GamepadButton::L2},          {KeyboardKey::Num4, GamepadButton::R2},
+        {KeyboardKey::Num5, GamepadButton::L3},       {KeyboardKey::Num6, GamepadButton::R3},     {KeyboardKey::Tab, GamepadButton::Select},       {KeyboardKey::Escape, GamepadButton::Start},
     };
 
 } // namespace

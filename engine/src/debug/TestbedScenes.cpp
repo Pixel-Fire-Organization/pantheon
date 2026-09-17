@@ -2,8 +2,8 @@
 
 #include <cstring>
 
-#include "ui/EngineUi.h"
 #include "platform/Platform.h"
+#include "ui/EngineUi.h"
 
 namespace
 {

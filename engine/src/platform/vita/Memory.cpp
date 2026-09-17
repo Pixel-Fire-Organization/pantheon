@@ -2,10 +2,10 @@
 #include <cstring>
 #include <malloc.h>
 
-#include "core/EngineDebug.h"
-#include "level/EngineLevelFormat.h"
 #include "Macros.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
+#include "level/EngineLevelFormat.h"
 
 extern "C" {
 #include <psp2/kernel/sysmem.h>
@@ -43,12 +43,9 @@ namespace
         *outBase = base;
         return uid;
     }
-}
+} // namespace
 
-VitaPlatform::VitaMemory::VitaMemory(const VitaPlatform* owner)
-    : m_owner(owner), m_arenaBlockId(-1), m_poolBlockId(-1), m_arenaBlock(nullptr), m_poolBlock(nullptr), m_reservedBytes(0)
-{
-}
+VitaPlatform::VitaMemory::VitaMemory(const VitaPlatform* owner) : m_owner(owner), m_arenaBlockId(-1), m_poolBlockId(-1), m_arenaBlock(nullptr), m_poolBlock(nullptr), m_reservedBytes(0) {}
 
 size_t VitaPlatform::VitaMemory::GetBudgetBytes() const { return static_cast<size_t>(MEM_LIMIT_TOTAL_BUDGET); }
 
@@ -71,8 +68,7 @@ bool VitaPlatform::VitaMemory::Reserve(EngineMemoryMap* outMap)
 
     if (m_arenaBlockId < 0 || m_poolBlockId < 0)
     {
-        Engine_LogError("%s: could not reserve %zu KB of main memory (arenas %d, pool %d)", m_owner->GetName(), required / 1024,
-                        static_cast<int>(m_arenaBlockId), static_cast<int>(m_poolBlockId));
+        Engine_LogError("%s: could not reserve %zu KB of main memory (arenas %d, pool %d)", m_owner->GetName(), required / 1024, static_cast<int>(m_arenaBlockId), static_cast<int>(m_poolBlockId));
         Release();
         return false;
     }
@@ -112,10 +108,7 @@ void VitaPlatform::VitaMemory::Release()
     m_reservedBytes = 0;
 }
 
-void* VitaPlatform::VitaMemory::Alloc(size_t size, size_t alignment)
-{
-    return memalign(alignment, size);
-}
+void* VitaPlatform::VitaMemory::Alloc(size_t size, size_t alignment) { return memalign(alignment, size); }
 
 void VitaPlatform::VitaMemory::Free(void* ptr)
 {

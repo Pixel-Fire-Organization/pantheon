@@ -24,7 +24,7 @@ namespace
         sceKernelSleepThreadCB();
         return 0;
     }
-}
+} // namespace
 
 void PspExit_Install()
 {

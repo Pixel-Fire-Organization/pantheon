@@ -236,4 +236,3 @@ void Win32Platform::Dialog_Cancel()
     // nothing left running to cancel, only the result of one still unread.
     m_dialogResult = DialogStatus::Idle;
 }
-

@@ -1,10 +1,10 @@
 #include <cstdio>
 #include <cstring>
 
-#include "core/EngineDebug.h"
-#include "core/EngineIO.h"
 #include "Platform.h"
 #include "TitleInfo.h"
+#include "core/EngineDebug.h"
+#include "core/EngineIO.h"
 
 #include <shlobj.h>
 #include <windows.h>

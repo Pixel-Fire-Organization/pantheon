@@ -34,10 +34,7 @@ namespace
     /// @param outY Receives the row's top edge.
     /// @param outW Receives the row's width.
     /// @return True on the frame the row is activated.
-    bool ActivatableRow(const char* label, bool highlight, int* outX, int* outY, int* outW)
-    {
-        return UiInternal_ActivatableRow(UiInternal_Id(label), highlight, outX, outY, outW);
-    }
+    bool ActivatableRow(const char* label, bool highlight, int* outX, int* outY, int* outW) { return UiInternal_ActivatableRow(UiInternal_Id(label), highlight, outX, outY, outW); }
 } // namespace
 
 bool Ui_BeginPanel(const char* title, int x, int y, int w, int h)

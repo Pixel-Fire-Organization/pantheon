@@ -1,10 +1,10 @@
 #include <cstdio>
 
-#include "core/EngineCore.h"
-#include "ui/EngineUi.h"
 #include "Macros.h"
 #include "Platform.h"
+#include "core/EngineCore.h"
 #include "graphics/Renderer.h"
+#include "ui/EngineUi.h"
 
 void Ps2Platform::ConsoleWrite(LogLevel level, const char* line)
 {

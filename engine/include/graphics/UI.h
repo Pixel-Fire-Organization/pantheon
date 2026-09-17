@@ -36,7 +36,7 @@ struct UiQuad
 /// renderer once, so a backend translates a batch rather than servicing calls.
 class UI
 {
-  public:
+public:
     /// Drop every quad and the overflow count, ready for a new frame.
     void Reset();
 
@@ -59,7 +59,7 @@ class UI
     /// @return The per-frame quad budget this platform allows.
     static uint32_t Capacity() { return UI_MAX_QUADS; }
 
-  private:
+private:
     UiQuad m_quads[UI_MAX_QUADS];
     uint32_t m_count = 0;
     uint32_t m_dropped = 0;

@@ -1,9 +1,9 @@
 #include <cmath>
 #include <cstring>
 
-#include "core/EngineDebug.h"
 #include "Macros.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 extern "C" {
 #include <psp2/ctrl.h>
@@ -68,7 +68,7 @@ namespace
 
         s_SamplingReady = true;
     }
-}
+} // namespace
 
 void VitaPlatform::PollInput()
 {

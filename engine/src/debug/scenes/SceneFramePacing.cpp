@@ -1,9 +1,9 @@
 #include <cstdio>
 
 #include "core/EngineCore.h"
-#include "ui/EngineUi.h"
 #include "debug/TestbedScene.h"
 #include "platform/Platform.h"
+#include "ui/EngineUi.h"
 
 namespace
 {
@@ -69,8 +69,7 @@ void Scene_FramePacing_Update(float dt)
     const int laneY = screenH - PANEL_MARGIN - LANE_HEIGHT;
     Ui_Rect(PANEL_MARGIN, laneY, screenW - PANEL_MARGIN * 2, LANE_HEIGHT, UiColor::BarTrack);
     const int travel = screenW - PANEL_MARGIN * 2 - MARKER_SIZE;
-    Ui_Rect(PANEL_MARGIN + static_cast<int>(s_Mover * static_cast<float>(travel)), laneY + (LANE_HEIGHT - MARKER_SIZE) / 2, MARKER_SIZE, MARKER_SIZE,
-            UiColor::TextAccent);
+    Ui_Rect(PANEL_MARGIN + static_cast<int>(s_Mover * static_cast<float>(travel)), laneY + (LANE_HEIGHT - MARKER_SIZE) / 2, MARKER_SIZE, MARKER_SIZE, UiColor::TextAccent);
 
     Ui_Rect(screenW - PANEL_MARGIN - MARKER_SIZE * 2, PANEL_MARGIN, MARKER_SIZE * 2, MARKER_SIZE * 2, s_PulseOn ? UiColor::BarFill : UiColor::BarTrack);
 

@@ -1,9 +1,9 @@
 #include <cstdio>
 
 #include "core/EngineInput.h"
-#include "ui/EngineUi.h"
 #include "debug/TestbedScene.h"
 #include "platform/Platform.h"
+#include "ui/EngineUi.h"
 
 namespace
 {
@@ -11,10 +11,8 @@ namespace
     const int COLUMN_GAP = 8;
 
     const GamepadButton kButtons[] = {
-        GamepadButton::Select,   GamepadButton::L3,     GamepadButton::R3,       GamepadButton::Start,
-        GamepadButton::DPadUp,   GamepadButton::DPadRight, GamepadButton::DPadDown, GamepadButton::DPadLeft,
-        GamepadButton::L2,       GamepadButton::R2,     GamepadButton::L1,       GamepadButton::R1,
-        GamepadButton::Triangle, GamepadButton::Circle, GamepadButton::Cross,    GamepadButton::Square,
+        GamepadButton::Select, GamepadButton::L3, GamepadButton::R3, GamepadButton::Start, GamepadButton::DPadUp,   GamepadButton::DPadRight, GamepadButton::DPadDown, GamepadButton::DPadLeft,
+        GamepadButton::L2,     GamepadButton::R2, GamepadButton::L1, GamepadButton::R1,    GamepadButton::Triangle, GamepadButton::Circle,    GamepadButton::Cross,    GamepadButton::Square,
     };
 
     const int kButtonCount = static_cast<int>(sizeof(kButtons) / sizeof(kButtons[0]));
@@ -80,8 +78,7 @@ void Scene_Gamepad_Update(float dt)
     AxisRow("RIGHT", GetGamePadAxis(s_Port, GamepadStick::Right));
 
     char trigger[48];
-    snprintf(trigger, sizeof(trigger), "%.2f %.2f", static_cast<double>(GetGamePadTrigger(s_Port, GamepadTrigger::Left)),
-             static_cast<double>(GetGamePadTrigger(s_Port, GamepadTrigger::Right)));
+    snprintf(trigger, sizeof(trigger), "%.2f %.2f", static_cast<double>(GetGamePadTrigger(s_Port, GamepadTrigger::Left)), static_cast<double>(GetGamePadTrigger(s_Port, GamepadTrigger::Right)));
     Ui_LabelValue("TRIGGERS", trigger);
     Ui_LabelValue("ANALOG", platform->HasCapability(PlatformCapability::AnalogTriggers) ? "YES" : "DIGITAL ONLY");
     Ui_Label("L1 R1 CHANGE PORT");

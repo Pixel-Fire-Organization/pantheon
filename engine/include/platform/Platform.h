@@ -5,9 +5,9 @@
 
 #include "PlatformKeys.h"
 #include "PlatformTypes.h"
+#include "graphics/Types.h"
 #include "platform/AchievementContract.h"
 #include "platform/MemoryContract.h"
-#include "graphics/Types.h"
 
 class Renderer;
 struct EngineConfig;

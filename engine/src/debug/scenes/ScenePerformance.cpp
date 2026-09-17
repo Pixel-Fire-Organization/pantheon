@@ -1,10 +1,10 @@
 #include <cstdio>
 
 #include "core/EngineCore.h"
-#include "ui/EngineUi.h"
 #include "debug/TestbedScene.h"
 #include "graphics/Renderer.h"
 #include "platform/Platform.h"
+#include "ui/EngineUi.h"
 
 namespace
 {

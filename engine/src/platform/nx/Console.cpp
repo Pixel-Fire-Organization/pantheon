@@ -2,8 +2,8 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "core/EngineIO.h"
 #include "Platform.h"
+#include "core/EngineIO.h"
 
 #include <switch.h>
 
@@ -40,7 +40,7 @@ namespace
         s_LogFile = fopen(path, "w");
         return s_LogFile;
     }
-}
+} // namespace
 
 void NxPlatform::ConsoleWrite(LogLevel level, const char* line)
 {

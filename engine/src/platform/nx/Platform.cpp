@@ -3,34 +3,19 @@
 
 #include "Platform.h"
 
+#include "TitleInfo.h"
 #include "core/EngineDebug.h"
 #include "graphics/NullRenderer.h"
 #include "platform/PlatformRegistry.h"
-#include "TitleInfo.h"
 #include "renderer/Deko3d.h"
 #include "renderer/OpenGl.h"
 
 #include <switch.h>
 
-NxPlatform::NxPlatform()
-    : m_touchCount(0)
-    , m_startupArgs()
-    , m_resourceToken("")
-    , m_tickOrigin(armGetSystemTick())
-    , m_suspendedTicks(0)
-    , m_suspendStartTick(0)
-    , m_framebufferWidth(GFX_SCREEN_WIDTH)
-    , m_framebufferHeight(GFX_SCREEN_HEIGHT)
-    , m_dialogResult(DialogStatus::Idle)
-    , m_suspended(false)
-    , m_docked(false)
-    , m_exitRequested(false)
-    , m_romfsMounted(false)
-    , m_sdMounted(false)
-    , m_exitLocked(false)
-    , m_logInput(false)
-    , m_initialised(false)
-    , m_memory(this)
+NxPlatform::NxPlatform() :
+    m_touchCount(0), m_startupArgs(), m_resourceToken(""), m_tickOrigin(armGetSystemTick()), m_suspendedTicks(0), m_suspendStartTick(0), m_framebufferWidth(GFX_SCREEN_WIDTH),
+    m_framebufferHeight(GFX_SCREEN_HEIGHT), m_dialogResult(DialogStatus::Idle), m_suspended(false), m_docked(false), m_exitRequested(false), m_romfsMounted(false), m_sdMounted(false),
+    m_exitLocked(false), m_logInput(false), m_initialised(false), m_memory(this)
 {
     memset(m_pads, 0, sizeof(m_pads));
     memset(m_padsPrev, 0, sizeof(m_padsPrev));
@@ -206,10 +191,7 @@ uint16_t NxPlatform::GetDebugChord(DebugChord chord) const
     return 0;
 }
 
-bool NxPlatform::SupportsRenderer(RendererId id) const
-{
-    return id == RendererId::Deko3d || id == RendererId::OpenGl || id == RendererId::Null;
-}
+bool NxPlatform::SupportsRenderer(RendererId id) const { return id == RendererId::Deko3d || id == RendererId::OpenGl || id == RendererId::Null; }
 
 RendererId NxPlatform::GetDefaultRenderer() const { return RendererId::Deko3d; }
 

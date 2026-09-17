@@ -1,7 +1,7 @@
 #include <cstdlib>
 
-#include "core/EngineDebug.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 extern "C" {
 #include <pspkernel.h>
@@ -31,7 +31,7 @@ namespace
             thread->entry(thread->userData);
         return 0;
     }
-}
+} // namespace
 
 PlatformThread* PspPlatform::ThreadCreate(ThreadEntry entry, void* userData, size_t stackSize)
 {

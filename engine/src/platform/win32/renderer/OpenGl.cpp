@@ -4,9 +4,9 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "Macros.h"
 #include "core/EngineDebug.h"
 #include "core/EngineMemory.h"
-#include "Macros.h"
 #include "graphics/TextureExpand.h"
 #include "platform/Platform.h"
 
@@ -105,8 +105,8 @@ void main() {
 
 OpenGlRenderer::OpenGlRenderer(const EngineConfig& config) :
     m_hwnd(nullptr), m_dc(nullptr), m_context(nullptr), m_coreProfile(false), m_versionMajor(0), m_versionMinor(0), m_program(0), m_uniformViewProj(-1), m_uniformTexture(-1), m_vao(0),
-    m_vertexBuffer(0), m_vertexBufferCapacity(0), m_whiteTexture(0), m_clearColor{0.0f, 0.0f, 0.0f}, m_width(0), m_height(0), m_frameStats{}, m_initialized(false), m_imageFbo(0),
-    m_imageColorTex(0), m_imageDepthRb(0), m_imageWidth(0), m_imageHeight(0)
+    m_vertexBuffer(0), m_vertexBufferCapacity(0), m_whiteTexture(0), m_clearColor{0.0f, 0.0f, 0.0f}, m_width(0), m_height(0), m_frameStats{}, m_initialized(false), m_imageFbo(0), m_imageColorTex(0),
+    m_imageDepthRb(0), m_imageWidth(0), m_imageHeight(0)
 {
     UNUSED_VAR(config);
     memset(m_textures, 0, sizeof(m_textures));

@@ -3,13 +3,13 @@
 #include <cstdio>
 
 #include "GameAPI.h"
-#include "debug/TestbedScene.h"
 #include "core/EngineAction.h"
 #include "core/EngineApp.h"
 #include "core/EngineCore.h"
 #include "core/EngineDebug.h"
 #include "core/EngineInput.h"
 #include "core/EngineSubsystems.h"
+#include "debug/TestbedScene.h"
 #include "platform/Platform.h"
 #include "ui/EngineUi.h"
 

@@ -2,13 +2,12 @@
 
 #include <cstring>
 
-#include "core/EngineDebug.h"
 #include "Macros.h"
+#include "core/EngineDebug.h"
 
 #include "CommonDialog.h"
 
-extern "C"
-{
+extern "C" {
 #include <psp2/common_dialog.h>
 }
 

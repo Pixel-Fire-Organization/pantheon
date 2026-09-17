@@ -5,10 +5,10 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "core/EngineDebug.h"
-#include "core/EngineMemory.h"
 #include "Macros.h"
 #include "PlatformConstants.h"
+#include "core/EngineDebug.h"
+#include "core/EngineMemory.h"
 #include "graphics/TextureExpand.h"
 #include "platform/Platform.h"
 
@@ -16,9 +16,9 @@ extern "C" {
 #include <vitaGL.h>
 }
 
-VitaGlRenderer::VitaGlRenderer(const EngineConfig& config)
-    : m_whiteTexture(0), m_geometry(), m_clearColor(Color3{0.0f, 0.0f, 0.0f}), m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_frameStats(), m_initialized(false), m_imageFbo(0),
-      m_imageColorTex(0), m_imageDepthRb(0), m_imageWidth(0), m_imageHeight(0)
+VitaGlRenderer::VitaGlRenderer(const EngineConfig& config) :
+    m_whiteTexture(0), m_geometry(), m_clearColor(Color3{0.0f, 0.0f, 0.0f}), m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_frameStats(), m_initialized(false), m_imageFbo(0),
+    m_imageColorTex(0), m_imageDepthRb(0), m_imageWidth(0), m_imageHeight(0)
 {
     UNUSED_VAR(config);
     memset(m_textures, 0, sizeof(m_textures));

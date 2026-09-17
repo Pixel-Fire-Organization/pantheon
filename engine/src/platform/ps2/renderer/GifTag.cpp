@@ -15,14 +15,14 @@ extern "C" {
 #include <packet2_utils.h>
 }
 
+#include "Macros.h"
 #include "core/EngineDebug.h"
 #include "core/EngineMemory.h"
+#include "graphics/Frustum.h"
+#include "graphics/PrimitiveGeometry.h"
 #include "level/EngineLevel.h"
 #include "level/EngineSector.h"
 #include "resources/EngineResource.h"
-#include "Macros.h"
-#include "graphics/Frustum.h"
-#include "graphics/PrimitiveGeometry.h"
 
 namespace
 {
@@ -1233,8 +1233,9 @@ uint32_t GifTagRenderer::RenderToImage3D(const Renderable3D& what, const Camera3
     packet2_update(scratch, draw_alpha_blending(scratch->next, 0, &blend));
 
     packet2_update(scratch, draw_disable_tests(scratch->next, 0, &imgZ));
-    packet2_update(scratch, draw_clear(scratch->next, 0, offsetX, offsetY, GFX_PS2_IMAGE_TARGET_SIZE, GFX_PS2_IMAGE_TARGET_SIZE, static_cast<int>(clearColor.r * 255.0f),
-                                        static_cast<int>(clearColor.g * 255.0f), static_cast<int>(clearColor.b * 255.0f)));
+    packet2_update(scratch,
+                   draw_clear(scratch->next, 0, offsetX, offsetY, GFX_PS2_IMAGE_TARGET_SIZE, GFX_PS2_IMAGE_TARGET_SIZE, static_cast<int>(clearColor.r * 255.0f),
+                              static_cast<int>(clearColor.g * 255.0f), static_cast<int>(clearColor.b * 255.0f)));
     packet2_update(scratch, draw_enable_tests(scratch->next, 0, &imgZ));
 
     // DrawTriangles/DrawStrip/BindTexture all write through m_geom, so

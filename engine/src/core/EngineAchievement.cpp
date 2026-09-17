@@ -5,9 +5,9 @@
 #include "core/EngineDebug.h"
 #include "core/EngineIO.h"
 #include "core/EngineSubsystems.h"
-#include "ui/EngineAchievementUi.h"
 #include "platform/AchievementContract.h"
 #include "platform/Platform.h"
+#include "ui/EngineAchievementUi.h"
 
 namespace
 {
@@ -123,8 +123,7 @@ namespace
             if (!s_ReportedNoStorage)
             {
                 s_ReportedNoStorage = true;
-                Engine_LogError("Achievement: wrote %u of %u bytes to '%s'; unlocks will not survive a restart",
-                                static_cast<unsigned>(written), static_cast<unsigned>(sizeof(s_Record)), path);
+                Engine_LogError("Achievement: wrote %u of %u bytes to '%s'; unlocks will not survive a restart", static_cast<unsigned>(written), static_cast<unsigned>(sizeof(s_Record)), path);
             }
             return false;
         }
@@ -148,7 +147,7 @@ namespace
             Engine_LogInfo("Achievement: the platform refused achievement %u; the engine's record stands", id);
         }
     }
-}
+} // namespace
 
 bool Engine_Achievement_Init(const char* commId)
 {
@@ -166,12 +165,10 @@ bool Engine_Achievement_Init(const char* commId)
     {
         s_Contract = platform->GetAchievements();
         if (s_Contract && !s_Contract->Init(commId))
-            Engine_LogInfo("Achievement: %s will not mirror unlocks; the engine records them regardless",
-                           platform->GetName());
+            Engine_LogInfo("Achievement: %s will not mirror unlocks; the engine records them regardless", platform->GetName());
     }
 
-    Engine_LogInfo("Achievement: ready (%u declared, record %s)", Engine_Achievement_DeclaredCount(),
-                   s_Persistent ? "on disc" : "in memory only");
+    Engine_LogInfo("Achievement: ready (%u declared, record %s)", Engine_Achievement_DeclaredCount(), s_Persistent ? "on disc" : "in memory only");
     return true;
 }
 
@@ -203,10 +200,7 @@ const char* Engine_Achievement_GetMirrorReason()
 
 bool Engine_Achievement_IsPersistent() { return s_Loaded && s_Persistent; }
 
-bool Engine_Achievement_PumpStartup()
-{
-    return (s_Loaded && s_Contract) ? s_Contract->PumpStartup() : false;
-}
+bool Engine_Achievement_PumpStartup() { return (s_Loaded && s_Contract) ? s_Contract->PumpStartup() : false; }
 
 int32_t Engine_Achievement_GetConsoleCount() { return (s_Loaded && s_Contract) ? s_Contract->GetConsoleCount() : -1; }
 

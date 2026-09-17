@@ -1,11 +1,11 @@
 #include <cstdio>
 #include <cstring>
 
-#include "core/EngineDebug.h"
-#include "core/EngineIO.h"
 #include "Platform.h"
 #include "Ps2SaveIcon.h"
 #include "TitleInfo.h"
+#include "core/EngineDebug.h"
+#include "core/EngineIO.h"
 
 #include <libmc.h>
 #include <loadfile.h>

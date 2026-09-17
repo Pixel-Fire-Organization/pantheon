@@ -1,10 +1,10 @@
 #include <cstdio>
 #include <cstring>
 
-#include "core/EngineCore.h"
-#include "graphics/Renderer.h"
 #include "Macros.h"
 #include "Platform.h"
+#include "core/EngineCore.h"
+#include "graphics/Renderer.h"
 #include "ui/EngineUi.h"
 
 extern "C" {
@@ -47,7 +47,7 @@ namespace
         s_LogFile = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
         return s_LogFile;
     }
-}
+} // namespace
 
 void PspPlatform::ConsoleWrite(LogLevel level, const char* line)
 {

@@ -3,13 +3,13 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "Macros.h"
+#include "PlatformConstants.h"
 #include "core/EngineDebug.h"
 #include "core/EngineMemory.h"
 #include "graphics/TextureExpand.h"
-#include "Macros.h"
 #include "platform/Platform.h"
 #include "platform/psp/UtilityDialog.h"
-#include "PlatformConstants.h"
 
 extern "C" {
 #include <GL/gl.h>
@@ -27,19 +27,11 @@ namespace
         const uint32_t spent = (display * GFX_PSP_DISPLAY_BUFFERS) + depth;
         return (spent < GFX_PSP_VRAM_BYTES) ? (GFX_PSP_VRAM_BYTES - spent) : 0u;
     }
-}
+} // namespace
 
-PspGlRenderer::PspGlRenderer(const EngineConfig& config)
-    : m_display(nullptr)
-    , m_surface(nullptr)
-    , m_context(nullptr)
-    , m_whiteTexture(0)
-    , m_geometry()
-    , m_clearColor(Color3{0.0f, 0.0f, 0.0f})
-    , m_width(GFX_SCREEN_WIDTH)
-    , m_height(GFX_SCREEN_HEIGHT)
-    , m_frameStats()
-    , m_initialized(false)
+PspGlRenderer::PspGlRenderer(const EngineConfig& config) :
+    m_display(nullptr), m_surface(nullptr), m_context(nullptr), m_whiteTexture(0), m_geometry(), m_clearColor(Color3{0.0f, 0.0f, 0.0f}), m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT),
+    m_frameStats(), m_initialized(false)
 {
     UNUSED_VAR(config);
     memset(m_textures, 0, sizeof(m_textures));

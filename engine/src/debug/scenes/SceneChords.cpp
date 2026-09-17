@@ -2,9 +2,9 @@
 
 #include "core/EngineDebug.h"
 #include "core/EngineInput.h"
-#include "ui/EngineUi.h"
 #include "debug/TestbedScene.h"
 #include "platform/Platform.h"
+#include "ui/EngineUi.h"
 
 namespace
 {
@@ -12,10 +12,8 @@ namespace
     const int COLUMN_GAP = 8;
 
     const GamepadButton kDisplayOrder[] = {
-        GamepadButton::L1,       GamepadButton::L2,       GamepadButton::R1,       GamepadButton::R2,
-        GamepadButton::L3,       GamepadButton::R3,       GamepadButton::Select,   GamepadButton::Start,
-        GamepadButton::DPadUp,   GamepadButton::DPadDown, GamepadButton::DPadLeft, GamepadButton::DPadRight,
-        GamepadButton::Triangle, GamepadButton::Circle,   GamepadButton::Cross,    GamepadButton::Square,
+        GamepadButton::L1,     GamepadButton::L2,       GamepadButton::R1,       GamepadButton::R2,        GamepadButton::L3,       GamepadButton::R3,     GamepadButton::Select, GamepadButton::Start,
+        GamepadButton::DPadUp, GamepadButton::DPadDown, GamepadButton::DPadLeft, GamepadButton::DPadRight, GamepadButton::Triangle, GamepadButton::Circle, GamepadButton::Cross,  GamepadButton::Square,
     };
 
     const int kDisplayCount = static_cast<int>(sizeof(kDisplayOrder) / sizeof(kDisplayOrder[0]));

@@ -9,16 +9,9 @@
 #include "renderer/Gu.h"
 #include "renderer/PspGl.h"
 
-PspPlatform::PspPlatform()
-    : m_startupArgs()
-    , m_logInput(false)
-    , m_padReported(false)
-    , m_initialised(false)
-    , m_resourceToken("")
-    , m_dialogKind(DialogKind::Count)
-    , m_dialogResultBuffer(nullptr)
-    , m_dialogResultBufferSize(0)
-    , m_memory(this)
+PspPlatform::PspPlatform() :
+    m_startupArgs(), m_logInput(false), m_padReported(false), m_initialised(false), m_resourceToken(""), m_dialogKind(DialogKind::Count), m_dialogResultBuffer(nullptr), m_dialogResultBufferSize(0),
+    m_memory(this)
 {
     memset(m_pads, 0, sizeof(m_pads));
     memset(m_padsPrev, 0, sizeof(m_padsPrev));
@@ -170,10 +163,7 @@ uint16_t PspPlatform::GetDebugChord(DebugChord chord) const
     return 0;
 }
 
-bool PspPlatform::SupportsRenderer(RendererId id) const
-{
-    return id == RendererId::Gu || id == RendererId::PspGl || id == RendererId::Null;
-}
+bool PspPlatform::SupportsRenderer(RendererId id) const { return id == RendererId::Gu || id == RendererId::PspGl || id == RendererId::Null; }
 
 RendererId PspPlatform::GetDefaultRenderer() const { return RendererId::Gu; }
 

@@ -1,11 +1,11 @@
 #include <cstdio>
 
+#include "PlatformConstants.h"
 #include "core/EngineMemory.h"
-#include "resources/EngineResource.h"
-#include "ui/EngineUi.h"
 #include "debug/TestbedScene.h"
 #include "platform/Platform.h"
-#include "PlatformConstants.h"
+#include "resources/EngineResource.h"
+#include "ui/EngineUi.h"
 
 namespace
 {
@@ -141,8 +141,7 @@ namespace
             void* buffer = Engine_PoolGetBufferMain();
             if (platform && buffer)
             {
-                Engine_PoolInitMain(buffer, platform->GetConstant(PlatformConstant::MemoryPoolMainSize),
-                                     platform->GetConstant(PlatformConstant::MemoryPoolChunkSize));
+                Engine_PoolInitMain(buffer, platform->GetConstant(PlatformConstant::MemoryPoolMainSize), platform->GetConstant(PlatformConstant::MemoryPoolChunkSize));
             }
             s_PoolOutstanding = 0;
         }

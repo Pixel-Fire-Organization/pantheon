@@ -108,4 +108,3 @@ void NullRenderer::RenderSkybox(const DrawLists& lists) { UNUSED_VAR(lists); }
 void NullRenderer::RenderPrimitives(DrawLists& lists) { UNUSED_VAR(lists); }
 
 void NullRenderer::RenderModels(const DrawLists& lists) { UNUSED_VAR(lists); }
-

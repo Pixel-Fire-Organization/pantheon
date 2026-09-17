@@ -3,8 +3,8 @@
 
 #include "Platform.h"
 
-#include "core/EngineDebug.h"
 #include "Macros.h"
+#include "core/EngineDebug.h"
 #include "graphics/NullRenderer.h"
 #include "platform/PlatformRegistry.h"
 #include "renderer/Gxm.h"
@@ -15,7 +15,7 @@ extern "C" {
 }
 
 #ifndef VITA_TITLE_ID_STR
-#define VITA_TITLE_ID_STR "PSEN00001"
+    #define VITA_TITLE_ID_STR "PSEN00001"
 #endif
 
 VitaPlatform::VitaPlatform() : m_startupArgs(), m_logInput(false), m_padReported(false), m_resourceToken("app0:"), m_memory(this), m_initialised(false)

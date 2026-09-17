@@ -1,9 +1,9 @@
 #include <cstdio>
 
 #include "core/EngineInput.h"
-#include "ui/EngineUi.h"
 #include "debug/TestbedScene.h"
 #include "platform/Platform.h"
+#include "ui/EngineUi.h"
 
 namespace
 {

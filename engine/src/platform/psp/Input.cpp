@@ -1,9 +1,9 @@
 #include <cmath>
 #include <cstring>
 
-#include "core/EngineDebug.h"
 #include "Macros.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 extern "C" {
 #include <pspctrl.h>
@@ -50,7 +50,7 @@ namespace
             out |= static_cast<uint16_t>(GamepadButton::R1);
         return static_cast<uint16_t>(out & ~(static_cast<uint16_t>(GamepadButton::L2) | static_cast<uint16_t>(GamepadButton::R2)));
     }
-}
+} // namespace
 
 void PspPlatform::PollInput()
 {

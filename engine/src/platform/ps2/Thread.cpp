@@ -1,8 +1,8 @@
 #include <cstdlib>
 #include <malloc.h>
 
-#include "core/EngineDebug.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 extern "C" {
 #include <kernel.h>

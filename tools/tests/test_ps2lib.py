@@ -37,7 +37,7 @@ cook_assets = _load("cook_assets", "cook_assets.py")
 
 def test_box_ps2a_byte_identical(tmp_path):
     src = ROOT / "assets" / "textures" / "props"
-    cook_assets.pack_asset(str(src / "MAINMENU.JSON"), str(src), str(tmp_path))
+    cook_assets.pack_asset(str(src / "BOX.JSON"), str(src), str(tmp_path))
     produced = (tmp_path / "BOX.PS2A").read_bytes()
     assert produced == (GOLDEN / "BOX.PS2A").read_bytes()
 
@@ -45,8 +45,8 @@ def test_box_ps2a_byte_identical(tmp_path):
 def test_cook_assets_finds_nested_descriptors(tmp_path, monkeypatch):
     src = tmp_path / "src" / "sub"
     src.mkdir(parents=True)
-    shutil.copy(ROOT / "assets" / "textures" / "props" / "MAINMENU.JPG", src / "MAINMENU.JPG")
-    (src / "MAINMENU.JSON").write_text(json.dumps({"type": "TEXTURE", "source": "MAINMENU.JPG", "deps": []}))
+    shutil.copy(ROOT / "assets" / "textures" / "props" / "BOX.JPG", src / "BOX.JPG")
+    (src / "BOX.JSON").write_text(json.dumps({"type": "TEXTURE", "source": "BOX.JPG", "deps": []}))
     dst = tmp_path / "dst"
 
     monkeypatch.setattr(sys, "argv", ["cook_assets.py", "--src", str(tmp_path / "src"), "--dst", str(dst)])

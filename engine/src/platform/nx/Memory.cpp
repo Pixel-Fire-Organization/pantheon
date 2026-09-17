@@ -2,8 +2,8 @@
 #include <cstdlib>
 #include <malloc.h>
 
-#include "core/EngineDebug.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 #include <switch.h>
 
@@ -26,7 +26,7 @@ namespace
         const struct mallinfo info = mallinfo();
         return static_cast<size_t>(info.uordblks);
     }
-}
+} // namespace
 
 NxPlatform::NxMemory::NxMemory(const NxPlatform* owner) : m_owner(owner), m_arenaBlock(nullptr), m_poolBlock(nullptr), m_reservedBytes(0) {}
 
@@ -42,8 +42,7 @@ bool NxPlatform::NxMemory::Reserve(EngineMemoryMap* outMap)
 
     if (required > MEM_LIMIT_TOTAL_BUDGET)
     {
-        Engine_LogError("%s: engine memory map is %u KB, over the %u KB budget", m_owner->GetName(), static_cast<unsigned>(required / 1024),
-                        static_cast<unsigned>(MEM_LIMIT_TOTAL_BUDGET / 1024));
+        Engine_LogError("%s: engine memory map is %u KB, over the %u KB budget", m_owner->GetName(), static_cast<unsigned>(required / 1024), static_cast<unsigned>(MEM_LIMIT_TOTAL_BUDGET / 1024));
         return false;
     }
 

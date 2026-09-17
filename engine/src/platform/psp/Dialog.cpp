@@ -1,9 +1,9 @@
 #include <cstdio>
 #include <cstring>
 
-#include "core/EngineDebug.h"
 #include "Platform.h"
 #include "UtilityDialog.h"
+#include "core/EngineDebug.h"
 
 extern "C" {
 #include <psputility.h>
@@ -67,7 +67,7 @@ namespace
         }
         dst[n] = '\0';
     }
-}
+} // namespace
 
 bool PspPlatform::Dialog_Open(const DialogRequest& request)
 {

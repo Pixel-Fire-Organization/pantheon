@@ -345,20 +345,20 @@ namespace
             switch (chunk.type)
             {
             case LEVEL_CHUNK_MATERIALS:
-            {
-                uint32_t count = s_Level.haveInfo ? s_Level.info.materialCount : 0;
-                if (count > LEVEL_MAX_MATERIALS)
-                    count = LEVEL_MAX_MATERIALS;
-                for (uint32_t m = 0; m < count; ++m)
                 {
-                    const uint32_t offset = chunk.offset + m * static_cast<uint32_t>(sizeof(LevelMaterialEntry));
-                    if (!Engine_Archive_ReadSync(&locator, offset, &s_Level.materials[s_Level.materialsShown], sizeof(LevelMaterialEntry)))
-                        break;
-                    s_Level.materials[s_Level.materialsShown].assetKey[sizeof(s_Level.materials[0].assetKey) - 1] = '\0';
-                    ++s_Level.materialsShown;
+                    uint32_t count = s_Level.haveInfo ? s_Level.info.materialCount : 0;
+                    if (count > LEVEL_MAX_MATERIALS)
+                        count = LEVEL_MAX_MATERIALS;
+                    for (uint32_t m = 0; m < count; ++m)
+                    {
+                        const uint32_t offset = chunk.offset + m * static_cast<uint32_t>(sizeof(LevelMaterialEntry));
+                        if (!Engine_Archive_ReadSync(&locator, offset, &s_Level.materials[s_Level.materialsShown], sizeof(LevelMaterialEntry)))
+                            break;
+                        s_Level.materials[s_Level.materialsShown].assetKey[sizeof(s_Level.materials[0].assetKey) - 1] = '\0';
+                        ++s_Level.materialsShown;
+                    }
+                    break;
                 }
-                break;
-            }
             case LEVEL_CHUNK_GRID:
                 ParseLevelGrid(locator, chunk);
                 break;
@@ -552,10 +552,7 @@ namespace
         s_Preview = -1;
     }
 
-    bool PreviewReady(ResourceInfo* outInfo)
-    {
-        return s_Preview >= 0 && Engine_Resource_GetInfo(s_Preview, outInfo) && outInfo->state == RES_STATE_READY;
-    }
+    bool PreviewReady(ResourceInfo* outInfo) { return s_Preview >= 0 && Engine_Resource_GetInfo(s_Preview, outInfo) && outInfo->state == RES_STATE_READY; }
 
     /// The load/unload row every loadable type shares, so the difference
     /// between an unloaded, loading and ready asset reads the same everywhere.
@@ -639,8 +636,7 @@ namespace
                 const BakedMeshEntry& mesh = s_Model.meshes[i];
                 char label[16];
                 snprintf(label, sizeof(label), "MESH %u", static_cast<unsigned>(i));
-                snprintf(value, sizeof(value), "%u V  M%u  %s", static_cast<unsigned>(mesh.vertexCount), static_cast<unsigned>(mesh.materialIndex),
-                         TopologyName(mesh.topology));
+                snprintf(value, sizeof(value), "%u V  M%u  %s", static_cast<unsigned>(mesh.vertexCount), static_cast<unsigned>(mesh.materialIndex), TopologyName(mesh.topology));
                 Ui_LabelValue(label, value);
 
                 snprintf(value, sizeof(value), "%s%s  R %.1f", mesh.normsOffset ? "N" : "-", mesh.uvsOffset ? "UV" : "-", mesh.boundsRadius);
@@ -945,8 +941,7 @@ namespace
             Ui_LabelValue("OCCUPIED", value);
             snprintf(value, sizeof(value), "%u KB", static_cast<unsigned>(s_Level.sectorBytesTotal / 1024u));
             Ui_LabelValue("SECTOR BYTES", value);
-            snprintf(value, sizeof(value), "%u KB / %u KB", static_cast<unsigned>(s_Level.sectorBytesLargest / 1024u),
-                     static_cast<unsigned>(LEVEL_SECTOR_MAX_BYTES / 1024u));
+            snprintf(value, sizeof(value), "%u KB / %u KB", static_cast<unsigned>(s_Level.sectorBytesLargest / 1024u), static_cast<unsigned>(LEVEL_SECTOR_MAX_BYTES / 1024u));
             Ui_LabelValue("LARGEST SECTOR", value);
             if (s_Level.gridTruncated)
                 Ui_LabelColored("GRID SCAN WAS CAPPED", UiColor::TextWarn);
@@ -970,9 +965,8 @@ namespace
             for (uint32_t i = 0; i < s_Level.entitiesShown; ++i)
             {
                 Ui_LabelColored(s_Level.entityNames[i], UiColor::TextAccent);
-                snprintf(value, sizeof(value), "%.0f %.0f %.0f  %uP", static_cast<double>(s_Level.entityOrigins[i][0]),
-                         static_cast<double>(s_Level.entityOrigins[i][1]), static_cast<double>(s_Level.entityOrigins[i][2]),
-                         static_cast<unsigned>(s_Level.entityProps[i]));
+                snprintf(value, sizeof(value), "%.0f %.0f %.0f  %uP", static_cast<double>(s_Level.entityOrigins[i][0]), static_cast<double>(s_Level.entityOrigins[i][1]),
+                         static_cast<double>(s_Level.entityOrigins[i][2]), static_cast<unsigned>(s_Level.entityProps[i]));
                 Ui_LabelValue("  AT", value);
             }
             if (s_Level.entityCount > s_Level.entitiesShown)
@@ -1028,8 +1022,7 @@ namespace
             Ui_LabelValue("MESHES", value);
             snprintf(value, sizeof(value), "%u", static_cast<unsigned>(s_Sector.totalVertices));
             Ui_LabelValue("VERTICES", value);
-            snprintf(value, sizeof(value), "%u KB / %u KB", static_cast<unsigned>(s_EntryToc.size / 1024u),
-                     static_cast<unsigned>(LEVEL_SECTOR_MAX_BYTES / 1024u));
+            snprintf(value, sizeof(value), "%u KB / %u KB", static_cast<unsigned>(s_EntryToc.size / 1024u), static_cast<unsigned>(LEVEL_SECTOR_MAX_BYTES / 1024u));
             Ui_LabelValue("SLOT COST", value);
             snprintf(value, sizeof(value), "%.0f %.0f %.0f", static_cast<double>(s_Sector.header.aabbMin[0]), static_cast<double>(s_Sector.header.aabbMin[1]),
                      static_cast<double>(s_Sector.header.aabbMin[2]));
@@ -1048,8 +1041,7 @@ namespace
                 const BakedMeshEntry& mesh = s_Sector.meshes[i];
                 char label[16];
                 snprintf(label, sizeof(label), "MESH %u", static_cast<unsigned>(i));
-                snprintf(value, sizeof(value), "%u V  MATL %u  %s", static_cast<unsigned>(mesh.vertexCount), static_cast<unsigned>(mesh.materialIndex),
-                         TopologyName(mesh.topology));
+                snprintf(value, sizeof(value), "%u V  MATL %u  %s", static_cast<unsigned>(mesh.vertexCount), static_cast<unsigned>(mesh.materialIndex), TopologyName(mesh.topology));
                 Ui_LabelValue(label, value);
                 snprintf(value, sizeof(value), "%s%s  R %.1f", mesh.normsOffset ? "N" : "-", mesh.uvsOffset ? "UV" : "-", mesh.boundsRadius);
                 Ui_LabelValue("  ATTRS", value);
@@ -1071,9 +1063,15 @@ namespace
         for (uint32_t row = 0; row < s_HexBytes; row += BROWSE_HEX_PER_ROW)
         {
             char text[64];
-            int written = 0;
+            text[0] = '\0';
+            size_t written = 0;
             for (uint32_t i = row; i < row + BROWSE_HEX_PER_ROW && i < s_HexBytes; ++i)
-                written += snprintf(text + written, sizeof(text) - static_cast<size_t>(written), "%02X ", static_cast<unsigned>(s_Hex[i]));
+            {
+                int n = snprintf(text + written, sizeof(text) - written, "%02X ", static_cast<unsigned>(s_Hex[i]));
+                if (n < 0 || static_cast<size_t>(n) >= sizeof(text) - written)
+                    break;
+                written += static_cast<size_t>(n);
+            }
 
             char label[16];
             snprintf(label, sizeof(label), "%04X", static_cast<unsigned>(row));
