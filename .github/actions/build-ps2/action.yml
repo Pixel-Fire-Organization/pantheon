@@ -10,10 +10,6 @@ inputs:
     description: 'Region (PAL, NTSC)'
     required: true
     default: 'PAL'
-  install_gcompat:
-    description: 'Install gcompat (Required for CodeQL on Alpine)'
-    required: false
-    default: 'false'
 
 runs:
   using: "composite"
@@ -21,12 +17,10 @@ runs:
     - name: Install build dependencies
       shell: sh
       run: |
-        apk add --no-cache build-base bash cmake cdrkit p7zip zlib texinfo flex bison gettext gmp-dev mpfr-dev mpc1-dev zlib-dev python3 py3-pillow py3-jsonschema
-        
-        # Conditionally install gcompat if requested
-        if [ "${{ inputs.install_gcompat }}" = "true" ]; then
-          apk add --no-cache gcompat
-        fi
+        # gcompat provides the glibc dynamic linker this Alpine image otherwise
+        # lacks; tools/ps2/masp (see docs/ps2/MASP.md) is a glibc-linked binary
+        # and fails to exec without it.
+        apk add --no-cache build-base bash cmake cdrkit p7zip zlib texinfo flex bison gettext gmp-dev mpfr-dev mpc1-dev zlib-dev python3 py3-pillow py3-jsonschema gcompat
 
     - name: Trust workspace for git (container runs as root; workspace owned by host user)
       shell: sh

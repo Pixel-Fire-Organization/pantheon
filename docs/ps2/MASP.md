@@ -46,6 +46,15 @@ builds from. A different host needs its own build; the build falls back to the
 toolchain's `masp` when `tools/ps2/masp` is absent, which fails in the way
 described above rather than silently producing something wrong.
 
+It is also **glibc-linked** (interpreter `/lib64/ld-linux-x86-64.so.2`), because
+that is what the toolchain's own compiler produces by default. The PS2 build
+container (`ghcr.io/ps2dev/ps2sdk-ports`) is Alpine, which is musl-based and has
+no glibc dynamic linker at all — `exec` on the binary fails there with "no such
+file or directory", naming the binary rather than the missing interpreter, which
+reads like a checkout problem rather than a libc mismatch. `gcompat` supplies
+just enough of glibc's dynamic loader to run it; the PS2 build installs it
+unconditionally for this reason.
+
 ## Provenance and licence
 
 `masp` is part of openvcl, distributed under the GNU General Public License.
