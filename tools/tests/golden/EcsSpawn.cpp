@@ -52,11 +52,7 @@ bool Ecs_SpawnDispatch(const game::EntitySpawn& spawn)
         }
         {
             const char* raw = Internal_FindProp(spawn, "is_static");
-            if (raw)
-            {
-                bool v = (std::strcmp(raw, "1") == 0 || std::strcmp(raw, "true") == 0);
-                def.modelComponent.is_static = v;
-            }
+            if (raw) { bool v = (std::strcmp(raw, "1") == 0 || std::strcmp(raw, "true") == 0); def.modelComponent.is_static = v; }
         }
         Game_Spawn_prop_barrel(def, spawn);
         return true;
@@ -66,27 +62,15 @@ bool Ecs_SpawnDispatch(const game::EntitySpawn& spawn)
         Ecs_prop_model def;
         {
             const char* raw = Internal_FindProp(spawn, "position");
-            if (raw)
-            {
-                const char* v = raw;
-                def.transformComponent.position = v;
-            }
+            if (raw) { const char* v = raw; def.transformComponent.position = v; }
         }
         {
             const char* raw = Internal_FindProp(spawn, "angles");
-            if (raw)
-            {
-                const char* v = raw;
-                def.transformComponent.angles = v;
-            }
+            if (raw) { const char* v = raw; def.transformComponent.angles = v; }
         }
         {
             const char* raw = Internal_FindProp(spawn, "scale");
-            if (raw)
-            {
-                const char* v = raw;
-                def.transformComponent.scale = v;
-            }
+            if (raw) { const char* v = raw; def.transformComponent.scale = v; }
         }
         {
             const char* raw = Internal_FindProp(spawn, "layer_mask");
@@ -98,11 +82,7 @@ bool Ecs_SpawnDispatch(const game::EntitySpawn& spawn)
         }
         {
             const char* raw = Internal_FindProp(spawn, "is_static");
-            if (raw)
-            {
-                bool v = (std::strcmp(raw, "1") == 0 || std::strcmp(raw, "true") == 0);
-                def.modelComponent.is_static = v;
-            }
+            if (raw) { bool v = (std::strcmp(raw, "1") == 0 || std::strcmp(raw, "true") == 0); def.modelComponent.is_static = v; }
         }
         Game_Spawn_prop_model(def, spawn);
         return true;
@@ -118,27 +98,15 @@ bool Ecs_SpawnDispatch(const game::EntitySpawn& spawn)
         Ecs_func_changeLevel def;
         {
             const char* raw = Internal_FindProp(spawn, "level_name");
-            if (raw)
-            {
-                const char* v = raw;
-                def.levelComponent.level_name = v;
-            }
+            if (raw) { const char* v = raw; def.levelComponent.level_name = v; }
         }
         {
             const char* raw = Internal_FindProp(spawn, "wait_time");
-            if (raw)
-            {
-                long v = std::strtol(raw, nullptr, 10);
-                def.levelComponent.wait_time = (int)v;
-            }
+            if (raw) { long v = std::strtol(raw, nullptr, 10); def.levelComponent.wait_time = (int)v; }
         }
         {
             const char* raw = Internal_FindProp(spawn, "args");
-            if (raw)
-            {
-                const char* v = raw;
-                def.levelComponent.args = v;
-            }
+            if (raw) { const char* v = raw; def.levelComponent.args = v; }
         }
         Game_Spawn_func_changeLevel(def, spawn);
         return true;
@@ -148,11 +116,7 @@ bool Ecs_SpawnDispatch(const game::EntitySpawn& spawn)
         Ecs_func_door def;
         {
             const char* raw = Internal_FindProp(spawn, "layer_mask");
-            if (raw)
-            {
-                unsigned long v = std::strtoul(raw, nullptr, 10);
-                def.collisionComponent.layer_mask = (uint32_t)v;
-            }
+            if (raw) { unsigned long v = std::strtoul(raw, nullptr, 10); def.collisionComponent.layer_mask = (uint32_t)v; }
         }
         Game_Spawn_func_door(def, spawn);
         return true;

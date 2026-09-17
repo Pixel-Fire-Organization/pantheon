@@ -12,9 +12,17 @@ CMakeLists.txt text eol=lf
 # Default: normalize to LF on all platforms
 * text=auto
 # Git LFS: large binary formats (textures, vendored TrenchBroom binaries)
+# Patterns are case-sensitive on Linux (core.ignorecase defaults to false there,
+# unlike Windows/macOS): both cases are listed explicitly for every extension
+# that actually appears both ways in the tree, or a checkout on a case-sensitive
+# runner silently skips the LFS smudge and leaves the raw pointer text as the
+# "asset".
 *.png filter=lfs diff=lfs merge=lfs -text
+*.PNG filter=lfs diff=lfs merge=lfs -text
 *.jpg filter=lfs diff=lfs merge=lfs -text
+*.JPG filter=lfs diff=lfs merge=lfs -text
 *.jpeg filter=lfs diff=lfs merge=lfs -text
+*.JPEG filter=lfs diff=lfs merge=lfs -text
 *.gif filter=lfs diff=lfs merge=lfs -text
 *.exe filter=lfs diff=lfs merge=lfs -text
 *.dll filter=lfs diff=lfs merge=lfs -text

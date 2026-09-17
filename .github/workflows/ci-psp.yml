@@ -19,9 +19,7 @@ jobs:
 
     steps:
       - name: Install git-lfs
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends git-lfs
+        run: apk add --no-cache git-lfs
 
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
