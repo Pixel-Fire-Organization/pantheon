@@ -12,9 +12,7 @@ runs:
   steps:
     - name: Install build dependencies
       shell: bash
-      run: |
-        apt-get update
-        apt-get install -y --no-install-recommends genisoimage python3-pil python3-jsonschema
+      run: apk add --no-cache cdrkit python3 py3-pillow py3-jsonschema
 
     - name: Trust workspace for git (container runs as root; workspace owned by host user)
       shell: bash
