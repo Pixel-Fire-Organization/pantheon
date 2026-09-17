@@ -44,7 +44,7 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace ghcr.io/ps2dev/ps2sdk-ports@sha256:cb24a07ad515e2144d7bd02c9bf5854f393c3c069897ba1a48a6a6796e5339af sh -c "
             apk add --no-cache build-base cmake cppcheck python3
           
-            cmake -B build -S . -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=toolchains/ps2dev.cmake -DPLATFORMS_TO_SUPPORT=PS2PAL -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
           
             # Added unmatchedSuppression to prevent locationless internal warnings
             cppcheck --project=build/compile_commands.json \
