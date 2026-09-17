@@ -1,7 +1,7 @@
 #include <cstdlib>
 
-#include "core/EngineDebug.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 extern "C" {
 #include <psp2/kernel/threadmgr.h>
@@ -31,7 +31,7 @@ namespace
             thread->entry(thread->userData);
         return 0;
     }
-}
+} // namespace
 
 PlatformThread* VitaPlatform::ThreadCreate(ThreadEntry entry, void* userData, size_t stackSize)
 {
@@ -45,8 +45,7 @@ PlatformThread* VitaPlatform::ThreadCreate(ThreadEntry entry, void* userData, si
     thread->entry = entry;
     thread->userData = userData;
 
-    thread->id = sceKernelCreateThread("engine_worker", &ThreadTrampoline, THREAD_DEFAULT_PRIORITY,
-                                       static_cast<SceSize>(stackSize), 0, THREAD_DEFAULT_AFFINITY, nullptr);
+    thread->id = sceKernelCreateThread("engine_worker", &ThreadTrampoline, THREAD_DEFAULT_PRIORITY, static_cast<SceSize>(stackSize), 0, THREAD_DEFAULT_AFFINITY, nullptr);
     if (thread->id < 0)
     {
         Engine_LogError("%s: sceKernelCreateThread failed (0x%08X)", GetName(), static_cast<unsigned>(thread->id));

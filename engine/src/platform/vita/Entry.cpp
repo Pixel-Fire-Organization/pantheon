@@ -1,5 +1,5 @@
-#include "core/EngineMain.h"
 #include "PlatformConstants.h"
+#include "core/EngineMain.h"
 
 extern "C" {
 #include <psp2/kernel/processmgr.h>

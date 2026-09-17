@@ -171,8 +171,8 @@ namespace
         uint16_t bit;
     };
     const NamedButton kGamepadButtons[] = {
-        {"select", 0}, {"l3", 1}, {"r3", 2}, {"start", 3}, {"dpad_up", 4}, {"dpad_right", 5}, {"dpad_down", 6}, {"dpad_left", 7},
-        {"l2", 8}, {"r2", 9}, {"l1", 10}, {"r1", 11}, {"triangle", 12}, {"circle", 13}, {"cross", 14}, {"square", 15},
+        {"select", 0}, {"l3", 1}, {"r3", 2},  {"start", 3}, {"dpad_up", 4},   {"dpad_right", 5}, {"dpad_down", 6}, {"dpad_left", 7},
+        {"l2", 8},     {"r2", 9}, {"l1", 10}, {"r1", 11},   {"triangle", 12}, {"circle", 13},    {"cross", 14},    {"square", 15},
     };
     const NamedButton kMouseButtons[] = {{"left", 0}, {"right", 1}, {"middle", 2}, {"extra1", 3}, {"extra2", 4}};
 
@@ -180,11 +180,87 @@ namespace
     // enumerator in PlatformKeys.h, in the same order. Unknown has no source
     // name, since it is never a valid source.
     const char* const kKeyboardKeyNames[] = {
-        "", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "num0", "num1",
-        "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "left",
-        "right", "up", "down", "space", "enter", "escape", "tab", "backspace", "delete", "insert", "home", "end", "pageup", "pagedown", "leftshift",
-        "rightshift", "leftcontrol", "rightcontrol", "leftalt", "rightalt", "minus", "equal", "leftbracket", "rightbracket", "semicolon", "apostrophe",
-        "comma", "period", "slash", "backslash", "grave",
+        "",
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+        "f",
+        "g",
+        "h",
+        "i",
+        "j",
+        "k",
+        "l",
+        "m",
+        "n",
+        "o",
+        "p",
+        "q",
+        "r",
+        "s",
+        "t",
+        "u",
+        "v",
+        "w",
+        "x",
+        "y",
+        "z",
+        "num0",
+        "num1",
+        "num2",
+        "num3",
+        "num4",
+        "num5",
+        "num6",
+        "num7",
+        "num8",
+        "num9",
+        "f1",
+        "f2",
+        "f3",
+        "f4",
+        "f5",
+        "f6",
+        "f7",
+        "f8",
+        "f9",
+        "f10",
+        "f11",
+        "f12",
+        "left",
+        "right",
+        "up",
+        "down",
+        "space",
+        "enter",
+        "escape",
+        "tab",
+        "backspace",
+        "delete",
+        "insert",
+        "home",
+        "end",
+        "pageup",
+        "pagedown",
+        "leftshift",
+        "rightshift",
+        "leftcontrol",
+        "rightcontrol",
+        "leftalt",
+        "rightalt",
+        "minus",
+        "equal",
+        "leftbracket",
+        "rightbracket",
+        "semicolon",
+        "apostrophe",
+        "comma",
+        "period",
+        "slash",
+        "backslash",
+        "grave",
     };
     const size_t kKeyboardKeyNameCount = sizeof(kKeyboardKeyNames) / sizeof(kKeyboardKeyNames[0]);
 
@@ -627,8 +703,7 @@ namespace game
             Engine_LogError("game::RebindAction: unknown source '%s.%s'", device ? device : "?", source ? source : "?");
             return false;
         }
-        return Engine_Action_Rebind(static_cast<ActionId>(id), static_cast<uint8_t>(bindingIndex), static_cast<uint8_t>(sourceSlot), parsedDevice, parsedKind,
-                                    parsedCode);
+        return Engine_Action_Rebind(static_cast<ActionId>(id), static_cast<uint8_t>(bindingIndex), static_cast<uint8_t>(sourceSlot), parsedDevice, parsedKind, parsedCode);
     }
 
     void RestoreActionDefault(int id)

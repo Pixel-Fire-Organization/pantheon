@@ -8,7 +8,7 @@ namespace
 {
     bool s_Active = false;
     PspDialogService s_Service = PspDialogService::None;
-}
+} // namespace
 
 void PspUtilityDialog_SetActive(bool active) { s_Active = active; }
 

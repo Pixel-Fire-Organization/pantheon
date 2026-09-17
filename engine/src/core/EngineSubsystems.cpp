@@ -24,17 +24,17 @@ namespace
     // it is kept because it is still the true dependency, and a future change
     // to that forcing should surface here rather than silently assume it.
     const Dependency kDependencies[] = {
-        {EngineSubsystem::Archive, EngineSubsystem::Io},    {EngineSubsystem::Resource, EngineSubsystem::Io},  {EngineSubsystem::Level, EngineSubsystem::Resource},
-        {EngineSubsystem::Level, EngineSubsystem::Archive}, {EngineSubsystem::Sector, EngineSubsystem::Level}, {EngineSubsystem::Action, EngineSubsystem::Input},
-        {EngineSubsystem::Ui, EngineSubsystem::Action},     {EngineSubsystem::PerfLogger, EngineSubsystem::Action},
-        {EngineSubsystem::Testbed, EngineSubsystem::Ui},    {EngineSubsystem::Testbed, EngineSubsystem::Action},
+        {EngineSubsystem::Archive, EngineSubsystem::Io},     {EngineSubsystem::Resource, EngineSubsystem::Io},       {EngineSubsystem::Level, EngineSubsystem::Resource},
+        {EngineSubsystem::Level, EngineSubsystem::Archive},  {EngineSubsystem::Sector, EngineSubsystem::Level},      {EngineSubsystem::Action, EngineSubsystem::Input},
+        {EngineSubsystem::Ui, EngineSubsystem::Action},      {EngineSubsystem::PerfLogger, EngineSubsystem::Action}, {EngineSubsystem::Testbed, EngineSubsystem::Ui},
+        {EngineSubsystem::Testbed, EngineSubsystem::Action},
     };
 
     const uint32_t kDependencyCount = sizeof(kDependencies) / sizeof(kDependencies[0]);
 
     const EngineSubsystem kAll[] = {
-        EngineSubsystem::Io,    EngineSubsystem::Archive, EngineSubsystem::Resource,    EngineSubsystem::Level,      EngineSubsystem::Sector,
-        EngineSubsystem::Input, EngineSubsystem::Action,  EngineSubsystem::Ui,          EngineSubsystem::Achievement, EngineSubsystem::PerfLogger, EngineSubsystem::Scene,
+        EngineSubsystem::Io,     EngineSubsystem::Archive, EngineSubsystem::Resource,    EngineSubsystem::Level,      EngineSubsystem::Sector, EngineSubsystem::Input,
+        EngineSubsystem::Action, EngineSubsystem::Ui,      EngineSubsystem::Achievement, EngineSubsystem::PerfLogger, EngineSubsystem::Scene,
     };
 } // namespace
 

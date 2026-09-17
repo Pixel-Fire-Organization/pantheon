@@ -1,5 +1,5 @@
-#include "core/EngineDebug.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 #include <switch.h>
 

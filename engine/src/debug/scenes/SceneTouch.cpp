@@ -1,8 +1,8 @@
 #include <cstdio>
 
-#include "ui/EngineUi.h"
 #include "debug/TestbedScene.h"
 #include "platform/Platform.h"
+#include "ui/EngineUi.h"
 
 namespace
 {
@@ -41,8 +41,7 @@ namespace
             char name[16];
             char value[48];
             snprintf(name, sizeof(name), "ID %u", static_cast<unsigned>(contact.id));
-            snprintf(value, sizeof(value), "%.2f %.2f F%.2f", static_cast<double>(contact.position.x), static_cast<double>(contact.position.y),
-                     static_cast<double>(contact.force));
+            snprintf(value, sizeof(value), "%.2f %.2f F%.2f", static_cast<double>(contact.position.x), static_cast<double>(contact.position.y), static_cast<double>(contact.force));
             Ui_LabelValue(name, value);
         }
     }

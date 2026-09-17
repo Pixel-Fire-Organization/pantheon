@@ -3,10 +3,10 @@
 #include <cstring>
 #include <malloc.h>
 
-#include "core/EngineDebug.h"
-#include "level/EngineLevelFormat.h"
 #include "Macros.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
+#include "level/EngineLevelFormat.h"
 
 extern "C" {
 #include <pspkernel.h>
@@ -42,12 +42,9 @@ namespace
         *outBase = reinterpret_cast<void*>(aligned);
         return uid;
     }
-}
+} // namespace
 
-PspPlatform::PspMemory::PspMemory(const PspPlatform* owner)
-    : m_owner(owner), m_arenaBlockId(-1), m_poolBlockId(-1), m_arenaBlock(nullptr), m_poolBlock(nullptr), m_reservedBytes(0)
-{
-}
+PspPlatform::PspMemory::PspMemory(const PspPlatform* owner) : m_owner(owner), m_arenaBlockId(-1), m_poolBlockId(-1), m_arenaBlock(nullptr), m_poolBlock(nullptr), m_reservedBytes(0) {}
 
 size_t PspPlatform::PspMemory::GetBudgetBytes() const { return static_cast<size_t>(MEM_LIMIT_TOTAL_BUDGET); }
 
@@ -61,8 +58,7 @@ bool PspPlatform::PspMemory::Reserve(EngineMemoryMap* outMap)
 
     if (required > MEM_LIMIT_TOTAL_BUDGET)
     {
-        Engine_LogError("%s: engine memory map is %u KB, over the %u KB budget", m_owner->GetName(), static_cast<unsigned>(required / 1024),
-                        static_cast<unsigned>(MEM_LIMIT_TOTAL_BUDGET / 1024));
+        Engine_LogError("%s: engine memory map is %u KB, over the %u KB budget", m_owner->GetName(), static_cast<unsigned>(required / 1024), static_cast<unsigned>(MEM_LIMIT_TOTAL_BUDGET / 1024));
         return false;
     }
 
@@ -74,9 +70,8 @@ bool PspPlatform::PspMemory::Reserve(EngineMemoryMap* outMap)
 
     if (m_arenaBlockId < 0 || m_poolBlockId < 0)
     {
-        Engine_LogError("%s: could not reserve %u KB of main memory (%u KB free, largest block %u KB; arenas %d, pool %d)", m_owner->GetName(),
-                        static_cast<unsigned>(required / 1024), static_cast<unsigned>(freeBefore / 1024), static_cast<unsigned>(largestBefore / 1024),
-                        static_cast<int>(m_arenaBlockId), static_cast<int>(m_poolBlockId));
+        Engine_LogError("%s: could not reserve %u KB of main memory (%u KB free, largest block %u KB; arenas %d, pool %d)", m_owner->GetName(), static_cast<unsigned>(required / 1024),
+                        static_cast<unsigned>(freeBefore / 1024), static_cast<unsigned>(largestBefore / 1024), static_cast<int>(m_arenaBlockId), static_cast<int>(m_poolBlockId));
         Release();
         return false;
     }
@@ -98,8 +93,8 @@ bool PspPlatform::PspMemory::Reserve(EngineMemoryMap* outMap)
     outMap->arenas[2].slots = MEM_BLOCK_RENDERER_SLOTS;
     outMap->arenaCount = 3;
 
-    Engine_LogInfo("%s: reserved %u KB arenas + %u KB pool, %u KB partition free after", m_owner->GetName(), static_cast<unsigned>(arenaTotal / 1024),
-                   static_cast<unsigned>(MEM_POOL_MAIN_SIZE / 1024), static_cast<unsigned>(sceKernelTotalFreeMemSize() / 1024));
+    Engine_LogInfo("%s: reserved %u KB arenas + %u KB pool, %u KB partition free after", m_owner->GetName(), static_cast<unsigned>(arenaTotal / 1024), static_cast<unsigned>(MEM_POOL_MAIN_SIZE / 1024),
+                   static_cast<unsigned>(sceKernelTotalFreeMemSize() / 1024));
     return true;
 }
 
@@ -117,10 +112,7 @@ void PspPlatform::PspMemory::Release()
     m_reservedBytes = 0;
 }
 
-void* PspPlatform::PspMemory::Alloc(size_t size, size_t alignment)
-{
-    return memalign(alignment, size);
-}
+void* PspPlatform::PspMemory::Alloc(size_t size, size_t alignment) { return memalign(alignment, size); }
 
 void PspPlatform::PspMemory::Free(void* ptr)
 {

@@ -1,7 +1,7 @@
 #include <cstdlib>
 
-#include "core/EngineDebug.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 #include <windows.h>
 

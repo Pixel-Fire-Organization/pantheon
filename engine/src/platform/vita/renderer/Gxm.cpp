@@ -3,10 +3,10 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "core/EngineDebug.h"
-#include "core/EngineMemory.h"
 #include "Macros.h"
 #include "PlatformConstants.h"
+#include "core/EngineDebug.h"
+#include "core/EngineMemory.h"
 #include "graphics/TextureExpand.h"
 #include "platform/Platform.h"
 
@@ -92,8 +92,7 @@ namespace
             return nullptr;
         }
         void* base = nullptr;
-        if (sceKernelGetMemBlockBase(uid, &base) < 0 || !base
-            || sceGxmMapFragmentUsseMemory(base, size, outOffset) < 0)
+        if (sceKernelGetMemBlockBase(uid, &base) < 0 || !base || sceGxmMapFragmentUsseMemory(base, size, outOffset) < 0)
         {
             sceKernelFreeMemBlock(uid);
             *outUid = -1;
@@ -113,8 +112,7 @@ namespace
             return nullptr;
         }
         void* base = nullptr;
-        if (sceKernelGetMemBlockBase(uid, &base) < 0 || !base
-            || sceGxmMapVertexUsseMemory(base, size, outOffset) < 0)
+        if (sceKernelGetMemBlockBase(uid, &base) < 0 || !base || sceGxmMapVertexUsseMemory(base, size, outOffset) < 0)
         {
             sceKernelFreeMemBlock(uid);
             *outUid = -1;
@@ -151,16 +149,16 @@ namespace
         UNUSED_VAR(userData);
         free(mem);
     }
-}
+} // namespace
 
-GxmRenderer::GxmRenderer(const EngineConfig& config)
-    : m_context(nullptr), m_vdmRing(nullptr), m_vertexRing(nullptr), m_fragmentRing(nullptr), m_fragmentUsseRing(nullptr), m_vdmRingUid(-1), m_vertexRingUid(-1),
-      m_fragmentRingUid(-1), m_fragmentUsseRingUid(-1), m_hostMem(nullptr), m_renderTarget(nullptr), m_backBufferIndex(0), m_frontBufferIndex(GFX_GXM_DISPLAY_BUFFERS - 1), m_depthData(nullptr),
-      m_depthUid(-1), m_shaderPatcher(nullptr), m_patcherBuffer(nullptr), m_patcherVertexUsse(nullptr), m_patcherFragmentUsse(nullptr), m_patcherBufferUid(-1),
-      m_patcherVertexUsseUid(-1), m_patcherFragmentUsseUid(-1), m_vertexProgram(nullptr), m_fragmentProgram(nullptr), m_viewProjParam(nullptr), m_vertexBuffer(nullptr),
-      m_indexBuffer(nullptr), m_vertexBufferUid(-1), m_indexBufferUid(-1), m_whiteTexture(0), m_geometry(), m_clearColor(Color3{0.0f, 0.0f, 0.0f}), m_width(GFX_SCREEN_WIDTH),
-      m_height(GFX_SCREEN_HEIGHT), m_frameVertices(0), m_frame3DVertices(0), m_frame2DVertices(0), m_reportedOverflow(0), m_frameStats(), m_sceneActive(false), m_initialized(false),
-      m_imageRenderTarget(nullptr), m_imageColorData(nullptr), m_imageColorUid(-1), m_imageDepthData(nullptr), m_imageDepthUid(-1), m_imageWidth(0), m_imageHeight(0), m_imageTextureSlot(-1)
+GxmRenderer::GxmRenderer(const EngineConfig& config) :
+    m_context(nullptr), m_vdmRing(nullptr), m_vertexRing(nullptr), m_fragmentRing(nullptr), m_fragmentUsseRing(nullptr), m_vdmRingUid(-1), m_vertexRingUid(-1), m_fragmentRingUid(-1),
+    m_fragmentUsseRingUid(-1), m_hostMem(nullptr), m_renderTarget(nullptr), m_backBufferIndex(0), m_frontBufferIndex(GFX_GXM_DISPLAY_BUFFERS - 1), m_depthData(nullptr), m_depthUid(-1),
+    m_shaderPatcher(nullptr), m_patcherBuffer(nullptr), m_patcherVertexUsse(nullptr), m_patcherFragmentUsse(nullptr), m_patcherBufferUid(-1), m_patcherVertexUsseUid(-1), m_patcherFragmentUsseUid(-1),
+    m_vertexProgram(nullptr), m_fragmentProgram(nullptr), m_viewProjParam(nullptr), m_vertexBuffer(nullptr), m_indexBuffer(nullptr), m_vertexBufferUid(-1), m_indexBufferUid(-1), m_whiteTexture(0),
+    m_geometry(), m_clearColor(Color3{0.0f, 0.0f, 0.0f}), m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_frameVertices(0), m_frame3DVertices(0), m_frame2DVertices(0), m_reportedOverflow(0),
+    m_frameStats(), m_sceneActive(false), m_initialized(false), m_imageRenderTarget(nullptr), m_imageColorData(nullptr), m_imageColorUid(-1), m_imageDepthData(nullptr), m_imageDepthUid(-1),
+    m_imageWidth(0), m_imageHeight(0), m_imageTextureSlot(-1)
 {
     UNUSED_VAR(config);
     memset(m_displayBuffers, 0, sizeof(m_displayBuffers));
@@ -275,9 +273,8 @@ bool GxmRenderer::InitRenderTarget()
         }
         memset(buf.address, 0, kDisplayBytes);
 
-        if (sceGxmColorSurfaceInit(&buf.surface, SCE_GXM_COLOR_FORMAT_A8B8G8R8, SCE_GXM_COLOR_SURFACE_LINEAR, SCE_GXM_COLOR_SURFACE_SCALE_NONE,
-                                   SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT, GFX_SCREEN_WIDTH, GFX_SCREEN_HEIGHT, kDisplayStride, buf.address)
-            < 0)
+        if (sceGxmColorSurfaceInit(&buf.surface, SCE_GXM_COLOR_FORMAT_A8B8G8R8, SCE_GXM_COLOR_SURFACE_LINEAR, SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT, GFX_SCREEN_WIDTH,
+                                   GFX_SCREEN_HEIGHT, kDisplayStride, buf.address) < 0)
         {
             Engine_LogError("GxmRenderer: sceGxmColorSurfaceInit failed for buffer %u", i);
             return false;
@@ -355,8 +352,7 @@ bool GxmRenderer::InitShaders()
         return false;
     }
 
-    if (sceGxmShaderPatcherRegisterProgram(m_shaderPatcher, vertexGxp, &m_vertexProgramId) < 0
-        || sceGxmShaderPatcherRegisterProgram(m_shaderPatcher, fragmentGxp, &m_fragmentProgramId) < 0)
+    if (sceGxmShaderPatcherRegisterProgram(m_shaderPatcher, vertexGxp, &m_vertexProgramId) < 0 || sceGxmShaderPatcherRegisterProgram(m_shaderPatcher, fragmentGxp, &m_fragmentProgramId) < 0)
     {
         Engine_LogError("GxmRenderer: sceGxmShaderPatcherRegisterProgram failed");
         return false;
@@ -415,9 +411,7 @@ bool GxmRenderer::InitShaders()
     blendInfo.alphaSrc = SCE_GXM_BLEND_FACTOR_SRC_ALPHA;
     blendInfo.alphaDst = SCE_GXM_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 
-    if (sceGxmShaderPatcherCreateFragmentProgram(m_shaderPatcher, m_fragmentProgramId, SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4, SCE_GXM_MULTISAMPLE_NONE, &blendInfo,
-                                                 vertexGxp, &m_fragmentProgram)
-        < 0)
+    if (sceGxmShaderPatcherCreateFragmentProgram(m_shaderPatcher, m_fragmentProgramId, SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4, SCE_GXM_MULTISAMPLE_NONE, &blendInfo, vertexGxp, &m_fragmentProgram) < 0)
     {
         Engine_LogError("GxmRenderer: sceGxmShaderPatcherCreateFragmentProgram failed");
         return false;
@@ -601,8 +595,7 @@ bool GxmRenderer::EnsureImageTarget(int width, int height)
     memset(m_imageColorData, 0, colorBytes);
 
     if (sceGxmColorSurfaceInit(&m_imageColorSurface, SCE_GXM_COLOR_FORMAT_A8B8G8R8, SCE_GXM_COLOR_SURFACE_LINEAR, SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT,
-                                static_cast<uint32_t>(width), static_cast<uint32_t>(height), static_cast<uint32_t>(width), m_imageColorData)
-        < 0)
+                               static_cast<uint32_t>(width), static_cast<uint32_t>(height), static_cast<uint32_t>(width), m_imageColorData) < 0)
     {
         Engine_LogError("GxmRenderer: sceGxmColorSurfaceInit failed for the image target");
         DestroyImageTarget();

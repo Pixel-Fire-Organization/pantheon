@@ -8,14 +8,14 @@
 #include <GL/gl.h>
 #include <GL/ps2gl.h>
 
+#include "Macros.h"
 #include "core/EngineDebug.h"
 #include "core/EngineMemory.h"
+#include "graphics/DrawList.h"
+#include "graphics/PrimitiveGeometry.h"
 #include "level/EngineLevel.h"
 #include "level/EngineSector.h"
 #include "resources/EngineResource.h"
-#include "graphics/DrawList.h"
-#include "graphics/PrimitiveGeometry.h"
-#include "Macros.h"
 
 // SetGsCrt is a PS2 BIOS syscall (libkernel). Forward-declared to avoid pulling
 // the full <kernel.h> into this translation unit.
@@ -431,7 +431,8 @@ void Ps2GlRenderer::FlushQuads2D()
         }
 
         const float quadColorScale = texturing ? GL_TEX_MODULATE_UNITY : 1.0f;
-        glColor4f(static_cast<float>(q.r) / 255.0f * quadColorScale, static_cast<float>(q.g) / 255.0f * quadColorScale, static_cast<float>(q.b) / 255.0f * quadColorScale, static_cast<float>(q.a) / 255.0f);
+        glColor4f(static_cast<float>(q.r) / 255.0f * quadColorScale, static_cast<float>(q.g) / 255.0f * quadColorScale, static_cast<float>(q.b) / 255.0f * quadColorScale,
+                  static_cast<float>(q.a) / 255.0f);
         glBegin(GL_QUADS);
         if (texturing)
         {

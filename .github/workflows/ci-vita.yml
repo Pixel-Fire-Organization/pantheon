@@ -25,10 +25,16 @@ jobs:
       - name: Trust workspace for git (container runs as root; workspace owned by host user)
         run: git config --global --add safe.directory '*'
 
+      - name: Install git-lfs
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git-lfs
+
       - name: Checkout repository (with submodules)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
+          lfs: true
 
       - name: Install jsonschema (optional extra validation pass in tools/vita_package.py)
         run: |

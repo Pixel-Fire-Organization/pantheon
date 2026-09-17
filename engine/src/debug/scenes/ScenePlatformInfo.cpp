@@ -1,10 +1,10 @@
 #include <cstdio>
 
 #include "core/EngineCore.h"
-#include "ui/EngineUi.h"
 #include "debug/TestbedScene.h"
 #include "graphics/Renderer.h"
 #include "platform/Platform.h"
+#include "ui/EngineUi.h"
 
 namespace
 {
@@ -46,10 +46,7 @@ namespace
         Ui_LabelValue(label, text);
     }
 
-    void CapabilityRow(const Platform& platform, const char* label, PlatformCapability key)
-    {
-        Ui_LabelValue(label, platform.HasCapability(key) ? "YES" : "NO");
-    }
+    void CapabilityRow(const Platform& platform, const char* label, PlatformCapability key) { Ui_LabelValue(label, platform.HasCapability(key) ? "YES" : "NO"); }
 
     const char* ButtonIconFamilyName(UiButtonIconFamily family)
     {

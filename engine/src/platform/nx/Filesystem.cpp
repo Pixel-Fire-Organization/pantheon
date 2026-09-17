@@ -4,8 +4,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "core/EngineIO.h"
 #include "Platform.h"
+#include "core/EngineIO.h"
 
 namespace
 {
@@ -27,7 +27,7 @@ namespace
             return true;
         return mkdir(path, 0777) == 0 || IsDirectory(path);
     }
-}
+} // namespace
 
 bool NxPlatform::EnsureWritableRoot() const
 {

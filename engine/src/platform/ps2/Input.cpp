@@ -1,9 +1,9 @@
 #include <cmath>
 #include <cstring>
 
-#include "core/EngineDebug.h"
 #include "Macros.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 extern "C" {
 #include <input.h>

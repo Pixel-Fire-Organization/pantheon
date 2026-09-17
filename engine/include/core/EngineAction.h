@@ -135,8 +135,8 @@ struct ActionCompiledBinding
     uint8_t sourceCount;
     bool isComposite; // true for a {composite: {up/down/left/right|positive/negative}} binding
     ActionSourceRef sources[ACTION_MAX_SOURCES_PER_BINDING]; // combination sources, or one source;
-                                                              // for a composite, always laid out
-                                                              // [up/positive, down/negative, left, right]
+                                                             // for a composite, always laid out
+                                                             // [up/positive, down/negative, left, right]
     uint8_t compositeLegMask; // composite only: bit0 up/positive, bit1 down/negative, bit2 left, bit3 right
     float threshold; // analog only: clamped >= this platform's INPUT_ANALOG_DEADZONE
     float scale;

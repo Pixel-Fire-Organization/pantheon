@@ -4,9 +4,9 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "Macros.h"
 #include "core/EngineDebug.h"
 #include "core/EngineMemory.h"
-#include "Macros.h"
 #include "graphics/TextureExpand.h"
 #include "platform/Platform.h"
 

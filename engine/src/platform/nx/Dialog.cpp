@@ -1,7 +1,7 @@
 #include <cstring>
 
-#include "core/EngineDebug.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 #include <switch.h>
 
@@ -22,7 +22,7 @@ namespace
         }
         dst[n] = '\0';
     }
-}
+} // namespace
 
 bool NxPlatform::Dialog_Open(const DialogRequest& request)
 {

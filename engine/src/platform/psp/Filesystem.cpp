@@ -1,10 +1,10 @@
 #include <cstdio>
 #include <cstring>
 
-#include "core/EngineDebug.h"
-#include "core/EngineIO.h"
 #include "Platform.h"
 #include "TitleInfo.h"
+#include "core/EngineDebug.h"
+#include "core/EngineIO.h"
 
 extern "C" {
 #include <pspiofilemgr.h>
@@ -16,10 +16,7 @@ namespace
 
     SceUID ToFd(FileHandle handle) { return static_cast<SceUID>(reinterpret_cast<uintptr_t>(handle) - 1u); }
 
-    bool HasPrefix(const char* text, const char* prefix)
-    {
-        return text && prefix && strncmp(text, prefix, strlen(prefix)) == 0;
-    }
+    bool HasPrefix(const char* text, const char* prefix) { return text && prefix && strncmp(text, prefix, strlen(prefix)) == 0; }
 
     // Copy everything up to and including the final separator, so a launch path
     // becomes the directory it lives in.
@@ -40,7 +37,7 @@ namespace
         outBuf[length] = '\0';
         return true;
     }
-}
+} // namespace
 
 void PspPlatform::ResolveDeviceToken(const char* launchPath)
 {
@@ -109,10 +106,7 @@ bool PspPlatform::AppendResolved(const char* root, const char* relativePath, cha
     return true;
 }
 
-bool PspPlatform::BuildPath(const char* relativePath, char* outBuf, size_t bufSize) const
-{
-    return AppendResolved(m_resourceToken, relativePath, outBuf, bufSize);
-}
+bool PspPlatform::BuildPath(const char* relativePath, char* outBuf, size_t bufSize) const { return AppendResolved(m_resourceToken, relativePath, outBuf, bufSize); }
 
 bool PspPlatform::BuildWritablePath(const char* relativePath, char* outBuf, size_t bufSize) const
 {

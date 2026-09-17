@@ -1,10 +1,10 @@
 #include <cstdio>
 
 #include "core/EngineCore.h"
-#include "ui/EngineUi.h"
 #include "debug/TestbedScene.h"
 #include "graphics/Renderer.h"
 #include "platform/Platform.h"
+#include "ui/EngineUi.h"
 
 namespace
 {
@@ -49,13 +49,11 @@ void Scene_DepthRange_Update(float dt)
     {
         const float size = MarkerSize(distance);
         const float shade = 1.0f - (static_cast<float>(i) / static_cast<float>(LADDER_STEPS));
-        renderer->AddPrimitiveToDrawList(Primitive3D::Cube, Vector3{0.0f, 0.0f, -distance}, Vector3{0.0f, 0.0f, 0.0f}, Vector3{size, size, size},
-                                         Color3{shade, 0.4f + shade * 0.5f, 1.0f - shade});
+        renderer->AddPrimitiveToDrawList(Primitive3D::Cube, Vector3{0.0f, 0.0f, -distance}, Vector3{0.0f, 0.0f, 0.0f}, Vector3{size, size, size}, Color3{shade, 0.4f + shade * 0.5f, 1.0f - shade});
         distance *= LADDER_RATIO;
     }
 
-    renderer->AddPrimitiveToDrawList(Primitive3D::Sphere, Vector3{0.0f, 0.0f, -GFX_NEAR_PLANE * 4.0f}, Vector3{0.0f, 0.0f, 0.0f},
-                                     Vector3{0.02f, 0.02f, 0.02f}, Color3{1.0f, 0.9f, 0.2f});
+    renderer->AddPrimitiveToDrawList(Primitive3D::Sphere, Vector3{0.0f, 0.0f, -GFX_NEAR_PLANE * 4.0f}, Vector3{0.0f, 0.0f, 0.0f}, Vector3{0.02f, 0.02f, 0.02f}, Color3{1.0f, 0.9f, 0.2f});
 
     const int screenH = static_cast<int>(platform->GetConstant(PlatformConstant::ScreenHeight));
     Ui_BeginPanel("DEPTH RANGE", PANEL_MARGIN, PANEL_MARGIN, PANEL_WIDTH, screenH / 2);

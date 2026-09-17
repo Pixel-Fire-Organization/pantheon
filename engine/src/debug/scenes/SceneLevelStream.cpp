@@ -4,12 +4,12 @@
 
 #include "core/EngineCore.h"
 #include "core/EngineSubsystems.h"
-#include "level/EngineLevel.h"
-#include "level/EngineSector.h"
-#include "ui/EngineUi.h"
 #include "debug/TestbedScene.h"
 #include "graphics/Renderer.h"
+#include "level/EngineLevel.h"
+#include "level/EngineSector.h"
 #include "platform/Platform.h"
+#include "ui/EngineUi.h"
 
 namespace
 {

@@ -1,9 +1,9 @@
 #include <cstdlib>
 #include <malloc.h>
 
+#include "Platform.h"
 #include "core/EngineDebug.h"
 #include "level/EngineLevelFormat.h"
-#include "Platform.h"
 
 // A streamed sector payload must fit one ARENA_LEVEL_DATA slot. This used to be
 // a "keep in sync" comment in the constants header; now that the arena layout is

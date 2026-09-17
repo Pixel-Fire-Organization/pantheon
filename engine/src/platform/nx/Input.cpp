@@ -1,9 +1,9 @@
 #include <cmath>
 #include <cstring>
 
-#include "core/EngineDebug.h"
 #include "Macros.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 #include <switch.h>
 
@@ -16,12 +16,14 @@ namespace
     };
 
     const ButtonMapping kButtonMap[] = {
-        {HidNpadButton_A, GamepadButton::Cross},       {HidNpadButton_B, GamepadButton::Circle},      {HidNpadButton_X, GamepadButton::Triangle},
-        {HidNpadButton_Y, GamepadButton::Square},      {HidNpadButton_L, GamepadButton::L1},          {HidNpadButton_R, GamepadButton::R1},
-        {HidNpadButton_ZL, GamepadButton::L2},         {HidNpadButton_ZR, GamepadButton::R2},         {HidNpadButton_StickL, GamepadButton::L3},
-        {HidNpadButton_StickR, GamepadButton::R3},     {HidNpadButton_Minus, GamepadButton::Select},  {HidNpadButton_Plus, GamepadButton::Start},
-        {HidNpadButton_Up, GamepadButton::DPadUp},     {HidNpadButton_Right, GamepadButton::DPadRight}, {HidNpadButton_Down, GamepadButton::DPadDown},
-        {HidNpadButton_Left, GamepadButton::DPadLeft},
+        {HidNpadButton_A, GamepadButton::Cross},       {HidNpadButton_B, GamepadButton::Circle},
+        {HidNpadButton_X, GamepadButton::Triangle},    {HidNpadButton_Y, GamepadButton::Square},
+        {HidNpadButton_L, GamepadButton::L1},          {HidNpadButton_R, GamepadButton::R1},
+        {HidNpadButton_ZL, GamepadButton::L2},         {HidNpadButton_ZR, GamepadButton::R2},
+        {HidNpadButton_StickL, GamepadButton::L3},     {HidNpadButton_StickR, GamepadButton::R3},
+        {HidNpadButton_Minus, GamepadButton::Select},  {HidNpadButton_Plus, GamepadButton::Start},
+        {HidNpadButton_Up, GamepadButton::DPadUp},     {HidNpadButton_Right, GamepadButton::DPadRight},
+        {HidNpadButton_Down, GamepadButton::DPadDown}, {HidNpadButton_Left, GamepadButton::DPadLeft},
     };
 
     PadState s_Pads[MAX_GAME_PAD_PORTS];
@@ -48,7 +50,7 @@ namespace
     }
 
     Vector2 NormalizeStick(const HidAnalogStickState& state) { return Vector2{NormalizeAxis(state.x), -NormalizeAxis(state.y)}; }
-}
+} // namespace
 
 void NxPlatform::InitInput()
 {

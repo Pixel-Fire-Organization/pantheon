@@ -1,10 +1,10 @@
 #include <cstdlib>
 #include <malloc.h>
 
-#include "core/EngineDebug.h"
-#include "level/EngineLevelFormat.h"
 #include "Macros.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
+#include "level/EngineLevelFormat.h"
 
 // A streamed sector payload must fit one ARENA_LEVEL_DATA slot. The level
 // compiler enforces the same limit from the other side; this catches a platform

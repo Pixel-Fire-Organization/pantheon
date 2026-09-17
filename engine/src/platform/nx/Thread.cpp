@@ -1,7 +1,7 @@
 #include <cstdlib>
 
-#include "core/EngineDebug.h"
 #include "Platform.h"
+#include "core/EngineDebug.h"
 
 #include <switch.h>
 
@@ -46,7 +46,7 @@ namespace
         }
         return NX_DEFAULT_CORE;
     }
-}
+} // namespace
 
 PlatformThread* NxPlatform::ThreadCreate(ThreadEntry entry, void* userData, size_t stackSize)
 {

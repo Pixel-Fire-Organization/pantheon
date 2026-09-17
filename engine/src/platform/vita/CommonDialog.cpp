@@ -4,7 +4,7 @@ namespace
 {
     bool s_Active = false;
     int s_LastResult = 0;
-}
+} // namespace
 
 void VitaCommonDialog_SetActive(bool active) { s_Active = active; }
 

@@ -5,8 +5,8 @@
 
 #include "PlatformConstants.h" // INPUT_ANALOG_DEADZONE, resolved per platform by include order
 #include "core/EngineDebug.h"
-#include "core/EngineInput.h"
 #include "core/EngineIO.h"
+#include "core/EngineInput.h"
 #include "graphics/Types.h"
 #include "platform/Platform.h"
 
@@ -118,8 +118,8 @@ namespace
         if (header.entryCount > ACTION_MAX_OVERLAY_ENTRIES)
         {
             platform->FileClose(file);
-            Engine_LogError("Action: the overlay at '%s' declares %u entries, above the limit of %u; starting from defaults", path,
-                            static_cast<unsigned>(header.entryCount), static_cast<unsigned>(ACTION_MAX_OVERLAY_ENTRIES));
+            Engine_LogError("Action: the overlay at '%s' declares %u entries, above the limit of %u; starting from defaults", path, static_cast<unsigned>(header.entryCount),
+                            static_cast<unsigned>(ACTION_MAX_OVERLAY_ENTRIES));
             return;
         }
         if (header.mapDigest != Engine_Action_GetMapDigest())
@@ -489,11 +489,13 @@ namespace
 
         static ActionSourceRef claimedSources[ACTION_MAX_DYNAMIC_BINDINGS * ACTION_MAX_SOURCES_PER_BINDING];
         uint32_t claimedCount = 0;
-        auto markClaimed = [&](const ActionCompiledBinding& binding) {
+        auto markClaimed = [&](const ActionCompiledBinding& binding)
+        {
             for (uint8_t s = 0; s < binding.sourceCount && claimedCount < ACTION_MAX_DYNAMIC_BINDINGS * ACTION_MAX_SOURCES_PER_BINDING; ++s)
                 claimedSources[claimedCount++] = binding.sources[s];
         };
-        auto isClaimed = [&](ActionSourceRef ref) {
+        auto isClaimed = [&](ActionSourceRef ref)
+        {
             for (uint32_t i = 0; i < claimedCount; ++i)
             {
                 if (claimedSources[i] == ref)
@@ -550,8 +552,7 @@ bool Engine_Action_Init()
         s_ContextStackDepth = 1;
     }
 
-    Engine_LogInfo("Action: ready (%u actions, %u contexts, overlay %s)", Engine_Action_DeclaredCount(), Engine_Action_DeclaredContextCount(),
-                   s_OverlayPersistent ? "on disc" : "in memory only");
+    Engine_LogInfo("Action: ready (%u actions, %u contexts, overlay %s)", Engine_Action_DeclaredCount(), Engine_Action_DeclaredContextCount(), s_OverlayPersistent ? "on disc" : "in memory only");
     return true;
 }
 

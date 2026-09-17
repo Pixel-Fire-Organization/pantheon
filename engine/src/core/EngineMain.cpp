@@ -34,9 +34,8 @@ namespace
     };
 
     const RendererName kAllRenderers[] = {
-        {RendererId::GifTag, "giftag"}, {RendererId::Ps2Gl, "ps2gl"},   {RendererId::OpenGl, "opengl"}, {RendererId::WebGpu, "webgpu"},
-        {RendererId::Gxm, "gxm"},       {RendererId::VitaGl, "vitagl"}, {RendererId::Gu, "gu"},
-        {RendererId::PspGl, "pspgl"},   {RendererId::Deko3d, "deko3d"}, {RendererId::Null, "null"},
+        {RendererId::GifTag, "giftag"}, {RendererId::Ps2Gl, "ps2gl"}, {RendererId::OpenGl, "opengl"}, {RendererId::WebGpu, "webgpu"}, {RendererId::Gxm, "gxm"},
+        {RendererId::VitaGl, "vitagl"}, {RendererId::Gu, "gu"},       {RendererId::PspGl, "pspgl"},   {RendererId::Deko3d, "deko3d"}, {RendererId::Null, "null"},
     };
 
     const uint32_t kRendererCount = sizeof(kAllRenderers) / sizeof(kAllRenderers[0]);

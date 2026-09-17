@@ -4,10 +4,10 @@
 #include <cstdio>
 #include <cstring>
 
+#include "Macros.h"
 #include "core/EngineDebug.h"
 #include "core/EngineMemory.h"
 #include "graphics/TextureExpand.h"
-#include "Macros.h"
 #include "platform/Platform.h"
 #include "scene_frag_dksh.h"
 #include "scene_vert_dksh.h"
@@ -42,37 +42,13 @@ namespace
     double Now() { return Engine_GetPlatform()->GetTimeSeconds(); }
 
     float MillisecondsSince(double start) { return static_cast<float>((Now() - start) * 1000.0); }
-}
+} // namespace
 
-Deko3dRenderer::Deko3dRenderer(const EngineConfig& config)
-    : m_device(nullptr)
-    , m_queue(nullptr)
-    , m_frameCmdbuf(nullptr)
-    , m_transferCmdbuf(nullptr)
-    , m_frameCommandMemory(nullptr)
-    , m_transferCommandMemory(nullptr)
-    , m_frameSlice(0)
-    , m_depthMemory(nullptr)
-    , m_swapchain(nullptr)
-    , m_cropWidth(0)
-    , m_cropHeight(0)
-    , m_shaderMemory(nullptr)
-    , m_uniformMemory(nullptr)
-    , m_descriptorMemory(nullptr)
-    , m_whiteTexture(0)
-    , m_clearColor{0.0f, 0.0f, 0.0f}
-    , m_width(GFX_SCREEN_WIDTH)
-    , m_height(GFX_SCREEN_HEIGHT)
-    , m_frame3DVertices(0)
-    , m_frame2DVertices(0)
-    , m_reportedOverflow(0)
-    , m_frameStats{}
-    , m_initialized(false)
-    , m_imageColorMemory(nullptr)
-    , m_imageDepthMemory(nullptr)
-    , m_imageWidth(0)
-    , m_imageHeight(0)
-    , m_imageTextureSlot(-1)
+Deko3dRenderer::Deko3dRenderer(const EngineConfig& config) :
+    m_device(nullptr), m_queue(nullptr), m_frameCmdbuf(nullptr), m_transferCmdbuf(nullptr), m_frameCommandMemory(nullptr), m_transferCommandMemory(nullptr), m_frameSlice(0), m_depthMemory(nullptr),
+    m_swapchain(nullptr), m_cropWidth(0), m_cropHeight(0), m_shaderMemory(nullptr), m_uniformMemory(nullptr), m_descriptorMemory(nullptr), m_whiteTexture(0), m_clearColor{0.0f, 0.0f, 0.0f},
+    m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_frame3DVertices(0), m_frame2DVertices(0), m_reportedOverflow(0), m_frameStats{}, m_initialized(false), m_imageColorMemory(nullptr),
+    m_imageDepthMemory(nullptr), m_imageWidth(0), m_imageHeight(0), m_imageTextureSlot(-1)
 {
     UNUSED_VAR(config);
     memset(m_sliceFences, 0, sizeof(m_sliceFences));

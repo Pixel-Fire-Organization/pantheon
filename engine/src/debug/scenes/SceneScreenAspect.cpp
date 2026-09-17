@@ -1,8 +1,8 @@
 #include <cstdio>
 
-#include "ui/EngineUi.h"
 #include "debug/TestbedScene.h"
 #include "platform/Platform.h"
+#include "ui/EngineUi.h"
 
 namespace
 {

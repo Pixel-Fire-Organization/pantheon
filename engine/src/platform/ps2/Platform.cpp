@@ -8,8 +8,8 @@ extern "C" {
 #include <kernel.h>
 }
 
-#include "core/EngineDebug.h"
 #include "PlatformConstants.h"
+#include "core/EngineDebug.h"
 #include "graphics/NullRenderer.h"
 #include "renderer/GifTag.h"
 #include "renderer/Ps2Gl.h"

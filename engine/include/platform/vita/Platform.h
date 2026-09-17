@@ -3,8 +3,7 @@
 #include "PlatformConstants.h"
 #include "platform/Platform.h"
 
-extern "C"
-{
+extern "C" {
 #include <psp2/ime_dialog.h>
 #include <psp2/message_dialog.h>
 }

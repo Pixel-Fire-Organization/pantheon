@@ -49,9 +49,9 @@ namespace
 
 } // namespace
 
-StagedGeometry::StagedGeometry()
-    : m_verts3D(nullptr), m_count3D(0), m_capacity3D(0), m_verts2D(nullptr), m_count2D(0), m_capacity2D(0), m_runCount(0), m_runCount2D(0), m_droppedRuns2D(0), m_stats(nullptr),
-      m_vertexBudget(0), m_budget3D(0), m_viewportWidth(0), m_viewportHeight(0), m_frustum(), m_frustumValid(false)
+StagedGeometry::StagedGeometry() :
+    m_verts3D(nullptr), m_count3D(0), m_capacity3D(0), m_verts2D(nullptr), m_count2D(0), m_capacity2D(0), m_runCount(0), m_runCount2D(0), m_droppedRuns2D(0), m_stats(nullptr), m_vertexBudget(0),
+    m_budget3D(0), m_viewportWidth(0), m_viewportHeight(0), m_frustum(), m_frustumValid(false)
 {
     memset(m_runs, 0, sizeof(m_runs));
     memset(m_runs2D, 0, sizeof(m_runs2D));
@@ -157,7 +157,7 @@ void StagedGeometry::PushRun(uint32_t firstVertex, uint32_t count, uint32_t text
 }
 
 void StagedGeometry::AppendMesh(const float model[16], const float* verts, uint8_t components, const float* norms, const float* uvs, uint32_t vertexCount, uint8_t topology, Color3 color,
-                                 uint32_t texture)
+                                uint32_t texture)
 {
     if (!verts || vertexCount == 0)
         return;

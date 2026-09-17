@@ -1,7 +1,7 @@
 #pragma once
 
-#include "core/EngineCore.h"
 #include "GlApi.h"
+#include "core/EngineCore.h"
 #include "graphics/Renderer.h"
 #include "graphics/StagedGeometry.h"
 

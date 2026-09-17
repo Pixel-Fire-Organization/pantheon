@@ -4,10 +4,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "Macros.h"
 #include "core/EngineDebug.h"
 #include "core/EngineMemory.h"
 #include "graphics/TextureExpand.h"
-#include "Macros.h"
 #include "platform/Platform.h"
 #include "scene_frag_glsl.h"
 #include "scene_vert_glsl.h"
@@ -43,30 +43,12 @@ namespace
     }
 
     double Now() { return Engine_GetPlatform()->GetTimeSeconds(); }
-}
+} // namespace
 
-OpenGlRenderer::OpenGlRenderer(const EngineConfig& config)
-    : m_display(EGL_NO_DISPLAY)
-    , m_context(EGL_NO_CONTEXT)
-    , m_surface(EGL_NO_SURFACE)
-    , m_program(0)
-    , m_vao(0)
-    , m_vertexBuffer(0)
-    , m_vertexBufferCapacity(0)
-    , m_uniformBuffer(0)
-    , m_whiteTexture(0)
-    , m_clearColor{0.0f, 0.0f, 0.0f}
-    , m_width(GFX_SCREEN_WIDTH)
-    , m_height(GFX_SCREEN_HEIGHT)
-    , m_cropWidth(0)
-    , m_cropHeight(0)
-    , m_frameStats{}
-    , m_initialized(false)
-    , m_imageFbo(0)
-    , m_imageColorTex(0)
-    , m_imageDepthRb(0)
-    , m_imageWidth(0)
-    , m_imageHeight(0)
+OpenGlRenderer::OpenGlRenderer(const EngineConfig& config) :
+    m_display(EGL_NO_DISPLAY), m_context(EGL_NO_CONTEXT), m_surface(EGL_NO_SURFACE), m_program(0), m_vao(0), m_vertexBuffer(0), m_vertexBufferCapacity(0), m_uniformBuffer(0), m_whiteTexture(0),
+    m_clearColor{0.0f, 0.0f, 0.0f}, m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_cropWidth(0), m_cropHeight(0), m_frameStats{}, m_initialized(false), m_imageFbo(0), m_imageColorTex(0),
+    m_imageDepthRb(0), m_imageWidth(0), m_imageHeight(0)
 {
     UNUSED_VAR(config);
     memset(m_textures, 0, sizeof(m_textures));
@@ -128,7 +110,8 @@ bool OpenGlRenderer::CreateContext()
         return false;
     }
 
-    static const EGLint framebufferAttributes[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8, EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8, EGL_NONE};
+    static const EGLint framebufferAttributes[] = {
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8, EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8, EGL_NONE};
     EGLConfig eglConfig = nullptr;
     EGLint configCount = 0;
     if (!eglChooseConfig(m_display, framebufferAttributes, &eglConfig, 1, &configCount) || configCount == 0)
@@ -144,8 +127,8 @@ bool OpenGlRenderer::CreateContext()
         return false;
     }
 
-    const EGLint contextAttributes[] = {EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT, EGL_CONTEXT_MAJOR_VERSION, NXGL_CONTEXT_MAJOR,
-                                        EGL_CONTEXT_MINOR_VERSION, NXGL_CONTEXT_MINOR, EGL_NONE};
+    const EGLint contextAttributes[] = {
+        EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT, EGL_CONTEXT_MAJOR_VERSION, NXGL_CONTEXT_MAJOR, EGL_CONTEXT_MINOR_VERSION, NXGL_CONTEXT_MINOR, EGL_NONE};
     m_context = eglCreateContext(m_display, eglConfig, EGL_NO_CONTEXT, contextAttributes);
     if (m_context == EGL_NO_CONTEXT || !eglMakeCurrent(m_display, m_surface, m_surface, m_context))
     {

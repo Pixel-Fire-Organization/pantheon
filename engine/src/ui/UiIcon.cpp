@@ -10,10 +10,9 @@ namespace
     /// cooked font at all, or an atlas that predates a given one. A hint bar
     /// therefore never goes silent for a button it cannot draw a picture of.
     const char* const FALLBACK[static_cast<uint8_t>(UiIcon::Count) - 1] = {
-        "X", "O", "[]", "/\\",  // ButtonSouth, ButtonEast, ButtonWest, ButtonNorth
-        "A", "B", "X", "Y",     // ButtonA, ButtonB, ButtonX, ButtonY
-        "L1", "R1", "L2", "R2", "+", "(L", "R)",
-        "OK", "X", "!", "i", "DIR", "DOC", "v", ">",
+        "X",  "O",  "[]", "/\\", // ButtonSouth, ButtonEast, ButtonWest, ButtonNorth
+        "A",  "B",  "X",  "Y", // ButtonA, ButtonB, ButtonX, ButtonY
+        "L1", "R1", "L2", "R2",  "+", "(L", "R)", "OK", "X", "!", "i", "DIR", "DOC", "v", ">",
     };
 
     /// @return The cell index a UiIcon addresses; only valid for a real icon.

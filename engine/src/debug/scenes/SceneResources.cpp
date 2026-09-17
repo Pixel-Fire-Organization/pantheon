@@ -1,12 +1,12 @@
 #include <cstdio>
 
 #include "core/EngineCore.h"
-#include "core/EngineSubsystems.h"
-#include "resources/EngineResource.h"
-#include "ui/EngineUi.h"
 #include "core/EngineIO.h"
+#include "core/EngineSubsystems.h"
 #include "debug/TestbedScene.h"
 #include "platform/Platform.h"
+#include "resources/EngineResource.h"
+#include "ui/EngineUi.h"
 
 namespace
 {
@@ -63,8 +63,7 @@ namespace
         int32_t handle = -1;
         if (Engine_BuildPath(Engine_GetResourceLocationToken(), s_PathBuffer, fullPath, sizeof(fullPath)))
         {
-            handle = (s_TypeIndex == TYPE_AUTO) ? Engine_Resource_LoadAuto(fullPath)
-                                                 : Engine_Resource_Load(static_cast<ResourceType>(s_TypeIndex - 1), fullPath);
+            handle = (s_TypeIndex == TYPE_AUTO) ? Engine_Resource_LoadAuto(fullPath) : Engine_Resource_Load(static_cast<ResourceType>(s_TypeIndex - 1), fullPath);
         }
 
         if (handle >= 0)
@@ -102,8 +101,7 @@ namespace
             Ui_LabelValue("DEPS", text);
             if (info.type == RES_TEXTURE)
             {
-                snprintf(text, sizeof(text), "%dX%d %uKB", static_cast<int>(info.width), static_cast<int>(info.height),
-                         static_cast<unsigned>(info.textureBytes / 1024u));
+                snprintf(text, sizeof(text), "%dX%d %uKB", static_cast<int>(info.width), static_cast<int>(info.height), static_cast<unsigned>(info.textureBytes / 1024u));
                 Ui_LabelValue("TEXTURE", text);
             }
 
