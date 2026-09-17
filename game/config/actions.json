@@ -84,6 +84,15 @@
             "gamepad.stick_right"
           ],
           "scale": 2.5
+        },
+        {
+          "composite": {
+            "up": "gamepad.dpad_up",
+            "down": "gamepad.dpad_down",
+            "left": "gamepad.dpad_left",
+            "right": "gamepad.dpad_right"
+          },
+          "scale": 2.5
         }
       ]
     },

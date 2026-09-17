@@ -455,21 +455,11 @@ def test_digest_changes_when_a_binding_slot_count_changes(tmp_path):
 
 def test_the_shipped_declaration_is_valid():
     """Held to every rule above, for every platform the declaration was
-    written against. PSP is deliberately excluded: "Look" binds only
-    mouse.delta and gamepad.stick_right, and PSP has neither a mouse nor a
-    second stick -- a genuine gap in the shipped example (PSP support post-
-    dates it), not a tooling bug. See test_the_shipped_declaration_fails_on_psp."""
+    written against, PSP included: "Look" falls back to a dpad composite
+    there, the same pattern "Move" already uses, since PSP has neither a
+    mouse nor a second stick."""
     declaration = act.load_declaration(str(ROOT / "game" / "config" / "actions.json"))
     assert declaration["actions"]
     assert [e["id"] for e in declaration["actions"]] == list(range(len(declaration["actions"])))
-    for platform in ("ps2pal", "ps2ntsc", "win32", "vita", "vitatv", "nx"):
+    for platform in ("ps2pal", "ps2ntsc", "win32", "vita", "vitatv", "nx", "psp"):
         act.compile_for_platform(declaration, str(ROOT), platform, [])
-
-
-def test_the_shipped_declaration_fails_on_psp():
-    """Documents the gap above as a build failure naming the action, exactly
-    as ACTION.md requires ("a build failure, not a runtime one"), rather than
-    letting it surface as an unreachable control on PSP hardware."""
-    declaration = act.load_declaration(str(ROOT / "game" / "config" / "actions.json"))
-    with pytest.raises(act.ActionError, match="Look"):
-        act.compile_for_platform(declaration, str(ROOT), "psp", [])
