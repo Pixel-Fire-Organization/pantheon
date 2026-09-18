@@ -87,8 +87,8 @@ ls $PS2SDK/ee/include
 After the toolchain is ready, clone the engine and initialize submodules:
 
 ```bash
-git clone <repository-url> ps2-engine
-cd ps2-engine
+git clone <repository-url> pantheon
+cd pantheon
 git submodule update --init --recursive
 ```
 

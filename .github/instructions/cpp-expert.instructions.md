@@ -1,4 +1,4 @@
-# C++ Expert Instructions — PS2 Engine
+# C++ Expert Instructions — Pantheon
 
 ## Standard
 

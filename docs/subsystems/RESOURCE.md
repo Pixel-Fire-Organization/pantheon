@@ -1,5 +1,7 @@
 # Subsystem — Resource
 
+*Codename: Demeter*
+
 ## Purpose
 
 Own the lifetime of everything loaded from an asset file: textures, models, and

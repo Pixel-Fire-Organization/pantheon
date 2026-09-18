@@ -31,19 +31,19 @@ set(ECS_GEN_DIR "${CMAKE_BINARY_DIR}/generated/ecs" CACHE INTERNAL "")
 set(ECS_JSON "${CMAKE_SOURCE_DIR}/tools/ECS/ECS.json")
 set(ECS_SCHEMA "${CMAKE_SOURCE_DIR}/tools/ECS/schema.json")
 set(ECS_GEN_PY "${CMAKE_SOURCE_DIR}/tools/ECS/generate_ecs.py")
-set(ECS_FGD_COMMITTED "${CMAKE_SOURCE_DIR}/tools/trenchbroom/games/PS2Engine/PS2Engine.fgd")
+set(ECS_FGD_COMMITTED "${CMAKE_SOURCE_DIR}/tools/trenchbroom/games/Pantheon/Pantheon.fgd")
 
 add_custom_command(
         OUTPUT "${ECS_GEN_DIR}/EcsComponents.h"
         "${ECS_GEN_DIR}/EcsSpawn.cpp"
-        "${ECS_GEN_DIR}/PS2Engine.fgd"
+        "${ECS_GEN_DIR}/Pantheon.fgd"
         COMMAND ${PYTHON3_BIN} "${ECS_GEN_PY}"
         --ecs "${ECS_JSON}" --schema "${ECS_SCHEMA}"
         --out-header "${ECS_GEN_DIR}/EcsComponents.h"
         --out-source "${ECS_GEN_DIR}/EcsSpawn.cpp"
-        --out-fgd "${ECS_GEN_DIR}/PS2Engine.fgd"
+        --out-fgd "${ECS_GEN_DIR}/Pantheon.fgd"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${ECS_GEN_DIR}/PS2Engine.fgd" "${ECS_FGD_COMMITTED}"
+        "${ECS_GEN_DIR}/Pantheon.fgd" "${ECS_FGD_COMMITTED}"
         DEPENDS "${ECS_JSON}" "${ECS_SCHEMA}" "${ECS_GEN_PY}"
         COMMENT "Generating ECS (EcsComponents.h, EcsSpawn.cpp, FGD) from ECS.json"
         VERBATIM

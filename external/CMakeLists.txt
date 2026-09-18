@@ -1,6 +1,6 @@
 # Thirdparty libraries CMake configuration
 cmake_minimum_required(VERSION 3.10)
-project(ps2_engine_external)
+project(pantheon_external)
 
 # Entered only when a PS2 platform is active (see the root CMakeLists), so no
 # toolchain guard is needed here.

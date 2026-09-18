@@ -35,22 +35,22 @@ Read the guideline **before** starting, not while reviewing.
 
 ## Subsystems
 
-|                                          | Optional                  |
-|------------------------------------------|---------------------------|
-| [Memory](subsystems/MEMORY.md)           | No                        |
-| [Debug](subsystems/DEBUG.md)             | Snapshot only             |
-| [Renderer](subsystems/RENDERER.md)       | No — use the null backend |
-| [IO](subsystems/IO.md)                   | Yes                       |
-| [Archive](subsystems/ARCHIVE.md)         | Yes                       |
-| [Resource](subsystems/RESOURCE.md)       | Yes                       |
-| [Level](subsystems/LEVEL.md)             | Yes                       |
-| [Sector](subsystems/SECTOR.md)           | Yes                       |
-| [Input](subsystems/INPUT.md)             | No — force-enabled        |
-| [Action](subsystems/ACTION.md)           | No — force-enabled        |
-| [Scene](subsystems/SCENE.md)             | Yes                       |
-| [UI](subsystems/UI.md)                   | Yes                       |
-| [Achievement](subsystems/ACHIEVEMENT.md) | Yes                       |
-| [Testbed](subsystems/TESTBED.md)         | Debug builds only         |
+|                                          | Codename    | Optional                  |
+|------------------------------------------|-------------|---------------------------|
+| [Memory](subsystems/MEMORY.md)           | Mnemosyne   | No                        |
+| [Debug](subsystems/DEBUG.md)             | Hecate      | Snapshot only             |
+| [Renderer](subsystems/RENDERER.md)       | Aphrodite   | No — use the null backend |
+| [IO](subsystems/IO.md)                   | Hermes      | Yes                       |
+| [Archive](subsystems/ARCHIVE.md)         | Hades       | Yes                       |
+| [Resource](subsystems/RESOURCE.md)       | Demeter     | Yes                       |
+| [Level](subsystems/LEVEL.md)             | Gaia        | Yes                       |
+| [Sector](subsystems/SECTOR.md)           | Atlas       | Yes                       |
+| [Input](subsystems/INPUT.md)             | Iris        | No — force-enabled        |
+| [Action](subsystems/ACTION.md)           | Ares        | No — force-enabled        |
+| [Scene](subsystems/SCENE.md)             | Zeus        | Yes                       |
+| [UI](subsystems/UI.md)                   | Hestia      | Yes                       |
+| [Achievement](subsystems/ACHIEVEMENT.md) | Nike        | Yes                       |
+| [Testbed](subsystems/TESTBED.md)         | Hephaestus  | Debug builds only         |
 
 ## Formats
 

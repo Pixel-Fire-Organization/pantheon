@@ -1,11 +1,11 @@
-# PS2 Game Engine - AI Instructions
+# Pantheon - AI Instructions
 
-This file provides context for AI assistants to understand the unique requirements of this PlayStation 2 game engine
+This file provides context for AI assistants to understand the unique requirements of this multi-platform game engine
 project.
 
 ## Project Overview
 
-This is a custom PS2 game engine using the `ps2sdk`, `ps2gl`, and `ps2stuff`.
+This is a custom multi-platform game engine (Pantheon) using platform SDKs such as `ps2sdk`, `ps2gl`, and `ps2stuff`.
 
 ## Platform Subsystem
 

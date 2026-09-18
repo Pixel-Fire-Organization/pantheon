@@ -23,14 +23,14 @@ DECLARATION = os.path.join(ROOT, "game", "config", "title.json")
 
 
 def test_descriptor_is_exactly_the_size_the_browser_expects():
-    blob = save_icon.build_icon_sys("PS2 Engine", 10)
+    blob = save_icon.build_icon_sys("Pantheon", 10)
     assert len(blob) == save_icon.ICON_SYS_SIZE == 964
     assert blob[:4] == b"PS2D"
 
 
 def test_descriptor_names_a_model_for_all_three_slots():
     # Normal, copy and delete. A slot naming nothing shows an empty icon.
-    blob = save_icon.build_icon_sys("PS2 Engine", 10)
+    blob = save_icon.build_icon_sys("Pantheon", 10)
     names = []
     for offset in (260, 324, 388):
         names.append(blob[offset:offset + save_icon.NAME_MAX].split(b"\x00", 1)[0].decode("ascii"))
@@ -38,9 +38,9 @@ def test_descriptor_names_a_model_for_all_three_slots():
 
 
 def test_the_declared_title_reaches_the_descriptor():
-    blob = save_icon.build_icon_sys("PS2 Engine", 10)
+    blob = save_icon.build_icon_sys("Pantheon", 10)
     title = blob[192:192 + save_icon.TITLE_MAX].split(b"\x00", 1)[0].decode("shift_jis")
-    assert title == "PS2 Engine"
+    assert title == "Pantheon"
 
 
 def test_an_overlong_title_is_refused_rather_than_truncated():

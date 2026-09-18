@@ -42,7 +42,7 @@ REGION_ALIAS = {"pal": "PS2PAL", "ntsc": "PS2NTSC"}
 CONTAINERS = {
     "toolchains/devkita64.cmake": {
         "dockerfile": "tools/docker/devkita64/Dockerfile",
-        "image": "ps2engine-devkita64",
+        "image": "pantheon-devkita64",
         "root_env": "DEVKITPRO",
         "root_default": "/opt/devkitpro",
         "probe": "cmake/Switch.cmake",
@@ -51,7 +51,7 @@ CONTAINERS = {
 
 
 def parse_args(argv=None):
-    p = argparse.ArgumentParser(description="Build the PS2 engine")
+    p = argparse.ArgumentParser(description="Build Pantheon")
     p.add_argument("build_type", nargs="?", default="debug", choices=["debug", "release"])
     p.add_argument("region", nargs="?", default=None, type=str.lower, choices=["pal", "ntsc"],
                    help="Shorthand for --platforms PS2PAL / PS2NTSC")

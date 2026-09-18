@@ -15,7 +15,7 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 GOLDEN = pathlib.Path(__file__).resolve().parent / "golden"
-COMMITTED_FGD = ROOT / "tools" / "trenchbroom" / "games" / "PS2Engine" / "PS2Engine.fgd"
+COMMITTED_FGD = ROOT / "tools" / "trenchbroom" / "games" / "Pantheon" / "Pantheon.fgd"
 ECS_JSON = ROOT / "tools" / "ECS" / "ECS.json"
 
 

@@ -182,12 +182,12 @@ later without a format break.
 ## Authoring & building
 
 `tools/trenchbroom/TrenchBroom.exe` is a portable build with the engine's game
-profile already registered (`tools/trenchbroom/games/PS2Engine/`), so no
+profile already registered (`tools/trenchbroom/games/Pantheon/`), so no
 manual game-config setup is needed. When opening or creating a map, select
-"PS2 Custom Engine" and set its **Game Path to the repo's `assets/` folder** —
+"Pantheon" and set its **Game Path to the repo's `assets/` folder** —
 `GameConfig.cfg`'s search path is `.` (the Game Path itself), so this is what
 resolves the material root to `assets/textures` and puts entity definitions at
-the generated `tools/trenchbroom/games/PS2Engine/PS2Engine.fgd`. The `.fgd` is
+the generated `tools/trenchbroom/games/Pantheon/Pantheon.fgd`. The `.fgd` is
 regenerated from `tools/ECS/ECS.json` by the `ecs-generate` CMake target and
 copied back into that committed profile directory — rebuild after changing an
 ECS component so TrenchBroom picks up new entity classes.

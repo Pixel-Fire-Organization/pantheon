@@ -8,7 +8,7 @@
 
 namespace
 {
-    const char* const kWindowClass = "Ps2EngineWindow";
+    const char* const kWindowClass = "PantheonWindow";
 
     // The WndProc is a plain function, so it needs a way back to the platform.
     // Single-window process: a file-scope pointer is honest and avoids stuffing
