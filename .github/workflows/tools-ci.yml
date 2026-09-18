@@ -37,11 +37,11 @@ jobs:
         run: |
           python tools/ECS/generate_ecs.py \
             --ecs tools/ECS/ECS.json --schema tools/ECS/schema.json \
-            --out-fgd /tmp/PS2Engine.fgd
-          if ! diff -u tools/trenchbroom/games/PS2Engine/PS2Engine.fgd /tmp/PS2Engine.fgd; then
-            echo "::error::ECS.json and the committed PS2Engine.fgd have drifted." \
+            --out-fgd /tmp/Pantheon.fgd
+          if ! diff -u tools/trenchbroom/games/Pantheon/Pantheon.fgd /tmp/Pantheon.fgd; then
+            echo "::error::ECS.json and the committed Pantheon.fgd have drifted." \
                  "Run: python tools/ECS/generate_ecs.py --ecs tools/ECS/ECS.json" \
                  "--schema tools/ECS/schema.json --out-fgd" \
-                 "tools/trenchbroom/games/PS2Engine/PS2Engine.fgd  and commit the result."
+                 "tools/trenchbroom/games/Pantheon/Pantheon.fgd  and commit the result."
             exit 1
           fi

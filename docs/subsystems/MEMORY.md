@@ -1,5 +1,7 @@
 # Subsystem — Memory
 
+*Codename: Mnemosyne*
+
 ## Purpose
 
 Provide every other subsystem with storage whose cost is known before the game

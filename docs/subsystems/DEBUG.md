@@ -1,5 +1,7 @@
 # Subsystem — Debug
 
+*Codename: Hecate*
+
 ## Purpose
 
 Say what the engine is doing, and stop it clearly when it cannot continue.

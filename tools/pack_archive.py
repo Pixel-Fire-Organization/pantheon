@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pack_archive.py — PS2 Engine game-archive (.PS2R) packer.
+pack_archive.py — Pantheon game-archive (.PS2R) packer.
 
 Bundles a set of files into one flat container: a fixed header, a TOC of
 {nameHash, nameOffset, offset, size} entries, a string table, then the raw

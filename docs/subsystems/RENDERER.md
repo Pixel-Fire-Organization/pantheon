@@ -1,5 +1,7 @@
 # Subsystem — Renderer
 
+*Codename: Aphrodite*
+
 ## Purpose
 
 Turn the frame the game described into pixels. The engine defines one rendering

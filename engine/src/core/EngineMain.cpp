@@ -170,7 +170,7 @@ int Engine_Main(int argc, char** argv)
     }
 
     EngineConfig config;
-    config.windowTitle = "PS2 Engine";
+    config.windowTitle = "Pantheon";
     config.resourceLocationToken = platform->GetResourceToken();
     config.subsystems = nullptr;
     config.subsystemCount = 0;

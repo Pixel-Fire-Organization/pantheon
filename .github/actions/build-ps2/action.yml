@@ -1,4 +1,4 @@
-name: 'Build PS2 Engine'
+name: 'Build Pantheon'
 description: 'Installs dependencies and runs the engine build script'
 
 inputs:

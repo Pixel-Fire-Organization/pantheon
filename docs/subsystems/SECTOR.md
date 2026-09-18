@@ -1,5 +1,7 @@
 # Subsystem — Sector
 
+*Codename: Atlas*
+
 ## Purpose
 
 Keep the geometry near the streaming centre resident, and nothing else. A world

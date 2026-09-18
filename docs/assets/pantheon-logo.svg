@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="96" height="96" role="img" aria-label="Pantheon engine logo">
+  <title>Pantheon</title>
+  <polygon points="16,2 3,11.5 29,11.5" fill="#E9B24A"/>
+  <rect x="2.5" y="11.5" width="27" height="3.5" fill="#C48F30"/>
+  <rect x="4.000" y="15" width="2.6" height="11" fill="#AA7622"/>
+  <rect x="9.350" y="15" width="2.6" height="11" fill="#AA7622"/>
+  <rect x="14.700" y="15" width="2.6" height="11" fill="#AA7622"/>
+  <rect x="20.050" y="15" width="2.6" height="11" fill="#AA7622"/>
+  <rect x="25.400" y="15" width="2.6" height="11" fill="#AA7622"/>
+  <rect x="2" y="26" width="28" height="2" fill="#8C5E18"/>
+  <rect x="1" y="28" width="30" height="2" fill="#8C5E18"/>
+</svg>
