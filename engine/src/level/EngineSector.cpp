@@ -73,6 +73,123 @@ static bool Internal_SectorMeshesAreSane(const BakedMeshEntry* entries, uint32_t
     return true;
 }
 
+typedef struct
+{
+    SectorResident* res;
+    uint8_t         generation;
+} SectorLoadContext;
+
+static void Internal_OnSectorLoaded(const void* data, size_t size, void* userData)
+{
+    SectorLoadContext* ctx = static_cast<SectorLoadContext*>(userData);
+    SectorResident* res = ctx->res;
+    const uint8_t  gen  = ctx->generation;
+    Engine_PoolFreeMain(ctx);
+
+    if (res->generation != gen)
+        return;
+
+    if (!data)
+    {
+        Engine_LogError("Sector: read failed");
+        res->state = SECTOR_EMPTY;
+        return;
+    }
+
+    const size_t cap = Engine_GetSlotCapacity(ARENA_LEVEL_DATA, res->arenaSlot);
+    if (size > cap)
+    {
+        Engine_LogError("Sector is %zu bytes, exceeds slot capacity %zu", size, cap);
+        res->state = SECTOR_EMPTY;
+        return;
+    }
+
+    uint8_t* dst = static_cast<uint8_t*>(Engine_GetSlot(ARENA_LEVEL_DATA, res->arenaSlot));
+    std::memcpy(dst, data, size);
+
+    const size_t blobSize = size;
+    if (blobSize < sizeof(SectorHeader))
+    {
+        Engine_LogError("Sector is %zu bytes, shorter than a PSEC header", blobSize);
+        res->state = SECTOR_EMPTY;
+        return;
+    }
+
+    const SectorHeader* hdr = reinterpret_cast<const SectorHeader*>(dst);
+    if (hdr->magic != LEVEL_SECTOR_MAGIC || hdr->version != LEVEL_SECTOR_VERSION)
+    {
+        Engine_LogError("Sector: bad PSEC header");
+        res->state = SECTOR_EMPTY;
+        return;
+    }
+
+    const uint32_t meshCount = hdr->meshCount;
+    if (meshCount > LEVEL_MAX_MESHES_PER_SECTOR)
+    {
+        Engine_LogError("Sector declares %u meshes, the resident ring holds %d", meshCount, LEVEL_MAX_MESHES_PER_SECTOR);
+        res->state = SECTOR_EMPTY;
+        return;
+    }
+
+    const BakedMeshEntry* entries = reinterpret_cast<const BakedMeshEntry*>(dst + sizeof(SectorHeader));
+    if (!Level_SpanFits(sizeof(SectorHeader), static_cast<uint64_t>(meshCount) * sizeof(BakedMeshEntry), blobSize) || !Internal_SectorMeshesAreSane(entries, meshCount, blobSize, "ASYNC_SECTOR"))
+    {
+        res->state = SECTOR_EMPTY;
+        return;
+    }
+
+    for (uint32_t m = 0; m < meshCount; ++m)
+    {
+        const BakedMeshEntry& e = entries[m];
+        Mesh& mesh = res->meshes[m];
+        std::memset(&mesh, 0, sizeof(Mesh));
+        mesh.vertexCount = static_cast<int>(e.vertexCount);
+        mesh.vertices = reinterpret_cast<float*>(dst + e.vertsOffset);
+        mesh.normals = e.normsOffset ? reinterpret_cast<float*>(dst + e.normsOffset) : nullptr;
+        mesh.texcoords = e.uvsOffset ? reinterpret_cast<float*>(dst + e.uvsOffset) : nullptr;
+        mesh.indices = nullptr;
+        mesh.boundsCenter = Vector3{e.boundsCenter[0], e.boundsCenter[1], e.boundsCenter[2]};
+        mesh.boundsRadius = e.boundsRadius;
+        mesh.topology = static_cast<unsigned char>(e.topology);
+        mesh.vertexComponents = 4; // PSEC positions are vec4
+        mesh.minU = e.minU;
+        mesh.maxU = e.maxU;
+        mesh.minV = e.minV;
+        mesh.maxV = e.maxV;
+
+        const uint32_t matIdx = e.materialIndex;
+        if (matIdx < LEVEL_MAX_MATERIALS && s_Level->materials)
+        {
+            const char* assetKey = s_Level->materials[matIdx].assetKey;
+            if (assetKey[0] != '\0')
+            {
+                int32_t handle = Engine_Resource_LoadAuto(assetKey);
+                if (handle >= 0)
+                {
+                    Engine_Resource_Pin(handle);
+                    res->meshTexture[m] = handle;
+                }
+                else
+                {
+                    res->meshTexture[m] = -1;
+                }
+            }
+            else
+            {
+                res->meshTexture[m] = -1;
+            }
+        }
+        else
+        {
+            res->meshTexture[m] = -1;
+        }
+    }
+    res->meshCount = meshCount;
+    res->bounds.min = Vector3{hdr->aabbMin[0], hdr->aabbMin[1], hdr->aabbMin[2]};
+    res->bounds.max = Vector3{hdr->aabbMax[0], hdr->aabbMax[1], hdr->aabbMax[2]};
+    res->state = SECTOR_READY;
+}
+
 static void Internal_LoadSector(int cx, int cz, SectorResident* res)
 {
     const LevelInfoChunk* info = s_Level->info;
@@ -93,83 +210,23 @@ static void Internal_LoadSector(int cx, int cz, SectorResident* res)
     char key[IO_FILE_MAX_PATH];
     std::snprintf(key, sizeof(key), "%s/S%03d_%03d.SEC", s_Level->name, cx, cz);
 
-    ArchiveLocator loc;
-    if (!Engine_Archive_Find(key, &loc))
+    SectorLoadContext* ctx = static_cast<SectorLoadContext*>(Engine_PoolAllocMain());
+    if (!ctx)
     {
-        Engine_LogError("Sector: '%s' not found in archive", key);
+        Engine_LogError("Sector: OOM allocating load context for '%s'", key);
         res->state = SECTOR_EMPTY;
         return;
     }
+    ctx->res        = res;
+    ctx->generation = res->generation;
 
-    const size_t cap = Engine_GetSlotCapacity(ARENA_LEVEL_DATA, res->arenaSlot);
-    if (loc.size > cap)
+    res->state = SECTOR_LOADING;
+    if (!Engine_IO_ReadAsync(key, Internal_OnSectorLoaded, ctx))
     {
-        Engine_LogError("Sector '%s' is %u bytes, exceeds slot capacity %zu", key, loc.size, cap);
+        Engine_LogError("Sector: async read failed for '%s'", key);
+        Engine_PoolFreeMain(ctx);
         res->state = SECTOR_EMPTY;
-        return;
     }
-
-    uint8_t* dst = static_cast<uint8_t*>(Engine_GetSlot(ARENA_LEVEL_DATA, res->arenaSlot));
-    if (!dst || !Engine_Archive_ReadSync(&loc, 0, dst, loc.size))
-    {
-        Engine_LogError("Sector: read failed for '%s'", key);
-        res->state = SECTOR_EMPTY;
-        return;
-    }
-
-    const size_t blobSize = loc.size;
-    if (blobSize < sizeof(SectorHeader))
-    {
-        Engine_LogError("Sector '%s' is %zu bytes, shorter than a PSEC header", key, blobSize);
-        res->state = SECTOR_EMPTY;
-        return;
-    }
-
-    const SectorHeader* hdr = reinterpret_cast<const SectorHeader*>(dst);
-    if (hdr->magic != LEVEL_SECTOR_MAGIC || hdr->version != LEVEL_SECTOR_VERSION)
-    {
-        Engine_LogError("Sector: bad PSEC header for '%s'", key);
-        res->state = SECTOR_EMPTY;
-        return;
-    }
-
-    const uint32_t meshCount = hdr->meshCount;
-    if (meshCount > LEVEL_MAX_MESHES_PER_SECTOR)
-    {
-        Engine_LogError("Sector '%s' declares %u meshes, the resident ring holds %d", key, meshCount, LEVEL_MAX_MESHES_PER_SECTOR);
-        res->state = SECTOR_EMPTY;
-        return;
-    }
-
-    const BakedMeshEntry* entries = reinterpret_cast<const BakedMeshEntry*>(dst + sizeof(SectorHeader));
-    if (!Level_SpanFits(sizeof(SectorHeader), static_cast<uint64_t>(meshCount) * sizeof(BakedMeshEntry), blobSize) || !Internal_SectorMeshesAreSane(entries, meshCount, blobSize, key))
-    {
-        res->state = SECTOR_EMPTY;
-        return;
-    }
-
-    for (uint32_t m = 0; m < meshCount; ++m)
-    {
-        const BakedMeshEntry& e = entries[m];
-        Mesh& mesh = res->meshes[m];
-        std::memset(&mesh, 0, sizeof(Mesh));
-        mesh.vertexCount = static_cast<int>(e.vertexCount);
-        mesh.vertices = reinterpret_cast<float*>(dst + e.vertsOffset);
-        mesh.normals = e.normsOffset ? reinterpret_cast<float*>(dst + e.normsOffset) : nullptr;
-        mesh.texcoords = e.uvsOffset ? reinterpret_cast<float*>(dst + e.uvsOffset) : nullptr;
-        mesh.indices = nullptr;
-        mesh.boundsCenter = Vector3{e.boundsCenter[0], e.boundsCenter[1], e.boundsCenter[2]};
-        mesh.boundsRadius = e.boundsRadius;
-        mesh.topology = static_cast<unsigned char>(e.topology);
-        mesh.vertexComponents = 4; // PSEC positions are vec4
-
-        const uint32_t matIdx = e.materialIndex;
-        res->meshTexture[m] = (matIdx < LEVEL_MAX_MATERIALS) ? s_Level->materialTex[matIdx] : -1;
-    }
-    res->meshCount = meshCount;
-    res->bounds.min = Vector3{hdr->aabbMin[0], hdr->aabbMin[1], hdr->aabbMin[2]};
-    res->bounds.max = Vector3{hdr->aabbMax[0], hdr->aabbMax[1], hdr->aabbMax[2]};
-    res->state = SECTOR_READY;
 }
 
 bool Engine_Sector_Begin(const Level* level)
@@ -191,6 +248,7 @@ bool Engine_Sector_Begin(const Level* level)
         s_Residents[i].cellZ = -1;
         s_Residents[i].arenaSlot = static_cast<uint8_t>(LEVEL_SECTOR_SLOT_BASE + i);
         s_Residents[i].state = SECTOR_EMPTY;
+        s_Residents[i].generation = 0;
         s_Residents[i].meshCount = 0;
     }
     return true;
@@ -200,6 +258,18 @@ void Engine_Sector_End()
 {
     for (int i = 0; i < LEVEL_RESIDENT_SECTORS; ++i)
     {
+        if (s_Residents[i].state != SECTOR_EMPTY)
+        {
+            for (uint32_t m = 0; m < s_Residents[i].meshCount; ++m)
+            {
+                if (s_Residents[i].meshTexture[m] >= 0)
+                {
+                    Engine_Resource_Unpin(s_Residents[i].meshTexture[m]);
+                    Engine_Resource_Unload(s_Residents[i].meshTexture[m]);
+                    s_Residents[i].meshTexture[m] = -1;
+                }
+            }
+        }
         s_Residents[i].state = SECTOR_EMPTY;
         s_Residents[i].meshCount = 0;
         s_Residents[i].cellX = -1;
@@ -253,6 +323,19 @@ void Engine_Sector_Update(float worldX, float worldZ)
             continue;
         if (std::abs(r->cellX - cx) > 1 || std::abs(r->cellZ - cz) > 1)
         {
+            // Bump generation FIRST so any in-flight callback for this slot
+            // sees the mismatch and discards its stale data.
+            ++r->generation;
+
+            for (uint32_t m = 0; m < r->meshCount; ++m)
+            {
+                if (r->meshTexture[m] >= 0)
+                {
+                    Engine_Resource_Unpin(r->meshTexture[m]);
+                    Engine_Resource_Unload(r->meshTexture[m]);
+                    r->meshTexture[m] = -1;
+                }
+            }
             r->state = SECTOR_EMPTY;
             r->meshCount = 0;
             r->cellX = -1;

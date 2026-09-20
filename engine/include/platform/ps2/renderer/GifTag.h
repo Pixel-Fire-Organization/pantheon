@@ -95,6 +95,7 @@ class GifTagRenderer final : public Renderer
     bool m_backfaceCull = true;
 
     uint32_t m_lastBoundTex = 0;
+    uint64_t m_lastBoundClamp = 0;
 
     DrawStats m_frameStats{};
 
@@ -107,7 +108,7 @@ class GifTagRenderer final : public Renderer
     /// @param components Floats per position: 3, or 4 for baked geometry.
     /// @param uvs Two floats per vertex, or null when untextured.
     /// @param textureId A backend texture handle, or zero when untextured.
-    void DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId);
+    void DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU = 0, uint16_t maxU = 0, uint16_t minV = 0, uint16_t maxV = 0);
 
     /// Transform and emit one triangle strip, split into runs of visible
     /// vertices.
@@ -115,7 +116,7 @@ class GifTagRenderer final : public Renderer
     /// @param components Floats per position: 3, or 4 for baked geometry.
     /// @param uvs Two floats per vertex, or null when untextured.
     /// @param textureId A backend texture handle, or zero when untextured.
-    void DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId);
+    void DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU = 0, uint16_t maxU = 0, uint16_t minV = 0, uint16_t maxV = 0);
     /// Write the sampling and buffer registers for a texture, unless that same
     /// texture is already bound this frame.
     void BindTexture(uint32_t textureId);

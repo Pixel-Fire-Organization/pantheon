@@ -31,6 +31,7 @@ compile unrestricted, e.g. for local inspection.
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -136,6 +137,8 @@ class Material:
         self.height = 64
         self.color = (160, 160, 160)  # mean colour, for far-field flat shading
         self.payload = None           # baked TIM2 .ps2a bytes
+        self.img = None
+        self.shared = False
 
 
 def _resolve_texture(tex_dir, tex_name):
@@ -211,6 +214,7 @@ def _bake_material(level_name, tex_name, tex_dir, max_width=None, max_height=Non
                 if fits:
                     mat.key = shared_key
                     mat.payload = None
+                    mat.shared = True
                     print(f"  INFO: '{tex_name}' shared with {shared_key}; "
                           f"not duplicated into this level's archive")
                     return mat
@@ -248,6 +252,7 @@ def _bake_material(level_name, tex_name, tex_dir, max_width=None, max_height=Non
                   f"IO read buffer ({max_bytes} bytes); downscaled further to "
                   f"{baked.width}x{baked.height} ({len(blob)} bytes)")
         mat.payload = blob
+        mat.img = baked
     except ImportError:
         # No Pillow: keep defaults and a 1x1 placeholder so the archive is valid.
         mat.payload = ps2a.write_ps2a(ps2a.TYPE_MAP["TEXTURE"], b"", [], ".tm2")
@@ -351,17 +356,121 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, platform=None, report=F
                     on.append(nrm)
                     ot.append(uv)
 
+    # --- ATLASING -------------------------------------------------------------
+    # Atlas packing only makes sense for materials whose UVs stay close to [0,1]
+    # (non-repeating, e.g. entity props). World geometry UVs can be enormous
+    # (e.g. u=416 for a floor tiling 416x) and any UV remapping into an atlas
+    # cell creates seams at triangle edges where one vertex has u=415.9 and the
+    # next has u=0.1. The PS2 hardware REPEAT mode handles large UVs correctly
+    # without any remapping. We therefore atlas ONLY materials whose per-cell UV
+    # range is within [-2, 3] (a small margin beyond [0,1]).
+    UV_ATLAS_THRESHOLD = 3.0
+
+    try:
+        from PIL import Image
+    except ImportError:
+        pass
+
+    atlas_cache = {} # mset_hash -> (atlas_matidx, atlas_remap)
+    new_cell_groups = {}
+    for (cx, cz), groups in cell_groups.items():
+        # Split materials into atlasable (small UV range) vs. plain (large UV tiling)
+        atlasable_midxs = []
+        plain_midxs = []
+        for m in groups.keys():
+            mat = materials[material_order[m]]
+            if mat.shared or not mat.img:
+                plain_midxs.append(m)
+                continue
+            ov, on, ot = groups[m]
+            if not ot:
+                plain_midxs.append(m)
+                continue
+            u_min = min(u for u, v in ot)
+            u_max = max(u for u, v in ot)
+            v_min = min(v for u, v in ot)
+            v_max = max(v for u, v in ot)
+            if u_min >= -2.0 and u_max <= UV_ATLAS_THRESHOLD and v_min >= -2.0 and v_max <= UV_ATLAS_THRESHOLD:
+                atlasable_midxs.append(m)
+            else:
+                plain_midxs.append(m)
+
+        new_groups = []
+        # Plain materials: keep their own texture, standard REPEAT (no CLAMP params)
+        for m in plain_midxs:
+            new_groups.append((m, groups[m], 0, 0, 0, 0))
+
+        # Atlasable materials: pack into a single 256x256 atlas
+        if atlasable_midxs:
+            atlasable_midxs.sort()
+            mset_hash = hashlib.md5(str(atlasable_midxs).encode()).hexdigest()
+            if mset_hash not in atlas_cache:
+                atlas_size = 256
+                atlas_img = Image.new("RGBA", (atlas_size, atlas_size), (255, 0, 255, 255))
+                grid_size = int(math.ceil(math.sqrt(len(atlasable_midxs))))
+                if grid_size == 0: grid_size = 1
+                cell_size = atlas_size // grid_size
+
+                remaps = {}
+                for idx, midx in enumerate(atlasable_midxs):
+                    row = idx // grid_size
+                    col = idx % grid_size
+                    img = materials[material_order[midx]].img.resize((cell_size, cell_size), Image.LANCZOS)
+                    atlas_img.paste(img, (col * cell_size, row * cell_size))
+
+                    off_u = col * cell_size / float(atlas_size)
+                    off_v = row * cell_size / float(atlas_size)
+                    scale_u = cell_size / float(atlas_size)
+                    scale_v = cell_size / float(atlas_size)
+                    remaps[midx] = (off_u, off_v, scale_u, scale_v)
+
+                atlas_tex_name = f"__atlas_{mset_hash}__"
+                atlas_mat = Material(atlas_tex_name, f"{level_name}/ATLAS_{mset_hash.upper()[:8]}.PS2A")
+                payload, ext = tim2.encode_pal8(atlas_img, 0), ".tm2"
+                atlas_mat.payload = ps2a.write_ps2a(ps2a.TYPE_MAP["TEXTURE"], payload, [], ext)
+                atlas_mat.img = atlas_img
+                materials[atlas_tex_name] = atlas_mat
+                material_order.append(atlas_tex_name)
+                atlas_matidx = len(material_order) - 1
+
+                atlas_cache[mset_hash] = (atlas_matidx, remaps)
+
+            atlas_matidx, remaps = atlas_cache[mset_hash]
+
+            for m in atlasable_midxs:
+                off_u, off_v, scale_u, scale_v = remaps[m]
+                ov, on, ot = groups[m]
+                atlas_ot = [(u * scale_u + off_u, v * scale_v + off_v) for u, v in ot]
+
+                # MINU/MINV = base pixel of cell (UFIX/VFIX for Region Repeat).
+                # MAXU/MAXV = cell size - 1 as power-of-two bitmask (UMSK/VMSK).
+                # Region Repeat formula: u' = (u_int & MAXU) | MINU
+                min_u = int(off_u * 256)
+                max_u = int(scale_u * 256) - 1
+                min_v = int(off_v * 256)
+                max_v = int(scale_v * 256) - 1
+
+                new_groups.append((atlas_matidx, (ov, on, atlas_ot), min_u, max_u, min_v, max_v))
+
+        new_cell_groups[(cx, cz)] = new_groups
+
+    # cell_groups is intentionally NOT overwritten; _bake_farfield uses original materials
+
     # --- bake sectors (PSEC) --------------------------------------------------
     sectors = {}   # (cx,cz) -> psec bytes
     cell_aabb = {}  # (cx,cz) -> (min,max)
-    for (cx, cz), groups in cell_groups.items():
+    for (cx, cz), groups in new_cell_groups.items():
         meshes = []
-        for midx, (ov, on, ot) in sorted(groups.items()):
+        for midx, (ov, on, ot), min_u, max_u, min_v, max_v in groups:
             if len(meshes) >= levelfmt.MAX_MESHES_PER_SECTOR:
                 print(f"  WARN: cell {cx},{cz} exceeds {levelfmt.MAX_MESHES_PER_SECTOR} meshes; extra material dropped")
                 break
             baked = meshlib.bake_mesh(ov, on, ot)
             baked["material_index"] = midx
+            baked["min_u"] = min_u
+            baked["max_u"] = max_u
+            baked["min_v"] = min_v
+            baked["max_v"] = max_v
             meshes.append(baked)
         blob, aabb = levelfmt.pack_sector(meshes)
         if len(blob) > LEVEL_SECTOR_MAX_BYTES:

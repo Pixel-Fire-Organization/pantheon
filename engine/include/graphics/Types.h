@@ -184,6 +184,10 @@ typedef struct Mesh
     float boundsRadius; // object-space bounding-sphere radius
     unsigned char topology; // MESH_TOPOLOGY_LIST or MESH_TOPOLOGY_STRIP
     unsigned char vertexComponents; // floats per position (3 or 4)
+    uint16_t minU; // PS2 GS CLAMP Region Repeat
+    uint16_t maxU;
+    uint16_t minV;
+    uint16_t maxV;
 } Mesh;
 
 #define MATERIAL_MAP_DIFFUSE 0

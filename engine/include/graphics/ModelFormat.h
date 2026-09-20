@@ -65,7 +65,10 @@ struct BakedMeshEntry
     uint32_t topology; // BAKED_TOPOLOGY_LIST or BAKED_TOPOLOGY_STRIP
     float boundsCenter[3]; // object-space bounding-sphere center
     float boundsRadius; // object-space bounding-sphere radius
-    uint32_t reserved[2];
+    uint16_t minU; // PS2 GS CLAMP Region Repeat
+    uint16_t maxU;
+    uint16_t minV;
+    uint16_t maxV;
 };
 
 struct BakedMaterialEntry

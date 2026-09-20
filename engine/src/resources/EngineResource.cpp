@@ -1,4 +1,4 @@
-﻿#include <cstring>
+#include <cstring>
 #include "Engine.h"
 #include "graphics/FontFormat.h"
 #include "graphics/ModelFormat.h"
@@ -27,7 +27,7 @@ typedef struct
     uint32_t lastUsedFrame;
     uint32_t textureBytes; // texture VRAM footprint (RES_TEXTURE only; 0 otherwise)
     char key[IO_FILE_MAX_PATH];
-    bool pinned;
+    uint32_t pinCount;
     // Generation counter — incremented every time this slot is cleared.
     // DepHandle.generation is compared against this value on unload to detect
     // stale references caused by slot reuse.
@@ -97,7 +97,7 @@ static void Internal_CalcEvictableBytes(uint32_t* outBytes, int32_t* outCount)
             continue;
         if (s_Entries[i].type != RES_TEXTURE)
             continue;
-        if (s_Entries[i].pinned)
+        if (s_Entries[i].pinCount > 0)
             continue;
         if (s_Entries[i].refCount > 0)
             continue;
@@ -119,7 +119,7 @@ static int32_t Internal_StalestReleasable()
     {
         if (s_Entries[i].state == RES_STATE_EMPTY || s_Entries[i].state == RES_STATE_LOADING)
             continue;
-        if (s_Entries[i].pinned)
+        if (s_Entries[i].pinCount > 0)
             continue;
         if (s_Entries[i].refCount > 0)
             continue;
@@ -181,6 +181,10 @@ static void Internal_UnloadEntry(int32_t index)
             if (s_Entries[depIdx].refCount > 0)
             {
                 s_Entries[depIdx].refCount--;
+            }
+            if (s_Entries[depIdx].refCount == 0 && s_Entries[depIdx].pinCount == 0)
+            {
+                Internal_UnloadEntry(depIdx);
             }
         }
     }
@@ -627,7 +631,7 @@ int32_t Engine_Resource_Load(ResourceType type, const char* path)
     entry->type = type;
     entry->state = RES_STATE_LOADING;
     entry->lastUsedFrame = s_CurrentFrame;
-    entry->pinned = false;
+    entry->pinCount = 0;
     entry->refCount = 0;
     entry->depCount = 0;
     // canonicalKey is fully defined and null-terminated across all IO_FILE_MAX_PATH
@@ -721,19 +725,22 @@ void Engine_Resource_Pin(int32_t handle)
 {
     if (handle < 0 || handle >= RES_MAX_ENTRIES)
         return;
-    s_Entries[handle].pinned = true;
+    s_Entries[handle].pinCount++;
 }
 
 void Engine_Resource_Unpin(int32_t handle)
 {
     if (handle < 0 || handle >= RES_MAX_ENTRIES)
         return;
-    s_Entries[handle].pinned = false;
+    if (s_Entries[handle].pinCount > 0)
+        s_Entries[handle].pinCount--;
 }
 
 void Engine_Resource_Unload(int32_t handle)
 {
     if (handle < 0 || handle >= RES_MAX_ENTRIES)
+        return;
+    if (s_Entries[handle].pinCount > 0 || s_Entries[handle].refCount > 0)
         return;
     Internal_UnloadEntry(handle);
 }
@@ -773,7 +780,7 @@ bool Engine_Resource_GetInfo(int32_t handle, ResourceInfo* outInfo)
     outInfo->width = (e->type == RES_TEXTURE) ? e->handle.texture.width : 0;
     outInfo->height = (e->type == RES_TEXTURE) ? e->handle.texture.height : 0;
     outInfo->depCount = e->depCount;
-    outInfo->pinned = e->pinned;
+    outInfo->pinned = e->pinCount > 0;
     return true;
 }
 

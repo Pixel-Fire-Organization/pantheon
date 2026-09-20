@@ -190,6 +190,10 @@ bool Model_LoadBaked(const void* data, size_t size, Model* outModel, ModelTextur
         {
             mesh.boundsCenter = Vector3{me.boundsCenter[0], me.boundsCenter[1], me.boundsCenter[2]};
             mesh.boundsRadius = me.boundsRadius;
+            mesh.minU = me.minU;
+            mesh.maxU = me.maxU;
+            mesh.minV = me.minV;
+            mesh.maxV = me.maxV;
         }
         else
         {

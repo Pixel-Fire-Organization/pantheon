@@ -246,9 +246,9 @@ GifTagRenderer::GifTagRenderer(const EngineConfig& config)
     m_xyz = static_cast<xyz_t*>(memalign(16, sizeof(xyz_t) * GFX_GIFTAG_MAX_VERTS));
     m_srcIdx = static_cast<uint32_t*>(memalign(16, sizeof(uint32_t) * GFX_GIFTAG_MAX_VERTS));
     m_q = static_cast<float*>(memalign(16, sizeof(float) * GFX_GIFTAG_MAX_VERTS));
-    m_clipBatch = memalign(16, sizeof(VECTOR) * GFX_GIFTAG_XFORM_BATCH);
+    m_clipBatch = reinterpret_cast<void*>(0x70000000);
     m_vecBatch = memalign(16, sizeof(VECTOR) * GFX_GIFTAG_XFORM_BATCH);
-    if (!m_xyz || !m_srcIdx || !m_q || !m_clipBatch || !m_vecBatch)
+    if (!m_xyz || !m_srcIdx || !m_q || !m_vecBatch)
     {
         Engine_Panic("GifTagRenderer: out of memory for transform scratch");
     }
@@ -287,7 +287,6 @@ void GifTagRenderer::Shutdown()
     free(m_xyz);
     free(m_srcIdx);
     free(m_q);
-    free(m_clipBatch);
     free(m_vecBatch);
     m_xyz = nullptr;
     m_srcIdx = nullptr;
@@ -626,9 +625,9 @@ void GifTagRenderer::RenderLevel(const float vp[16], const FrustumPlanes& frustu
             const int components = (mesh.vertexComponents == 4) ? 4 : 3;
             const float* uv = texId ? mesh.texcoords : nullptr;
             if (mesh.topology == MESH_TOPOLOGY_STRIP)
-                DrawStrip(vp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
+                DrawStrip(vp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId, mesh.minU, mesh.maxU, mesh.minV, mesh.maxV);
             else
-                DrawTriangles(vp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
+                DrawTriangles(vp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId, mesh.minU, mesh.maxU, mesh.minV, mesh.maxV);
         }
     }
 
@@ -652,7 +651,7 @@ bool GifTagRenderer::PacketHasSpace(uint32_t qwNeeded) const
 
 uint32_t GifTagRenderer::BindCostQwords(uint32_t textureId) const { return (textureId != 0u && textureId != m_lastBoundTex) ? static_cast<uint32_t>(GFX_GIFTAG_TEXBIND_QW) : 0u; }
 
-void GifTagRenderer::DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId)
+void GifTagRenderer::DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU, uint16_t maxU, uint16_t minV, uint16_t maxV)
 {
     if (!verts || vertexCount < 3)
         return;
@@ -728,7 +727,22 @@ void GifTagRenderer::DrawTriangles(const float mvp[16], const float* verts, int 
     m_frameVertsUsed += emitted;
 
     if (textured)
+    {
         BindTexture(textureId);
+
+        uint64_t clamp = 0; // Default REPEAT (WMS=0, WMT=0)
+        if (maxU > 0 || maxV > 0)
+            clamp = 0x0F | (static_cast<uint64_t>(minU) << 4) | (static_cast<uint64_t>(maxU) << 14) | (static_cast<uint64_t>(minV) << 24) | (static_cast<uint64_t>(maxV) << 34);
+
+        if (clamp != m_lastBoundClamp)
+        {
+            packet2_add_u64(m_geom, GIF_SET_TAG(1, 0, 0, 0, GIF_FLG_PACKED, 1));
+            packet2_add_u64(m_geom, 0x0E); // A+D
+            packet2_add_u64(m_geom, clamp);
+            packet2_add_u64(m_geom, 0x08); // GSREG_CLAMP
+            m_lastBoundClamp = clamp;
+        }
+    }
 
     const float colorScale = textured ? 128.0f : 255.0f;
     const uint8_t r = static_cast<uint8_t>(color.r * colorScale);
@@ -904,7 +918,7 @@ void GifTagRenderer::TransformStrip(const float mvp[16], const float* verts, int
     }
 }
 
-void GifTagRenderer::DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId)
+void GifTagRenderer::DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU, uint16_t maxU, uint16_t minV, uint16_t maxV)
 {
     if (!verts || vertexCount < 3)
         return;
@@ -922,7 +936,22 @@ void GifTagRenderer::DrawStrip(const float mvp[16], const float* verts, int comp
     m_frameStats.vertsTransformed += vertexCount;
 
     if (textured)
+    {
         BindTexture(textureId);
+
+        uint64_t clamp = 0; // Default REPEAT (WMS=0, WMT=0)
+        if (maxU > 0 || maxV > 0)
+            clamp = 0x0F | (static_cast<uint64_t>(minU) << 4) | (static_cast<uint64_t>(maxU) << 14) | (static_cast<uint64_t>(minV) << 24) | (static_cast<uint64_t>(maxV) << 34);
+
+        if (clamp != m_lastBoundClamp)
+        {
+            packet2_add_u64(m_geom, GIF_SET_TAG(1, 0, 0, 0, GIF_FLG_PACKED, 1));
+            packet2_add_u64(m_geom, 0x0E); // A+D
+            packet2_add_u64(m_geom, clamp);
+            packet2_add_u64(m_geom, 0x08); // GSREG_CLAMP
+            m_lastBoundClamp = clamp;
+        }
+    }
 
     const float colorScale = textured ? 128.0f : 255.0f;
     const uint8_t r = static_cast<uint8_t>(color.r * colorScale);
@@ -1019,15 +1048,7 @@ void GifTagRenderer::BindTexture(uint32_t textureId)
     lod.k = 0.0f;
 
     packet2_update(m_geom, draw_texture_sampling(m_geom->next, 0, &lod));
-
-    texwrap_t wrap;
-    wrap.horizontal = WRAP_REPEAT;
-    wrap.vertical = WRAP_REPEAT;
-    wrap.minu = 0;
-    wrap.maxu = 0;
-    wrap.minv = 0;
-    wrap.maxv = 0;
-    packet2_update(m_geom, draw_texture_wrapping(m_geom->next, 0, &wrap));
+    m_lastBoundClamp = ~0ULL;
 
     clutbuffer_t clut;
     clut.address = 0;
@@ -1469,6 +1490,8 @@ uint32_t GifTagRenderer::UploadTexture(const TextureUpload& upload)
     te.vramBase = base;
 
     dma_channel_wait(DMA_CHANNEL_GIF, 0);
+
+    packet2_reset(m_env, 0);
 
     uint32_t offset = 0;
     for (uint8_t lvl = 0; lvl < mipCount; ++lvl)

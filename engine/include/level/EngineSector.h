@@ -20,6 +20,8 @@ typedef struct
     int16_t cellZ;
     uint8_t arenaSlot; // ARENA_LEVEL_DATA slot holding this sector's PSEC blob
     uint8_t state; // SectorState
+    uint8_t generation; // incremented on eviction; async callbacks compare against this
+    uint8_t _pad;
     uint32_t meshCount;
     Mesh meshes[LEVEL_MAX_MESHES_PER_SECTOR]; // views into the slot geometry
     int32_t meshTexture[LEVEL_MAX_MESHES_PER_SECTOR]; // resolved texture handles

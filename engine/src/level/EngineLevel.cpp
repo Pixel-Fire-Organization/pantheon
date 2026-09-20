@@ -349,32 +349,6 @@ static bool Internal_ReadCore(Level* level)
     return true;
 }
 
-// Load + pin every material texture. Async: handles are stored now and the
-// textures stream in over the next frames (resolved at draw time, like models).
-static void Internal_PinMaterials(Level* level)
-{
-    const uint16_t count = level->info->materialCount;
-    for (uint16_t i = 0; i < LEVEL_MAX_MATERIALS; ++i)
-        level->materialTex[i] = -1;
-
-    for (uint16_t i = 0; i < count && i < LEVEL_MAX_MATERIALS; ++i)
-    {
-        const char* key = level->materials[i].assetKey;
-        if (key[0] == '\0')
-            continue;
-        int32_t handle = Engine_Resource_LoadAuto(key);
-        if (handle >= 0)
-        {
-            Engine_Resource_Pin(handle);
-            level->materialTex[i] = handle;
-        }
-        else
-        {
-            Engine_LogError("Level '%s': failed to load material '%s'", level->name, key);
-        }
-    }
-}
-
 // Walk the ENTS chunk and hand each record to the game's spawn dispatcher.
 static void Internal_SpawnEntities(Level* level)
 {
@@ -450,7 +424,6 @@ bool Engine_Level_Load(Level* level)
         return false;
     }
 
-    Internal_PinMaterials(level);
     Internal_SpawnEntities(level);
 
     // Prime the resident sector ring around the grid centre.
@@ -472,16 +445,6 @@ void Engine_Level_Unload(Level* level, bool keepPinned)
 
     if (level && !keepPinned)
     {
-        const uint16_t count = level->info ? level->info->materialCount : 0;
-        for (uint16_t i = 0; i < count && i < LEVEL_MAX_MATERIALS; ++i)
-        {
-            if (level->materialTex[i] >= 0)
-            {
-                Engine_Resource_Unpin(level->materialTex[i]);
-                Engine_Resource_Unload(level->materialTex[i]);
-                level->materialTex[i] = -1;
-            }
-        }
     }
 
     for (uint32_t i = 0; i < MEM_BLOCK_LEVEL_DATA_SLOTS; ++i)

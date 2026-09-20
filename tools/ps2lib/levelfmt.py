@@ -43,7 +43,7 @@ _GRIDCELL = "<IffffffHH"          # LevelGridCell (32)
 _ENTREC = "<IfffHH"               # LevelEntityRecord (20)
 _ENTPROP = "<II"                 # LevelEntityProp (8)
 _SECHDR = "<IIIIffffffII"         # SectorHeader (48)
-_MESHENTRY = "<IIIIIIffffII"      # BakedMeshEntry (48)
+_MESHENTRY = "<IIIIIIffffHHHH"      # BakedMeshEntry (48)
 _FARFHDR = "<IIIIIIII"            # FarfieldHeader (32)
 _FARFCLUSTER = "<fffffHH"         # FarfieldCluster (24)
 _FARFFRAME = "<ffff"             # FarfieldFrame (16)
@@ -199,7 +199,8 @@ def pack_sector(meshes):
         c = m["center"]
         struct.pack_into(_MESHENTRY, buf, pos,
                          m["vert_count"], m["material_index"], verts_off, norms_off, uvs_off,
-                         m["topology"], c[0], c[1], c[2], m["radius"], 0, 0)
+                         m["topology"], c[0], c[1], c[2], m["radius"],
+                         m.get("min_u", 0), m.get("max_u", 0), m.get("min_v", 0), m.get("max_v", 0))
         pos += entry_size
     buf[geom_start:geom_start + len(geom)] = geom
     return bytes(buf), (tuple(mn), tuple(mx))
@@ -279,11 +280,12 @@ def parse_sector(blob):
     meshes = []
     pos = struct.calcsize(_SECHDR)
     for _ in range(mesh_count):
-        vc, mi, vo, no, uo, topo, cxx, cyy, czz, rad, _a, _b = struct.unpack_from(_MESHENTRY, blob, pos)
+        vc, mi, vo, no, uo, topo, cxx, cyy, czz, rad, min_u, max_u, min_v, max_v = struct.unpack_from(_MESHENTRY, blob, pos)
         pos += 48
         meshes.append({"vert_count": vc, "material_index": mi, "verts_offset": vo,
                        "norms_offset": no, "uvs_offset": uo, "topology": topo,
-                       "center": (cxx, cyy, czz), "radius": rad})
+                       "center": (cxx, cyy, czz), "radius": rad,
+                       "min_u": min_u, "max_u": max_u, "min_v": min_v, "max_v": max_v})
     return {"magic": magic, "version": version, "mesh_count": mesh_count,
             "aabb_min": (mnx, mny, mnz), "aabb_max": (mxx, mxy, mxz), "meshes": meshes}
 

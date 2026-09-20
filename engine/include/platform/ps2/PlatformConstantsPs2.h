@@ -102,7 +102,7 @@
 #define LEVEL_SECTOR_HYSTERESIS 0.15f
 
 // Resident sectors: a 3x3 ring around the camera cell.
-#define LEVEL_RESIDENT_SECTORS 9
+#define LEVEL_RESIDENT_SECTORS (MEM_BLOCK_LEVEL_DATA_SLOTS - 2)
 
 // ARENA_LEVEL_DATA slot assignment: slots [0..CORE_SLOTS) hold the resident
 // level core; sectors stream into the slots after that.
@@ -127,9 +127,9 @@
 
 // Both region framebuffer sizes are defined here (identical across variants);
 // the active GFX_SCREEN_WIDTH / GFX_SCREEN_HEIGHT are chosen by the variant.
-#define GFX_SCREEN_PAL_WIDTH 640
+#define GFX_SCREEN_PAL_WIDTH 512
 #define GFX_SCREEN_PAL_HEIGHT 512
-#define GFX_SCREEN_NTSC_WIDTH 640
+#define GFX_SCREEN_NTSC_WIDTH 512
 #define GFX_SCREEN_NTSC_HEIGHT 448
 
 // Projection aspect ratio. The PS2 outputs its framebuffer to a 4:3 display with
