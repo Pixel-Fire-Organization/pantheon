@@ -6,8 +6,12 @@ Pipeline (see docs/formats/LEVEL_FORMAT.md):
   1. Parse the Valve-220 .map (ps2lib.mapparse): entities + brush face polygons.
   2. Convert Quake Z-up map units to engine Y-up world units (scale _map_scale).
   3. Partition world geometry into a fixed square grid of sectors (_sector_size).
-  4. Per cell, group faces by material and bake one strip/list mesh each
-     (ps2lib.mesh.bake_mesh) into a PSEC sector blob.
+  4. Per cell, group faces by material; where the map places any entity
+     composed with LightComponent (see docs/formats/MATERIAL_FORMAT.md),
+     evaluate ambient + those lights per vertex, including a shadow-ray
+     occlusion test against the cell's own geometry, and bake the result into
+     a per-vertex colour alongside the strip/list mesh (ps2lib.mesh.bake_mesh)
+     -> one PSEC sector blob.
   5. Bake each material to a TIM2 .ps2a; bake point-entity models (.obj) to BKM2.
   6. Bake far-field billboard impostors (flat-colour orthographic views) per cell.
   7. Emit the .ps2l core (INFO/MATL/SGRD/ENTS/FARF) + all payloads into one
@@ -22,7 +26,8 @@ computed from the untransformed Quake vertices (the U/V axes live in map space).
 
 Usage:
   python3 tools/compile_level.py assets/maps/test.map --out build/levels \
-      --textures assets/textures --models assets/models --platform ps2 \
+      --textures assets/textures --models assets/models \
+      --materials assets/materials --platform ps2 \
       [--report] [--debug-render out.png]
 
 --platform selects the cook list (engine/config/<name>/cooklist.json) that
@@ -35,9 +40,10 @@ import json
 import math
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ps2lib import levelfmt, mapparse, mesh as meshlib, ps2a, tim2
+from ps2lib import levelfmt, mapparse, material as materiallib, mesh as meshlib, ps2a, tim2
 import cook_assets
 import pack_archive
 
@@ -91,6 +97,176 @@ def q2e_dir(n):
     return (n[0], n[2], -n[1])
 
 
+# --- static lighting bake ---------------------------------------------------
+# Any entity the mapper composes with LightComponent (tools/ECS/ECS.json) is a
+# bake light -- discovered generically by scanning the ECS declaration, never
+# by a hardcoded classname, so a custom entity (e.g. a lit prop) can carry one
+# too. See docs/formats/MATERIAL_FORMAT.md.
+
+LIGHT_TYPE_DIRECTIONAL = 0
+LIGHT_TYPE_POINT = 1
+BAKE_AMBIENT = (0.12, 0.12, 0.12)
+# Shadow-ray origins are nudged along the surface normal by this many world
+# units before testing, so a vertex does not immediately self-shadow against
+# the same (or a coplanar) triangle it belongs to.
+BAKE_SHADOW_BIAS = 0.02
+
+
+def _load_ecs_light_classnames():
+    """Classnames from tools/ECS/ECS.json whose components include
+    LightComponent. Returns an empty set (no bake lights found -- every
+    vertex keeps the runtime's default white tint) if ECS.json is missing or
+    unreadable, rather than failing the whole compile over it."""
+    ecs_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ECS", "ECS.json")
+    try:
+        with open(ecs_path, "r", encoding="utf-8-sig") as fh:
+            ecs = json.load(fh)
+    except (OSError, ValueError):
+        return set()
+    return {e.get("classname") for e in ecs.get("entities", []) if "LightComponent" in e.get("components", [])}
+
+
+def _quake_angles_to_engine_dir(angles_str):
+    """Quake 'pitch yaw roll' (degrees) -> a normalized engine-space
+    direction, via the same q2e_dir transform every face normal already
+    goes through."""
+    try:
+        pitch, yaw, _roll = (float(t) for t in angles_str.split())
+    except (ValueError, AttributeError):
+        pitch, yaw = 0.0, 0.0
+    pr, yr = math.radians(pitch), math.radians(yaw)
+    qdir = (math.cos(yr) * math.cos(pr), math.sin(yr) * math.cos(pr), -math.sin(pr))
+    ex, ey, ez = q2e_dir(qdir)
+    length = math.sqrt(ex * ex + ey * ey + ez * ez) or 1.0
+    return (ex / length, ey / length, ez / length)
+
+
+class BakeLight:
+    def __init__(self, light_type, position, direction, color, intensity, range_):
+        self.light_type = light_type  # LIGHT_TYPE_DIRECTIONAL or LIGHT_TYPE_POINT
+        self.position = position      # engine-space, point lights
+        self.direction = direction    # engine-space, normalized, directional lights
+        self.color = color            # (r, g, b) in [0, 1]
+        self.intensity = intensity
+        self.range = range_           # point lights only
+
+
+def _collect_bake_lights(entities, scale):
+    """Every LightComponent-bearing entity in the parsed .map, converted to
+    engine space. Reads the same raw origin/angles keys the compiler already
+    reads for every other entity -- TransformComponent's own position/angles
+    properties are a runtime (Ecs_SpawnDispatch) convenience and are not
+    consulted here."""
+    light_classnames = _load_ecs_light_classnames()
+    lights = []
+    for ent in entities:
+        if ent.classname not in light_classnames:
+            continue
+        try:
+            light_type = int(ent.props.get("light_type", str(LIGHT_TYPE_POINT)))
+        except ValueError:
+            light_type = LIGHT_TYPE_POINT
+        try:
+            cr, cg, cb = (float(c) / 255.0 for c in ent.props.get("color", "255 255 255").split())
+        except ValueError:
+            cr, cg, cb = 1.0, 1.0, 1.0
+        try:
+            intensity = float(ent.props.get("intensity", "1.0"))
+        except ValueError:
+            intensity = 1.0
+        try:
+            range_ = float(ent.props.get("range", "512.0"))
+        except ValueError:
+            range_ = 512.0
+
+        position = (0.0, 0.0, 0.0)
+        if "origin" in ent.props:
+            try:
+                ox, oy, oz = (float(t) for t in ent.props["origin"].split())
+                position = q2e((ox, oy, oz), scale)
+            except ValueError:
+                pass
+        direction = _quake_angles_to_engine_dir(ent.props.get("angles", "0 0 0"))
+
+        lights.append(BakeLight(light_type, position, direction, (cr, cg, cb), intensity, range_))
+    return lights
+
+
+def _cross3(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _dot3(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _ray_triangle_hit(origin, direction, v0, v1, v2, max_dist):
+    """Moller-Trumbore ray-triangle intersection. True if the ray from
+    `origin` along the normalized `direction` hits the triangle closer than
+    `max_dist`. Not back-face culled: brush winding is not guaranteed
+    consistent after the map -> engine transform, and a shadow ray must not
+    pass through a wall just because it hit the "wrong" side."""
+    eps = 1e-8
+    e1 = (v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2])
+    e2 = (v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2])
+    h = _cross3(direction, e2)
+    a = _dot3(e1, h)
+    if -eps < a < eps:
+        return False
+    f = 1.0 / a
+    s = (origin[0] - v0[0], origin[1] - v0[1], origin[2] - v0[2])
+    u = f * _dot3(s, h)
+    if u < 0.0 or u > 1.0:
+        return False
+    q = _cross3(s, e1)
+    v = f * _dot3(direction, q)
+    if v < 0.0 or u + v > 1.0:
+        return False
+    t = f * _dot3(e2, q)
+    return eps < t < max_dist
+
+
+def _evaluate_vertex_light(pos, normal, lights, shadow_tris):
+    """Ambient + every active light's Lambertian contribution at one static
+    vertex, each light's contribution zeroed if a shadow ray toward it hits
+    `shadow_tris` first. Returns (r, g, b, a) in [0, 1]."""
+    r, g, b = BAKE_AMBIENT
+    origin = (pos[0] + normal[0] * BAKE_SHADOW_BIAS, pos[1] + normal[1] * BAKE_SHADOW_BIAS, pos[2] + normal[2] * BAKE_SHADOW_BIAS)
+
+    for light in lights:
+        if light.light_type == LIGHT_TYPE_DIRECTIONAL:
+            to_light = (-light.direction[0], -light.direction[1], -light.direction[2])
+            dist = 1e30
+            atten = 1.0
+        else:
+            dx, dy, dz = light.position[0] - pos[0], light.position[1] - pos[1], light.position[2] - pos[2]
+            dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if dist < 1e-6 or dist > light.range:
+                continue
+            to_light = (dx / dist, dy / dist, dz / dist)
+            atten = max(0.0, 1.0 - dist / light.range)
+
+        ndotl = normal[0] * to_light[0] + normal[1] * to_light[1] + normal[2] * to_light[2]
+        if ndotl <= 0.0:
+            continue
+
+        occluded = False
+        shadow_max = dist - BAKE_SHADOW_BIAS
+        for (t0, t1, t2) in shadow_tris:
+            if _ray_triangle_hit(origin, to_light, t0, t1, t2, shadow_max):
+                occluded = True
+                break
+        if occluded:
+            continue
+
+        contribution = ndotl * light.intensity * atten
+        r += light.color[0] * contribution
+        g += light.color[1] * contribution
+        b += light.color[2] * contribution
+
+    return (min(1.0, r), min(1.0, g), min(1.0, b), 1.0)
+
+
 def _tessellate_tri(tri, max_edge):
     """Subdivide one triangle until no edge exceeds max_edge (world units).
 
@@ -131,11 +307,13 @@ def _tessellate_tri(tri, max_edge):
 class Material:
     def __init__(self, tex_name, key):
         self.tex_name = tex_name
-        self.key = key
+        self.key = key                 # RES_MATERIAL asset key (MATL's assetKey)
         self.width = 64
         self.height = 64
-        self.color = (160, 160, 160)  # mean colour, for far-field flat shading
-        self.payload = None           # baked TIM2 .ps2a bytes
+        self.color = (160, 160, 160)   # mean colour, for far-field flat shading
+        self.payload = None            # baked RES_MATERIAL .ps2a bytes (None = shared, not duplicated)
+        self.texture_key = None        # underlying albedo texture's own key, if it needs its own archive entry
+        self.texture_payload = None    # that texture's .ps2a bytes (None = no separate entry needed)
 
 
 def _resolve_texture(tex_dir, tex_name):
@@ -173,11 +351,74 @@ def _find_shared_descriptor(src_path):
     return None
 
 
-def _bake_material(level_name, tex_name, tex_dir, max_width=None, max_height=None,
+def _find_shared_material(materials_dir, tex_name):
+    """A material authored under assets/materials/, mirroring this brush
+    texture's own relative path under assets/textures/ (see
+    docs/formats/MATERIAL_FORMAT.md) - painting a brush with a texture in
+    TrenchBroom is picking that material by construction. Returns the
+    material descriptor's base name (its cooked RASSETS/<name>.PS2A key
+    stem), or None. Not subject to this level's own dimension cap, the same
+    exemption a shared standalone TEXTURE rasset already gets."""
+    if not materials_dir:
+        return None
+    candidate = os.path.join(materials_dir, tex_name.replace("/", os.sep) + ".json")
+    return os.path.splitext(os.path.basename(candidate))[0] if os.path.isfile(candidate) else None
+
+
+def _default_material_payload(albedo_dep_index):
+    """A default-factory RES_MATERIAL wrapping a plain albedo texture: flat
+    (metallic 0, roughness 1), no normal/ORM maps - what every brush texture
+    with no hand-authored material.json gets, so existing maps keep
+    compiling and looking the way they always have."""
+    float_params = [0.0] * materiallib.FLOAT_PARAMS
+    float_params[materiallib.PBR_FLOAT_METALLIC] = 0.0
+    float_params[materiallib.PBR_FLOAT_ROUGHNESS] = 1.0
+    float_params[materiallib.PBR_FLOAT_NORMAL_SCALE] = 1.0
+    float_params[materiallib.PBR_FLOAT_ALPHA_CUTOFF] = 0.5
+    color_params = [(0.0, 0.0, 0.0, 0.0)] * materiallib.COLOR_PARAMS
+    color_params[materiallib.PBR_COLOR_BASE] = (1.0, 1.0, 1.0, 1.0)
+    texture_refs = [materiallib.TEXREF_NONE] * materiallib.TEX_SLOTS
+    texture_refs[materiallib.PBR_TEX_ALBEDO] = albedo_dep_index
+    return materiallib.pack_material(materiallib.SHADER_PBR_STANDARD, 0, float_params, color_params, texture_refs)
+
+
+def _bake_material(level_name, tex_name, tex_dir, materials_dir=None, max_width=None, max_height=None,
                    max_bytes=DEFAULT_LEVEL_TEXTURE_MAX_BYTES):
-    key = f"{level_name}/{tex_name.upper().replace('/', '_')}.PS2A"
-    mat = Material(tex_name, key)
+    key_stem = tex_name.upper().replace('/', '_')
+    # mat.key (the wrapping material) keeps the plain, un-suffixed scheme
+    # that already has to fit LevelMaterialEntry.assetKey's tight 64-byte
+    # field; the underlying texture (only ever referenced from the roomier
+    # 256-byte .ps2a dependency field) gets the longer, suffixed one. A
+    # texture path long enough to need the suffix would silently overflow
+    # assetKey if the two were swapped -- this bit a real, long, nested
+    # texture path (env/GroundGrass_01/GroundGrass_01_basecolor) before this
+    # comment was written.
+    mat = Material(tex_name, f"{level_name}/{key_stem}.PS2A")
     src = _resolve_texture(tex_dir, tex_name)
+
+    # A hand-authored material for this exact brush texture: reference its
+    # already-cooked RES_MATERIAL directly, skipping the default-wrapper path
+    # entirely. Width/height/colour (for UV baking and far-field shading)
+    # still come from its own albedo image when it names one.
+    shared_material = _find_shared_material(materials_dir, tex_name)
+    if shared_material:
+        material_json_path = os.path.join(materials_dir, tex_name.replace("/", os.sep) + ".json")
+        try:
+            from PIL import Image
+            with open(material_json_path, "r", encoding="utf-8-sig") as fh:
+                decl = json.load(fh)
+            albedo_name = decl.get("albedo")
+            if albedo_name:
+                img = Image.open(os.path.join(os.path.dirname(material_json_path), albedo_name)).convert("RGBA")
+                mat.width, mat.height = img.size
+                mat.color = img.convert("RGB").resize((1, 1), Image.BOX).getpixel((0, 0))
+        except (OSError, ValueError, ImportError, KeyError):
+            pass  # defaults (64x64 grey) are still a valid material reference
+        mat.key = f"RASSETS/{shared_material.upper()}.PS2A"
+        mat.payload = None
+        print(f"  INFO: '{tex_name}' uses authored material {mat.key}; not auto-generated")
+        return mat
+
     try:
         from PIL import Image
         if src:
@@ -194,7 +435,7 @@ def _bake_material(level_name, tex_name, tex_dir, max_width=None, max_height=Non
         thumb = img.convert("RGB").resize((1, 1), Image.BOX)
         mat.color = thumb.getpixel((0, 0))
 
-        # A material already cooked as a standalone rasset can be referenced
+        # A texture already cooked as a standalone rasset can be referenced
         # from the boot archive instead of baked a second time into this
         # level's own - but only if it already satisfies this platform's
         # level_textures cap. That cap is deliberately stricter than the
@@ -202,6 +443,7 @@ def _bake_material(level_name, tex_name, tex_dir, max_width=None, max_height=Non
         # whole lifetime), so an oversized shared texture is excluded rather
         # than reconciled: this level still bakes and pins its own capped
         # copy, same as before this existed.
+        albedo_key = None
         if src:
             shared_base = _find_shared_descriptor(src)
             if shared_base:
@@ -209,48 +451,59 @@ def _bake_material(level_name, tex_name, tex_dir, max_width=None, max_height=Non
                         (not max_height or mat.height <= max_height))
                 shared_key = f"RASSETS/{shared_base.upper()}.PS2A"
                 if fits:
-                    mat.key = shared_key
-                    mat.payload = None
+                    albedo_key = shared_key
                     print(f"  INFO: '{tex_name}' shared with {shared_key}; "
                           f"not duplicated into this level's archive")
-                    return mat
-                print(f"  INFO: '{tex_name}' ships as {shared_key} but exceeds this platform's "
-                      f"level texture cap ({max_width}x{max_height}); baking a level-local copy")
+                else:
+                    print(f"  INFO: '{tex_name}' ships as {shared_key} but exceeds this platform's "
+                          f"level texture cap ({max_width}x{max_height}); baking a level-local copy")
 
-        baked = img
-        # The platform's own "level_textures" policy is enforced first (a
-        # deliberate quality/budget choice, not just a fallback) - a level
-        # pins every one of its materials for its whole lifetime, so this
-        # cap is far stricter than a standalone TEXTURE resource's.
-        if (max_width and baked.width > max_width) or (max_height and baked.height > max_height):
-            target_w = min(baked.width, max_width) if max_width else baked.width
-            target_h = min(baked.height, max_height) if max_height else baked.height
-            scale = min(target_w / baked.width, target_h / baked.height)
-            new_size = (max(1, round(baked.width * scale)), max(1, round(baked.height * scale)))
-            print(f"  INFO: '{tex_name}' downscaled from {baked.width}x{baked.height} to "
-                  f"{new_size[0]}x{new_size[1]} for this platform's level texture cap "
-                  f"({max_width}x{max_height})")
-            baked = baked.resize(new_size, Image.LANCZOS)
+        if albedo_key is None:
+            baked = img
+            # The platform's own "level_textures" policy is enforced first (a
+            # deliberate quality/budget choice, not just a fallback) - a level
+            # pins every one of its materials for its whole lifetime, so this
+            # cap is far stricter than a standalone TEXTURE resource's.
+            if (max_width and baked.width > max_width) or (max_height and baked.height > max_height):
+                target_w = min(baked.width, max_width) if max_width else baked.width
+                target_h = min(baked.height, max_height) if max_height else baked.height
+                scale = min(target_w / baked.width, target_h / baked.height)
+                new_size = (max(1, round(baked.width * scale)), max(1, round(baked.height * scale)))
+                print(f"  INFO: '{tex_name}' downscaled from {baked.width}x{baked.height} to "
+                      f"{new_size[0]}x{new_size[1]} for this platform's level texture cap "
+                      f"({max_width}x{max_height})")
+                baked = baked.resize(new_size, Image.LANCZOS)
 
-        payload, ext = tim2.encode_pal8(baked, 0), ".tm2"
-        blob = ps2a.write_ps2a(ps2a.TYPE_MAP["TEXTURE"], payload, [], ext)
-        # Independent safety net: even a dimension-capped (or, on a platform
-        # with no cap, an arbitrarily large) texture must still fit the
-        # target's own IO read buffer.
-        orig_bytes = len(blob)
-        orig_w, orig_h = baked.width, baked.height
-        while len(blob) > max_bytes and (baked.width > 1 or baked.height > 1):
-            baked = baked.resize((max(1, baked.width // 2), max(1, baked.height // 2)), Image.LANCZOS)
             payload, ext = tim2.encode_pal8(baked, 0), ".tm2"
             blob = ps2a.write_ps2a(ps2a.TYPE_MAP["TEXTURE"], payload, [], ext)
-        if len(blob) != orig_bytes:
-            print(f"  WARN: '{tex_name}' baked at {orig_w}x{orig_h} ({orig_bytes} bytes) exceeds the "
-                  f"IO read buffer ({max_bytes} bytes); downscaled further to "
-                  f"{baked.width}x{baked.height} ({len(blob)} bytes)")
-        mat.payload = blob
+            # Independent safety net: even a dimension-capped (or, on a platform
+            # with no cap, an arbitrarily large) texture must still fit the
+            # target's own IO read buffer.
+            orig_bytes = len(blob)
+            orig_w, orig_h = baked.width, baked.height
+            while len(blob) > max_bytes and (baked.width > 1 or baked.height > 1):
+                baked = baked.resize((max(1, baked.width // 2), max(1, baked.height // 2)), Image.LANCZOS)
+                payload, ext = tim2.encode_pal8(baked, 0), ".tm2"
+                blob = ps2a.write_ps2a(ps2a.TYPE_MAP["TEXTURE"], payload, [], ext)
+            if len(blob) != orig_bytes:
+                print(f"  WARN: '{tex_name}' baked at {orig_w}x{orig_h} ({orig_bytes} bytes) exceeds the "
+                      f"IO read buffer ({max_bytes} bytes); downscaled further to "
+                      f"{baked.width}x{baked.height} ({len(blob)} bytes)")
+            albedo_key = f"{level_name}/{key_stem}_TEX.PS2A"
+            mat.texture_key = albedo_key
+            mat.texture_payload = blob
+
+        # Wrap the (shared or level-local) albedo texture in a default,
+        # engine-generated material - flat, no normal/ORM - so a brush face
+        # with no hand-authored material.json keeps compiling and looking
+        # exactly as it always has.
+        material_payload = _default_material_payload(0)
+        mat.payload = ps2a.write_ps2a(ps2a.TYPE_MAP["MATERIAL"], material_payload, [albedo_key], ".mtl2")
     except ImportError:
         # No Pillow: keep defaults and a 1x1 placeholder so the archive is valid.
-        mat.payload = ps2a.write_ps2a(ps2a.TYPE_MAP["TEXTURE"], b"", [], ".tm2")
+        mat.texture_key = f"{level_name}/{key_stem}_TEX.PS2A"
+        mat.texture_payload = ps2a.write_ps2a(ps2a.TYPE_MAP["TEXTURE"], b"", [], ".tm2")
+        mat.payload = ps2a.write_ps2a(ps2a.TYPE_MAP["MATERIAL"], _default_material_payload(0), [mat.texture_key], ".mtl2")
     return mat
 
 
@@ -260,7 +513,7 @@ def _cell_index(x, z, origin_x, origin_z, cell_size, cells_x):
     return cx, cz
 
 
-def compile_level(map_path, out_dir, tex_dir, model_dir, platform=None, report=False, debug_png=None):
+def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, platform=None, report=False, debug_png=None):
     level_name = os.path.splitext(os.path.basename(map_path))[0].upper()
     entities = mapparse.parse_map(map_path)
 
@@ -284,6 +537,10 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, platform=None, report=F
     scale = float(world.props.get("_map_scale", DEFAULT_MAP_SCALE))
     sector_size = float(world.props.get("_sector_size", DEFAULT_SECTOR_SIZE))
     max_edge = float(world.props.get("_max_edge", DEFAULT_MAX_EDGE))
+
+    bake_lights = _collect_bake_lights(entities, scale)
+    if bake_lights:
+        print(f"  INFO: baking {len(bake_lights)} static light(s) into vertex colour")
 
     # --- collect world faces (worldspawn + any solid entities' brushes) -------
     # A face -> (texture, engine polygon verts, engine normal, quake verts for UV).
@@ -316,7 +573,7 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, platform=None, report=F
 
     def material_index(tex_name):
         if tex_name not in materials:
-            mat = _bake_material(level_name, tex_name, tex_dir, tex_max_width, tex_max_height, tex_max_bytes)
+            mat = _bake_material(level_name, tex_name, tex_dir, materials_dir, tex_max_width, tex_max_height, tex_max_bytes)
             materials[tex_name] = mat
             material_order.append(tex_name)
         return material_order.index(tex_name)
@@ -352,15 +609,27 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, platform=None, report=F
                     ot.append(uv)
 
     # --- bake sectors (PSEC) --------------------------------------------------
+    # Static lighting is baked per cell, against that cell's own geometry only
+    # (see _evaluate_vertex_light) -- a bounded, sector-local approximation
+    # that keeps the shadow-ray test cheap; it does not see occluders in a
+    # neighbouring cell, the same kind of per-cell v1 limitation the far-field
+    # bake already accepts.
+    bake_start = time.time()
     sectors = {}   # (cx,cz) -> psec bytes
     cell_aabb = {}  # (cx,cz) -> (min,max)
     for (cx, cz), groups in cell_groups.items():
+        shadow_tris = []
+        if bake_lights:
+            for (ov, _on, _ot) in groups.values():
+                shadow_tris.extend((ov[i], ov[i + 1], ov[i + 2]) for i in range(0, len(ov), 3))
+
         meshes = []
         for midx, (ov, on, ot) in sorted(groups.items()):
             if len(meshes) >= levelfmt.MAX_MESHES_PER_SECTOR:
                 print(f"  WARN: cell {cx},{cz} exceeds {levelfmt.MAX_MESHES_PER_SECTOR} meshes; extra material dropped")
                 break
-            baked = meshlib.bake_mesh(ov, on, ot)
+            oc = [_evaluate_vertex_light(ov[i], on[i], bake_lights, shadow_tris) for i in range(len(ov))] if bake_lights else None
+            baked = meshlib.bake_mesh(ov, on, ot, oc)
             baked["material_index"] = midx
             meshes.append(baked)
         blob, aabb = levelfmt.pack_sector(meshes)
@@ -368,6 +637,9 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, platform=None, report=F
             raise ValueError(f"sector {cx},{cz} is {len(blob)} bytes, exceeds {LEVEL_SECTOR_MAX_BYTES} bytes")
         sectors[(cx, cz)] = blob
         cell_aabb[(cx, cz)] = aabb
+
+    if bake_lights:
+        print(f"  INFO: static lighting bake took {time.time() - bake_start:.1f}s")
 
     # --- entities (ENTS) + point-entity models --------------------------------
     entity_records = []
@@ -430,6 +702,8 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, platform=None, report=F
                 archive_entries.append((f"{level_name}/S{cx:03d}_{cz:03d}.SEC", blob))
     for tex_name in material_order:  # includes the far-field atlas material
         mat = materials[tex_name]
+        if mat.texture_payload is not None:  # the wrapped albedo texture, when baked level-locally
+            archive_entries.append((mat.texture_key, mat.texture_payload))
         if mat.payload is not None:  # None = shared rasset, referenced not duplicated
             archive_entries.append((mat.key, mat.payload))
     for key, payload in model_payloads.items():
@@ -458,7 +732,7 @@ def _bake_entity_model(level_name, model_ref, model_dir, model_payloads):
         print(f"  WARN: entity model '{model_ref}' not found at {src}; keeping raw reference")
         return None
     try:
-        payload, ext = meshlib.bake_obj_model(src, has_texture=False)
+        payload, ext = meshlib.bake_obj_model(src)
         model_payloads[key] = ps2a.write_ps2a(ps2a.TYPE_MAP["MODEL"], payload, [], ext)
         return key
     except Exception as e:  # noqa: BLE001
@@ -611,12 +885,13 @@ def main(argv=None):
     ap.add_argument("--out", required=True, help="output directory for <NAME>.PS2R")
     ap.add_argument("--textures", default="assets/textures", help="texture source root")
     ap.add_argument("--models", default="assets/models", help="model source root")
+    ap.add_argument("--materials", default="assets/materials", help="material source root")
     ap.add_argument("--platform", help="target platform (selects its cooklist.json level_textures cap)")
     ap.add_argument("--report", action="store_true", help="print a per-sector report")
     ap.add_argument("--debug-render", help="write a top-down sector-occupancy PNG")
     args = ap.parse_args(argv)
 
-    compile_level(args.map, args.out, args.textures, args.models, platform=args.platform,
+    compile_level(args.map, args.out, args.textures, args.models, materials_dir=args.materials, platform=args.platform,
                   report=args.report, debug_png=args.debug_render)
     return 0
 

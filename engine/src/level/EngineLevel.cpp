@@ -349,13 +349,14 @@ static bool Internal_ReadCore(Level* level)
     return true;
 }
 
-// Load + pin every material texture. Async: handles are stored now and the
-// textures stream in over the next frames (resolved at draw time, like models).
+// Load + pin every material. Async: handles are stored now and the material's
+// own texture dependencies stream in over the next frames (resolved at draw
+// time, like a model's already are).
 static void Internal_PinMaterials(Level* level)
 {
     const uint16_t count = level->info->materialCount;
     for (uint16_t i = 0; i < LEVEL_MAX_MATERIALS; ++i)
-        level->materialTex[i] = -1;
+        level->materialHandles[i] = -1;
 
     for (uint16_t i = 0; i < count && i < LEVEL_MAX_MATERIALS; ++i)
     {
@@ -366,7 +367,7 @@ static void Internal_PinMaterials(Level* level)
         if (handle >= 0)
         {
             Engine_Resource_Pin(handle);
-            level->materialTex[i] = handle;
+            level->materialHandles[i] = handle;
         }
         else
         {
@@ -475,11 +476,11 @@ void Engine_Level_Unload(Level* level, bool keepPinned)
         const uint16_t count = level->info ? level->info->materialCount : 0;
         for (uint16_t i = 0; i < count && i < LEVEL_MAX_MATERIALS; ++i)
         {
-            if (level->materialTex[i] >= 0)
+            if (level->materialHandles[i] >= 0)
             {
-                Engine_Resource_Unpin(level->materialTex[i]);
-                Engine_Resource_Unload(level->materialTex[i]);
-                level->materialTex[i] = -1;
+                Engine_Resource_Unpin(level->materialHandles[i]);
+                Engine_Resource_Unload(level->materialHandles[i]);
+                level->materialHandles[i] = -1;
             }
         }
     }

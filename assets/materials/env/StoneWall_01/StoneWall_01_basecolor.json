@@ -1,0 +1,9 @@
+{
+    "type": "MATERIAL",
+    "shaderType": "pbr_standard",
+    "albedo": "../../../textures/env/StoneWall_01/StoneWall_01_basecolor.jpg",
+    "normal": "../../../textures/env/StoneWall_01/StoneWall_01_normalOGL.jpg",
+    "occlusion": "../../../textures/env/StoneWall_01/StoneWall_01_ambientOcclusion.jpg",
+    "roughness": "../../../textures/env/StoneWall_01/StoneWall_01_roughness.jpg",
+    "metallicFactor": 0.0
+}

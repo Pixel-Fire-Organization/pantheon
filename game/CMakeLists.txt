@@ -158,6 +158,7 @@ endfunction()
 # game_add_cook_target() is called once per surviving platform, below.
 set(GAME_ASSETS_TEXTURES_SRC_DIR "${CMAKE_SOURCE_DIR}/assets/textures" CACHE INTERNAL "Source textures")
 set(GAME_ASSETS_MODELS_SRC_DIR "${CMAKE_SOURCE_DIR}/assets/models" CACHE INTERNAL "Source models")
+set(GAME_ASSETS_MATERIALS_SRC_DIR "${CMAKE_SOURCE_DIR}/assets/materials" CACHE INTERNAL "Source materials")
 
 file(GLOB _level_maps CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/assets/maps/*.map")
 set(LEVEL_MAPS "${_level_maps}" CACHE INTERNAL "Level map sources")
@@ -171,6 +172,7 @@ function(game_add_cook_target PLATFORM)
             --platform "${_lower}"
             --src "${GAME_ASSETS_TEXTURES_SRC_DIR}"
             --src "${GAME_ASSETS_MODELS_SRC_DIR}"
+            --src "${GAME_ASSETS_MATERIALS_SRC_DIR}"
             --src "${ENGINE_ASSETS_SRC_DIR}"
             --themes "${CMAKE_SOURCE_DIR}/game/config/theme.json"
             --dst "${_cooked}/rassets"
@@ -188,6 +190,7 @@ function(game_add_cook_target PLATFORM)
                 "${MAP_FILE}" --out "${_cooked}/levels"
                 --textures "${CMAKE_SOURCE_DIR}/assets/textures"
                 --models "${CMAKE_SOURCE_DIR}/assets/models"
+                --materials "${CMAKE_SOURCE_DIR}/assets/materials"
                 --platform "${_lower}"
                 VERBATIM
         )

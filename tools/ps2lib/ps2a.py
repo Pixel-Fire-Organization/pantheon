@@ -12,7 +12,7 @@ MAX_DEPS = 8
 MAX_PATH_LEN = 256
 EXT_LEN = 16  # matches AssetFileHeader.ext[16]
 
-TYPE_MAP = {"TEXTURE": 0, "MODEL": 1, "SOUND": 2, "FONT": 3, "THEME": 4}
+TYPE_MAP = {"TEXTURE": 0, "MODEL": 1, "SOUND": 2, "FONT": 3, "THEME": 4, "MATERIAL": 5}
 
 # 4 + 4 + 1 + 3 + 16 + (8 * 256) + 4 = 2080 bytes
 HEADER_SIZE = 4 + 4 + 1 + 3 + EXT_LEN + (MAX_DEPS * MAX_PATH_LEN) + 4

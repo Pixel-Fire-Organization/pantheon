@@ -20,6 +20,29 @@ struct Color3
     float b;
 };
 
+// Same "grows by appending a value, exhaustive -Wswitch, no default:" idiom
+// as MaterialShaderType/PlatformCapability/RendererId.
+enum class LightType : uint8_t
+{
+    Directional,
+    Point,
+};
+
+typedef int8_t LightID; // mirrors CameraID: a fixed dynamic-light slot
+
+// One dynamic light, addressed by a fixed slot (SetLight3D) exactly like
+// Camera3D slots -- see docs/subsystems/RENDERER.md. An unset slot (default
+// intensity 0) contributes nothing, so no separate enabled flag is needed.
+struct Light3D
+{
+    LightType type = LightType::Point;
+    Vector3 direction{0.0f, -1.0f, 0.0f}; // directional lights, normalized
+    Vector3 position{0.0f, 0.0f, 0.0f}; // point lights
+    Color3 color{1.0f, 1.0f, 1.0f};
+    float intensity = 0.0f; // <= 0 means this slot is off
+    float range = 0.0f; // point lights only: attenuation reaches 0 here
+};
+
 // What Renderer::RenderToImage3D draws: a loaded model (modelId >= 0) or a
 // primitive shape, never both -- the same one-or-the-other rule
 // AddModelToDrawList/AddPrimitiveToDrawList already express as separate

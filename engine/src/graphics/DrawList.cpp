@@ -210,6 +210,26 @@ void DrawLists::SetActiveCamera3D(CameraID id)
 
 void DrawLists::SetActiveCamera2D(const Camera2D& camera) { camera2D = camera; }
 
+void DrawLists::SetLight3D(LightID id, const Light3D& light)
+{
+    if (id < 0 || id >= GFX_MAX_LIGHTS)
+    {
+        Engine_LogError("DrawLists: SetLight3D invalid slot %d (max %d).", static_cast<int>(id), GFX_MAX_LIGHTS);
+        return;
+    }
+    lights[id] = light;
+}
+
+void DrawLists::SetShadowCasterLight(LightID id)
+{
+    if (id != -1 && (id < 0 || id >= GFX_MAX_LIGHTS))
+    {
+        Engine_LogError("DrawLists: SetShadowCasterLight invalid slot %d (max %d).", static_cast<int>(id), GFX_MAX_LIGHTS);
+        return;
+    }
+    shadowCasterLight = static_cast<int8_t>(id);
+}
+
 void DrawLists::SortForSubmission()
 {
     if (texturedCount > 1)

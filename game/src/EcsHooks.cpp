@@ -80,3 +80,17 @@ void Game_Spawn_func_button(const Ecs_func_button& def, const game::EntitySpawn&
     std::snprintf(msg, sizeof(msg), "[NotImpl] spawn func_button at (%.1f, %.1f, %.1f)", spawn.x, spawn.y, spawn.z);
     game::Log(msg);
 }
+
+// The level compiler already reads every "light" entity directly from the
+// .map (see docs/formats/MATERIAL_FORMAT.md) and bakes its contribution into
+// nearby static geometry at compile time -- this hook is only for a game
+// that also wants a *live*, dynamic counterpart (e.g. a flickering torch),
+// fully decoupled from that bake. Not implemented yet, same as every other
+// entity class here.
+void Game_Spawn_light(const Ecs_light& def, const game::EntitySpawn& spawn)
+{
+    char msg[192];
+    std::snprintf(msg, sizeof(msg), "[NotImpl] spawn light type=%d color=%s intensity=%.2f at (%.1f, %.1f, %.1f)", def.lightComponent.light_type, def.lightComponent.color,
+                  static_cast<double>(def.lightComponent.intensity), spawn.x, spawn.y, spawn.z);
+    game::Log(msg);
+}

@@ -53,8 +53,8 @@ StagedGeometry::StagedGeometry() :
     m_verts3D(nullptr), m_count3D(0), m_capacity3D(0), m_verts2D(nullptr), m_count2D(0), m_capacity2D(0), m_runCount(0), m_runCount2D(0), m_droppedRuns2D(0), m_stats(nullptr), m_vertexBudget(0),
     m_budget3D(0), m_viewportWidth(0), m_viewportHeight(0), m_frustum(), m_frustumValid(false)
 {
-    memset(m_runs, 0, sizeof(m_runs));
-    memset(m_runs2D, 0, sizeof(m_runs2D));
+    m_dynamicRunStart = 0;
+    m_dynamicVertexStart = 0;
 }
 
 void StagedGeometry::SetFrameBudget(uint32_t maxVertices, uint32_t viewportWidth, uint32_t viewportHeight)
@@ -125,17 +125,54 @@ uint32_t StagedGeometry::ResolveTexture(int32_t resourceId)
     return tex ? tex->id : 0u;
 }
 
-void StagedGeometry::PushRun(uint32_t firstVertex, uint32_t count, uint32_t texture)
+void StagedGeometry::ResolveMaterial(int32_t materialHandle, uint32_t& outAlbedo, RunMaterial& outMaterial)
+{
+    outAlbedo = 0;
+    outMaterial = RunMaterial{};
+
+    if (materialHandle < 0 || !Engine_Resource_IsReady(materialHandle))
+        return;
+
+    // Resolve through the resource table's own authoritative type -- a
+    // handle that names a texture, model or theme is refused rather than
+    // reinterpreted as a Material, the same guard Engine_Resource_GetMaterialTexture
+    // already applies for a single slot.
+    ResourceInfo info;
+    if (!Engine_Resource_GetInfo(materialHandle, &info) || info.type != RES_MATERIAL)
+        return;
+
+    const Material* mat = static_cast<const Material*>(Engine_Resource_Get(materialHandle));
+    if (!mat)
+        return;
+
+    outAlbedo = ResolveTexture(mat->textureRefs[MATERIAL_PBR_TEX_ALBEDO]);
+    outMaterial.normalTexture = ResolveTexture(mat->textureRefs[MATERIAL_PBR_TEX_NORMAL]);
+    outMaterial.ormTexture = ResolveTexture(mat->textureRefs[MATERIAL_PBR_TEX_ORM]);
+    outMaterial.metallic = mat->floatParams[MATERIAL_PBR_FLOAT_METALLIC];
+    outMaterial.roughness = mat->floatParams[MATERIAL_PBR_FLOAT_ROUGHNESS];
+    outMaterial.normalScale = mat->floatParams[MATERIAL_PBR_FLOAT_NORMAL_SCALE];
+    outMaterial.alphaCutoff = mat->floatParams[MATERIAL_PBR_FLOAT_ALPHA_CUTOFF];
+    outMaterial.baseColor[0] = mat->colorParams[MATERIAL_PBR_COLOR_BASE][0];
+    outMaterial.baseColor[1] = mat->colorParams[MATERIAL_PBR_COLOR_BASE][1];
+    outMaterial.baseColor[2] = mat->colorParams[MATERIAL_PBR_COLOR_BASE][2];
+    outMaterial.baseColor[3] = mat->colorParams[MATERIAL_PBR_COLOR_BASE][3];
+    outMaterial.emissive[0] = mat->colorParams[MATERIAL_PBR_COLOR_EMISSIVE][0];
+    outMaterial.emissive[1] = mat->colorParams[MATERIAL_PBR_COLOR_EMISSIVE][1];
+    outMaterial.emissive[2] = mat->colorParams[MATERIAL_PBR_COLOR_EMISSIVE][2];
+    outMaterial.flags = mat->flags;
+}
+
+void StagedGeometry::PushRun(uint32_t firstVertex, uint32_t count, uint32_t texture, const RunMaterial& material)
 {
     if (count == 0)
         return;
 
-    // Extend the previous run when the texture matches, which is why the draw
+    // Extend the previous run when the material matches, which is why the draw
     // lists are sorted by texture id before this runs.
     if (m_runCount > 0)
     {
         DrawRun& last = m_runs[m_runCount - 1];
-        if (last.texture == texture && last.first + last.count == firstVertex)
+        if (last.texture == texture && last.material.SameAs(material) && last.first + last.count == firstVertex)
         {
             last.count += count;
             return;
@@ -151,13 +188,14 @@ void StagedGeometry::PushRun(uint32_t firstVertex, uint32_t count, uint32_t text
     m_runs[m_runCount].first = firstVertex;
     m_runs[m_runCount].count = count;
     m_runs[m_runCount].texture = texture;
+    m_runs[m_runCount].material = material;
     ++m_runCount;
     if (m_stats)
         ++m_stats->texBinds;
 }
 
-void StagedGeometry::AppendMesh(const float model[16], const float* verts, uint8_t components, const float* norms, const float* uvs, uint32_t vertexCount, uint8_t topology, Color3 color,
-                                uint32_t texture)
+void StagedGeometry::AppendMesh(const float model[16], const float* verts, uint8_t components, const float* norms, const float* uvs, const float* colors, uint32_t vertexCount, uint8_t topology,
+                                Color3 color, uint32_t texture, const RunMaterial& material)
 {
     if (!verts || vertexCount == 0)
         return;
@@ -230,15 +268,25 @@ void StagedGeometry::AppendMesh(const float model[16], const float* verts, uint8
 
             out.u = uvs ? uvs[i * 2 + 0] : 0.0f;
             out.v = uvs ? uvs[i * 2 + 1] : 0.0f;
-            out.r = color.r;
-            out.g = color.g;
-            out.b = color.b;
-            out.a = 1.0f;
+            if (colors)
+            {
+                out.r = colors[i * 4 + 0];
+                out.g = colors[i * 4 + 1];
+                out.b = colors[i * 4 + 2];
+                out.a = colors[i * 4 + 3];
+            }
+            else
+            {
+                out.r = color.r;
+                out.g = color.g;
+                out.b = color.b;
+                out.a = 1.0f;
+            }
         }
     }
 
     const uint32_t emitted = m_count3D - runStart;
-    PushRun(runStart, emitted, texture);
+    PushRun(runStart, emitted, texture, material);
     if (m_stats)
     {
         m_stats->trisSubmitted += emitted / 3u;
@@ -292,7 +340,7 @@ void StagedGeometry::AppendPrimitive(const DrawLists& lists, const PrimitiveDraw
 
     float model[16];
     BuildModelMatrix(entry.transform.GetPosition(), entry.transform.GetRotation(), entry.transform.GetScale(), model);
-    AppendMesh(model, geo.verts, 3, geo.norms, geo.uvs, geo.vertexCount, MESH_TOPOLOGY_LIST, entry.color, ResolveTexture(entry.textureId));
+    AppendMesh(model, geo.verts, 3, geo.norms, geo.uvs, nullptr, geo.vertexCount, MESH_TOPOLOGY_LIST, entry.color, ResolveTexture(entry.textureId), RunMaterial{});
 }
 
 void StagedGeometry::AppendModel(const ModelDrawEntry& entry)
@@ -313,12 +361,13 @@ void StagedGeometry::AppendModel(const ModelDrawEntry& entry)
             continue; // indexed meshes are not produced by the baker
 
         uint32_t texture = 0;
+        RunMaterial material;
         const int materialIndex = model->meshMaterial ? model->meshMaterial[i] : 0;
         if (model->materials && materialIndex < model->materialCount)
-            texture = ResolveTexture(model->materials[materialIndex].maps[MATERIAL_MAP_DIFFUSE].textureResourceId);
+            ResolveMaterial(model->materials[materialIndex], texture, material);
 
-        AppendMesh(matrix, mesh.vertices, mesh.vertexComponents ? mesh.vertexComponents : 3, mesh.normals, mesh.texcoords, static_cast<uint32_t>(mesh.vertexCount), mesh.topology,
-                   Color3{1.0f, 1.0f, 1.0f}, texture);
+        AppendMesh(matrix, mesh.vertices, mesh.vertexComponents ? mesh.vertexComponents : 3, mesh.normals, mesh.texcoords, mesh.colors, static_cast<uint32_t>(mesh.vertexCount), mesh.topology,
+                   Color3{1.0f, 1.0f, 1.0f}, texture, material);
         if (m_stats)
             ++m_stats->modelCount;
     }
@@ -328,6 +377,8 @@ bool StagedGeometry::BuildOne(const Renderable3D& what, const DrawLists& primiti
 {
     m_count3D = 0;
     m_runCount = 0;
+    m_dynamicRunStart = 0;
+    m_dynamicVertexStart = 0;
 
     float model[16];
     BuildModelMatrix(Vector3{0.0f, 0.0f, 0.0f}, what.rotation, what.scale, model);
@@ -347,12 +398,13 @@ bool StagedGeometry::BuildOne(const Renderable3D& what, const DrawLists& primiti
                 continue; // indexed meshes are not produced by the baker
 
             uint32_t texture = 0;
+            RunMaterial material;
             const int materialIndex = mdl->meshMaterial ? mdl->meshMaterial[i] : 0;
             if (mdl->materials && materialIndex < mdl->materialCount)
-                texture = ResolveTexture(mdl->materials[materialIndex].maps[MATERIAL_MAP_DIFFUSE].textureResourceId);
+                ResolveMaterial(mdl->materials[materialIndex], texture, material);
 
-            AppendMesh(model, mesh.vertices, mesh.vertexComponents ? mesh.vertexComponents : 3, mesh.normals, mesh.texcoords, static_cast<uint32_t>(mesh.vertexCount), mesh.topology,
-                       Color3{1.0f, 1.0f, 1.0f}, texture);
+            AppendMesh(model, mesh.vertices, mesh.vertexComponents ? mesh.vertexComponents : 3, mesh.normals, mesh.texcoords, mesh.colors, static_cast<uint32_t>(mesh.vertexCount), mesh.topology,
+                       Color3{1.0f, 1.0f, 1.0f}, texture, material);
         }
         return true;
     }
@@ -361,7 +413,7 @@ bool StagedGeometry::BuildOne(const Renderable3D& what, const DrawLists& primiti
     if (!geo.verts || geo.vertexCount == 0)
         return false;
 
-    AppendMesh(model, geo.verts, 3, geo.norms, geo.uvs, geo.vertexCount, MESH_TOPOLOGY_LIST, what.color, ResolveTexture(what.textureId));
+    AppendMesh(model, geo.verts, 3, geo.norms, geo.uvs, nullptr, geo.vertexCount, MESH_TOPOLOGY_LIST, what.color, ResolveTexture(what.textureId), RunMaterial{});
     return true;
 }
 
@@ -388,8 +440,12 @@ void StagedGeometry::AppendLevelSectors()
             if (!mesh.vertices || mesh.vertexCount == 0)
                 continue;
 
-            AppendMesh(identity, mesh.vertices, mesh.vertexComponents ? mesh.vertexComponents : 3, mesh.normals, mesh.texcoords, static_cast<uint32_t>(mesh.vertexCount), mesh.topology,
-                       Color3{1.0f, 1.0f, 1.0f}, ResolveTexture(sector.meshTexture[m]));
+            uint32_t texture = 0;
+            RunMaterial material;
+            ResolveMaterial(sector.meshMaterial[m], texture, material);
+
+            AppendMesh(identity, mesh.vertices, mesh.vertexComponents ? mesh.vertexComponents : 3, mesh.normals, mesh.texcoords, mesh.colors, static_cast<uint32_t>(mesh.vertexCount), mesh.topology,
+                       Color3{1.0f, 1.0f, 1.0f}, texture, material);
         }
     }
 }
@@ -422,6 +478,8 @@ void StagedGeometry::BuildFrame(DrawLists& lists, DrawStats* stats)
     lists.SortForSubmission();
 
     AppendLevelSectors();
+    m_dynamicRunStart = m_runCount;
+    m_dynamicVertexStart = m_count3D;
 
     const PrimitiveDrawEntry* untextured = lists.GetUntexturedPrims();
     for (uint16_t i = 0; i < lists.GetUntexturedCount(); ++i)
@@ -557,4 +615,60 @@ void StagedGeometry::BuildOrtho2D(uint32_t width, uint32_t height, bool zeroToOn
     out[12] = -1.0f;
     out[13] = 1.0f;
     out[15] = 1.0f;
+}
+
+void StagedGeometry::BuildOrthographic(float halfWidth, float halfHeight, float zNear, float zFar, bool zeroToOneDepth, float out[16])
+{
+    memset(out, 0, sizeof(float) * 16);
+    out[0] = 1.0f / halfWidth;
+    out[5] = 1.0f / halfHeight;
+
+    const float range = zFar - zNear;
+    if (zeroToOneDepth)
+    {
+        out[10] = -1.0f / range;
+        out[14] = -zNear / range;
+    }
+    else
+    {
+        out[10] = -2.0f / range;
+        out[14] = -(zFar + zNear) / range;
+    }
+    out[15] = 1.0f;
+}
+
+void StagedGeometry::BuildLightViewProjection(const Vector3& direction, const Vector3& focus, float halfExtent, float depthExtent, bool zeroToOneDepth, float out[16])
+{
+    const Vector3 forward = Normalize(direction);
+
+    // Avoid a degenerate basis when the light points (near-)straight up/down.
+    Vector3 upHint{0.0f, 1.0f, 0.0f};
+    if (fabsf(forward.y) > 0.999f)
+        upHint = Vector3{0.0f, 0.0f, 1.0f};
+    const Vector3 right = Normalize(Cross(forward, upHint));
+    const Vector3 up = Cross(right, forward);
+
+    // Pull the eye back along -direction so `focus` sits at mid-depth, giving
+    // equal headroom for casters in front of and behind it.
+    const Vector3 eye{focus.x - forward.x * depthExtent * 0.5f, focus.y - forward.y * depthExtent * 0.5f, focus.z - forward.z * depthExtent * 0.5f};
+
+    float view[16];
+    MatIdentity(view);
+    view[0] = right.x;
+    view[4] = right.y;
+    view[8] = right.z;
+    view[1] = up.x;
+    view[5] = up.y;
+    view[9] = up.z;
+    view[2] = -forward.x;
+    view[6] = -forward.y;
+    view[10] = -forward.z;
+    view[12] = -Dot(right, eye);
+    view[13] = -Dot(up, eye);
+    view[14] = Dot(forward, eye);
+
+    float proj[16];
+    BuildOrthographic(halfExtent, halfExtent, 0.0f, depthExtent, zeroToOneDepth, proj);
+
+    MatMultiply(proj, view, out);
 }

@@ -1,0 +1,12 @@
+{
+  "$schema": "../../../tools/schemas/title.schema.json",
+  "description": "Identity for the standalone 'material_pbr' example. See docs/guidelines/NEW_EXAMPLE.md.",
+  "developer": "Pixel Fire",
+  "name": "Example - Material PBR",
+  "version": "01.00",
+  "ids": {
+    "ps2": "PSEX00003",
+    "vita": "PSEX00003",
+    "psp": "PSEX00003"
+  }
+}

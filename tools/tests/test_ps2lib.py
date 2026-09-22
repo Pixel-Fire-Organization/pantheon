@@ -55,7 +55,7 @@ def test_cook_assets_finds_nested_descriptors(tmp_path, monkeypatch):
 
 
 def test_cube_bkm_byte_identical():
-    data, ext = mesh.bake_obj_model(str(FIXTURES / "cube.obj"), has_texture=True)
+    data, ext = mesh.bake_obj_model(str(FIXTURES / "cube.obj"))
     assert ext == ".bkm"
     assert data == (GOLDEN / "cube.bkm").read_bytes()
 

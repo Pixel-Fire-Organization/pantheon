@@ -222,6 +222,26 @@ nine seconds per renderer, read from the heartbeat:
 | `opengl` | 144, locked to the display | 54272 KB, constant |
 | `null` | 10000 to 20000 — the engine tick alone, 50 to 100 us | 54272 KB, constant |
 
+**Baseline, material system.** 2026-09-18, same hardware, `MAINASSETSTEST`
+loaded (18354 triangles, 8 materials, 2 static lights baked at compile time, a
+directional dynamic light designated as the real-time shadow caster) — the PBR
+pass (three-texture sampling, Cook-Torrance BRDF, dynamic light loop) and the
+`GFX_SHADOW_MAP_SIZE`-square depth pass on the frame's dynamic geometry:
+
+| Renderer | Frames per second |
+|---|---|
+| `webgpu` | 141 to 161, instantaneous, vsync-limited as before |
+| `opengl`, core (3.3+) path | 140 to 147 |
+| `opengl`, legacy (2.1) path (`--gl-version 2.1`) | 142 to 147 |
+
+No measurable difference from the boot-scene baseline above on this hardware —
+confirms the binding constraint stated above still holds with materials and a
+shadow pass added: this platform is nowhere near being the cost signal for
+either. Left as future work: an actual apples-to-apples same-scene comparison
+against the pre-material-system baseline (the boot-scene numbers above are a
+near-empty menu, not this level), and a measurement on hardware without vsync
+forcing a ceiling.
+
 **Left on the table**: the sky, on both backends; present-wait measurement on
 both backends, which is one call each; a budget that follows the display mode,
 since here the budget is policy rather than hardware.

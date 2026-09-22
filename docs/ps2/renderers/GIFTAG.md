@@ -43,6 +43,40 @@ right at the frustum's edge — would render at screen centre instead of being
 culled. Unmeasured whether this can be reached by ordinary content; revisit
 before trusting the batch path on a scene with close-up geometry.
 
+## Materials & lighting
+
+- **Vertex-lit fallback tier.** `SupportsPbrShading()` is the base class's
+  `false` default, unoverridden: there is no fragment stage here at all, only
+  hardware register writes, so there is nothing to run a BRDF in. A material's
+  albedo texture and `baseColorFactor` tint are the whole of what this backend
+  samples; normal and ORM maps, if a material carries them, are never
+  referenced.
+- **Dynamic lighting is computed on the EE, per vertex, every frame.** Unlike
+  every other PS2/PSP/Vita fallback backend, this one has no fixed-function
+  T&L substrate to hand the work to — no VU1 lighting microcode is in use here
+  (that is [ps2gl](PS2GL.md)'s path) — so `ComputeLitVertexColors` walks the
+  mesh on the main processor. The formula is additive, not the real GS's own
+  multiplicative texture-modulation convention:
+  `baseline + ambient + Σ max(dot(N,L),0) × lightColor×intensity` (point
+  lights attenuated by `range`), where `baseline` is the level compiler's
+  baked colour for sector geometry or flat white for a dynamic model/
+  primitive — added once, not folded into the multiplier, so a shadowed bake
+  can still be relit and untouched dynamic geometry does not go black with no
+  lights configured. The result is packed and written through the same
+  `DrawTriangles`/`DrawStrip` colour path an unlit draw already used, via a
+  `const float* colors` parameter that is simply null for draws with no
+  per-vertex data (the skybox, `RenderToImage3D`'s preview) rather than a
+  second code path.
+- **No real-time shadow caster.** This tier never gets one; `RenderShadowMap`
+  stays the base class's no-op. Every shadow a player sees on this backend is
+  the level compiler's static bake — see [LEVEL_FORMAT.md](../../formats/LEVEL_FORMAT.md).
+- **The EE cost of this is unmeasured against the frame budget.** See
+  [backlog/performance_findings.md](../../backlog/performance_findings.md) and
+  the platform's own `PLATFORM.md` Performance section before trusting this
+  path on a scene dense with dynamically-lit geometry; `GFX_MAX_LIGHTS` may
+  need a tighter override for this backend specifically if it does not fit,
+  rather than degrading every PS2 backend uniformly.
+
 ## Budgets
 
 | | |

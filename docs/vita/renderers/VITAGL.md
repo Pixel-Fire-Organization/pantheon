@@ -37,6 +37,35 @@ geometry is already in world space and carries one combined matrix, so it is
 loaded into the projection stack against an identity model-view rather than being
 split back apart.
 
+## Materials & lighting
+
+- **Vertex-lit fallback tier.** `SupportsPbrShading()` is the base class's
+  `false` default. A material's albedo texture and `baseColorFactor` tint are
+  sampled; normal and ORM maps never are.
+- **Dynamic lighting is computed on the processor, not this library's own
+  fixed-function lighting — a deliberate choice, not a capability gap.**
+  Unlike [PspGl](../../psp/renderers/PSPGL.md), this vendored library's
+  source genuinely implements `glColorMaterial`/`GL_AMBIENT_AND_DIFFUSE`
+  (confirmed by reading `external/vitaGL/source/ffp.c`), so real hardware
+  colour-material tracking is available here. It is not used, for
+  architectural consistency: the engine-shared `VertexLighting_Compute`
+  helper (the same additive `baseline + ambient + Σlights` formula documented
+  on [GIFTAG](../../ps2/renderers/GIFTAG.md), also used by
+  [Gu](../../psp/renderers/GU.md), [PspGl](../../psp/renderers/PSPGL.md) and
+  [Ps2Gl](../../ps2/renderers/PS2GL.md)'s sector path) already handles every
+  geometry kind's baseline correctly — sector, model and primitive alike —
+  where real `GL_LIGHTING`'s multiplicative model would still need a special
+  case for baked sector colour, the same problem documented on
+  [PS2GL.md](../../ps2/renderers/PS2GL.md). The lit result is written into a
+  scratch colour buffer, **explicitly clamped to `[0,1]`** before upload
+  (this driver's saturate-vs-wrap behaviour for an out-of-range float vertex
+  colour is not confirmed), and bound over the geometry stager's own colours
+  just before the 3D draw. The scratch buffer **grows on demand from the
+  heap** rather than a fixed cap, matching `SetFrameBudget(0, ...)`'s own
+  already-accepted "this backend's vertex count is unbounded" gap.
+- **No real-time shadow caster.** This tier never gets one — every shadow
+  here is the level compiler's static bake.
+
 ## Quirks and limits
 
 - **The screen-space pass blends; the world pass does not.** Blending is enabled

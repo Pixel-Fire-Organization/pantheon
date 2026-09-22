@@ -39,6 +39,53 @@ Geometry follows the model the other backends use: staged on the processor,
 uploaded once per frame, drawn as runs sharing a texture. Three-dimensional and
 screen-space geometry stage independently.
 
+Three shader pairs are compiled offline, alongside the flat one above: a PBR
+pair for the main scene pass (binding three textures per run — albedo, normal,
+packed occlusion/roughness/metallic — instead of one), and a depth-only pair
+for the real-time shadow pass. See "Materials & lighting" below.
+
+## Materials & lighting
+
+- **PBR tier.** `SupportsPbrShading()` is `true`. The main pass shades with a
+  metallic-roughness Cook-Torrance BRDF (GGX distribution, Smith geometry,
+  Schlick Fresnel), sampling all three of a material's maps where present and
+  falling back to a flat tangent-space normal and a neutral
+  (occlusion=1/roughness=1/metallic=0) ORM — both ordinary 1×1 textures
+  uploaded once at startup through the same `UploadTexture` path any other
+  texture takes — where a slot is empty. Normal mapping reconstructs tangent
+  space from screen-space derivatives (Cg `ddx`/`ddy`); their availability was
+  verified by actually compiling a shader that uses them through the real
+  offline compiler rather than assumed, since this platform's Cg dialect is
+  otherwise unconfirmed territory.
+- **Baked and dynamic lighting compose by addition, not replacement** — the
+  same formula and reasoning as
+  [WEBGPU.md](../../win32/renderers/WEBGPU.md)'s Materials & lighting section:
+  a vertex's incoming colour (the level compiler's bake, or flat white for a
+  dynamic model) is added to the dynamic ambient and multiplied by albedo
+  once, never folded into albedo itself.
+- **One real-time shadow caster, dynamic geometry only**, `GFX_SHADOW_MAP_SIZE`
+  square. Unlike the desktop backends, there is no depth-sampler texture
+  confirmed to behave identically across this platform's offline compiler and
+  its runtime driver, so depth is written into an ordinary RGBA8 colour
+  texture's R channel (a plain `vDepth` output, not a real depth attachment
+  read back) and the main shader manually 3×3 PCF-compares against it as a
+  plain `sampler2D` — the same technique, for the same reason, as
+  [nx deko3d](../../nx/renderers/DEKO3D.md) and [nx opengl](../../nx/renderers/OPENGL.md).
+  The shadow pass renders only the dynamic span of this frame's staged
+  geometry from a camera-centred orthographic frustum. **It runs as its own
+  complete `sceGxmBeginScene`/draw/`sceGxmEndScene`/`sceGxmFinish` cycle**,
+  strictly before the main frame's own `sceGxmBeginScene` — sceGxm forbids a
+  nested scene, the same constraint `RenderToImage3D` already works around.
+  Because sceGxm has no direct "clear colour" call, the shadow scene's colour
+  surface is flood-filled by an actual draw before the real shadow-caster
+  geometry, the same technique the main scene's own clear-quad uses — but
+  flood-filled **white** (far, 1.0) rather than the scene's background
+  colour, so a shadow-map texel nothing covers reads back as "nothing
+  occludes here," not as the nearest possible depth. No alpha-mask cutout
+  support in the shadow pass. Skipped outright, leaving the map's stale
+  contents unsampled, when no caster is designated or nothing dynamic is on
+  screen.
+
 ## Quirks and limits
 
 - **The screen-space pass blends; the world pass does not.** Blending is enabled

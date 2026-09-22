@@ -185,6 +185,10 @@
 #define GFX_FAR_PLANE 1000.0f
 
 #define GFX_MAX_CAMERAS_3D 4
+// PSP has no real-time shadow pass (fixed-function, see RENDERER.md); this
+// exists only for uniformity with the other four platforms and is unused.
+#define GFX_MAX_LIGHTS 4
+#define GFX_SHADOW_MAP_SIZE 512
 
 #define GFX_MAX_MODEL_MESH_COUNT 32
 #define GFX_MAX_CACHED_MODELS 64

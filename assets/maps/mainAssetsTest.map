@@ -342,3 +342,22 @@
 "origin" "704 -128 16"
 "model" "models/SandstoneRock1.obj"
 }
+// entity 2
+{
+"classname" "light"
+"origin" "704 -128 200"
+"light_type" "1"
+"color" "255 200 140"
+"intensity" "2.5"
+"range" "900"
+}
+// entity 3
+{
+"classname" "light"
+"origin" "0 0 400"
+"angles" "-50 30 0"
+"light_type" "0"
+"color" "190 205 255"
+"intensity" "0.7"
+"range" "512"
+}

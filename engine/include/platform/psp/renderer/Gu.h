@@ -43,6 +43,10 @@ public:
     void SetActiveCamera3D(CameraID id) override;
     void SetActiveCamera2D(const Camera2D& camera) override;
 
+    void SetLight3D(LightID id, const Light3D& light) override;
+    void SetAmbientLight(const Color3& color) override;
+    void SetShadowCasterLight(LightID id) override;
+
     /// Upload a cooked texture into main memory, keeping a palettised source
     /// palettised.
     /// @param upload Source texture.
@@ -66,7 +70,10 @@ protected:
 private:
     /// One vertex in the order the graphics engine reads it: texture, colour,
     /// position. The order is fixed by the hardware, not chosen. No normal:
-    /// lighting is off, and this is the most bandwidth-bound platform here.
+    /// this is the most bandwidth-bound platform here, so dynamic lighting is
+    /// computed from StagedGeometry::Vertex's own normal earlier in the
+    /// pipeline (see ConvertSpan) and folded into this struct's packed
+    /// colour, rather than growing this vertex to carry one.
     struct GuVertex
     {
         float u, v;

@@ -32,6 +32,11 @@ class GifTagRenderer final : public Renderer
     xyz_t* m_xyz = nullptr;
     uint32_t* m_srcIdx = nullptr;
     float* m_q = nullptr;
+    // Per-source-vertex lit RGBA (4 floats/vertex), computed by
+    // ComputeLitVertexColors before a draw call and consumed by
+    // DrawTriangles/DrawStrip exactly like m_q/m_xyz -- a scratch buffer,
+    // not accumulated across the frame.
+    float* m_litColors = nullptr;
 
     bool m_useVu0 = false;
     void* m_clipBatch = nullptr;
@@ -106,16 +111,48 @@ class GifTagRenderer final : public Renderer
     /// @param mvp The combined model-to-clip matrix.
     /// @param components Floats per position: 3, or 4 for baked geometry.
     /// @param uvs Two floats per vertex, or null when untextured.
+    /// @param colors Four floats (RGBA) per vertex, or null to use `color`
+    ///        for every vertex -- see ComputeLitVertexColors, which is what
+    ///        callers use to fill this in.
     /// @param textureId A backend texture handle, or zero when untextured.
-    void DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId);
+    void DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, const float* colors, uint32_t vertexCount, Color3 color, uint32_t textureId);
 
     /// Transform and emit one triangle strip, split into runs of visible
     /// vertices.
     /// @param mvp The combined model-to-clip matrix.
     /// @param components Floats per position: 3, or 4 for baked geometry.
     /// @param uvs Two floats per vertex, or null when untextured.
+    /// @param colors Four floats (RGBA) per vertex, or null to use `color`
+    ///        for every vertex.
     /// @param textureId A backend texture handle, or zero when untextured.
-    void DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId);
+    void DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, const float* colors, uint32_t vertexCount, Color3 color, uint32_t textureId);
+
+    /// Compute ambient + dynamic-light Lambertian shading per vertex and
+    /// write RGBA into `outColors` (4 floats/vertex, sized for at least
+    /// `vertexCount`). Two things combine, exactly like every PBR-tier
+    /// backend's own vertex-colour handling: a per-vertex lighting baseline
+    /// (`baseColors`, RGBA -- the level compiler's baked result for sector
+    /// geometry -- or full white when null, meaning nothing is baked for
+    /// this geometry yet, e.g. a model or primitive), which ambient and every
+    /// active light are ADDED to (never multiplied into a sum that starts at
+    /// zero -- that would erase a bake, or leave unlit dynamic geometry black
+    /// whenever no light happens to be configured); and a flat per-mesh tint
+    /// (`flatColorRgba` -- a material's baseColorFactor, or a primitive's own
+    /// colour) multiplied in once at the end. See
+    /// docs/subsystems/RENDERER.md.
+    /// @param verts Object-space (or world-space, see worldMatrix) positions.
+    /// @param normals Object-space (or world-space) normals, or null; a
+    ///        vertex with no normal data gets no light contribution (the
+    ///        baseline passes through unlit) rather than being forced to any
+    ///        particular brightness.
+    /// @param baseColors Four floats (RGBA) per vertex, or null for a full-
+    ///        white baseline (dynamic geometry).
+    /// @param flatColorRgba The flat tint multiplied into every vertex.
+    /// @param worldMatrix Transforms verts/normals into world space before
+    ///        lighting; null means they are already world-space (level
+    ///        sectors, baked that way by the compiler).
+    void ComputeLitVertexColors(const float* verts, int components, const float* normals, const float* baseColors, const float flatColorRgba[4], const float* worldMatrix, uint32_t vertexCount,
+                                 float* outColors);
     /// Write the sampling and buffer registers for a texture, unless that same
     /// texture is already bound this frame.
     void BindTexture(uint32_t textureId);
@@ -171,6 +208,10 @@ public:
     void SetCamera3D(CameraID id, const Camera3D& camera) override;
     void SetActiveCamera3D(CameraID id) override;
     void SetActiveCamera2D(const Camera2D& camera) override;
+
+    void SetLight3D(LightID id, const Light3D& light) override;
+    void SetAmbientLight(const Color3& color) override;
+    void SetShadowCasterLight(LightID id) override;
 
     uint32_t UploadTexture(const TextureUpload& upload) override;
     void ReleaseTexture(uint32_t handle) override;

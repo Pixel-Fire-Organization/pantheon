@@ -1,0 +1,15 @@
+// Depth-only shadow-pass vertex shader: dynamic (model/primitive) geometry
+// only -- static sector geometry already carries baked, shadow-aware
+// lighting and is never rendered into this target. There is no readable
+// depth-surface sampling path used here, so depth is written out through an
+// ordinary colour target instead (see scene_shadow_f.cg) and sampled back as
+// a plain texture in scene_pbr_f.cg's shadow lookup.
+void main(
+    float3 aPosition : POSITION,
+    uniform float4x4 uLightViewProj,
+    out float4 vPosition : POSITION,
+    out float  vDepth    : TEXCOORD0)
+{
+    vPosition = mul(float4(aPosition, 1.0f), uLightViewProj);
+    vDepth = vPosition.z / vPosition.w;
+}

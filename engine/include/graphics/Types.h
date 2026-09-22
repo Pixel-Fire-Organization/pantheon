@@ -179,6 +179,7 @@ typedef struct Mesh
     float* vertices; // vertexComponents floats per vertex
     float* normals; // 3 floats per vertex (may be null)
     float* texcoords; // 2 floats per vertex (may be null)
+    float* colors; // 4 floats per vertex, RGBA baked colour (may be null); PSEC only, see MaterialFormat.h
     unsigned short* indices; // always null for baked models
     Vector3 boundsCenter; // object-space bounding-sphere center
     float boundsRadius; // object-space bounding-sphere radius
@@ -186,33 +187,62 @@ typedef struct Mesh
     unsigned char vertexComponents; // floats per position (3 or 4)
 } Mesh;
 
-#define MATERIAL_MAP_DIFFUSE 0
-#define MAX_MATERIAL_MAPS 1
+// A material names a shader type plus a fixed, generic set of parameter
+// slots whose MEANING depends on that shader type -- see
+// docs/formats/MATERIAL_FORMAT.md. This is what lets a future shader type
+// (e.g. water) add its own parameters without widening this struct: it
+// defines its own mapping over the same slot arrays, rather than the struct
+// growing a field per shader type that ever existed.
+#define MATERIAL_MAX_FLOAT_PARAMS 8
+#define MATERIAL_MAX_COLOR_PARAMS 4
+#define MATERIAL_MAX_TEXTURE_SLOTS 4
 
-// A single material texture map slot. `textureResourceId` is the resource
-// handle of the diffuse texture (-1 if none); because a model's texture
-// dependencies stream in asynchronously, renderers resolve it to a live
-// Texture2D at draw time rather than caching it here.
-typedef struct MaterialMap
+// Same "grows by appending a value, exhaustive -Wswitch, no default:" idiom
+// as PlatformCapability/RendererId.
+enum class MaterialShaderType : uint8_t
 {
-    Texture2D texture; // optional cached texture (may be zeroed; resolve via id)
-    int32_t textureResourceId;
-} MaterialMap;
+    PbrStandard = 0,
+    Count
+};
 
-// Material, only the diffuse map is used on the PS2 fixed-function pipeline.
+// PbrStandard's slot mapping -- the single source of truth mirrored by
+// tools/cook_assets.py and every backend's shading code.
+#define MATERIAL_PBR_FLOAT_METALLIC 0
+#define MATERIAL_PBR_FLOAT_ROUGHNESS 1
+#define MATERIAL_PBR_FLOAT_NORMAL_SCALE 2
+#define MATERIAL_PBR_FLOAT_ALPHA_CUTOFF 3
+
+#define MATERIAL_PBR_COLOR_BASE 0 // baseColorFactor, RGBA
+#define MATERIAL_PBR_COLOR_EMISSIVE 1 // emissiveFactor, RGB (alpha unused)
+
+#define MATERIAL_PBR_TEX_ALBEDO 0
+#define MATERIAL_PBR_TEX_NORMAL 1
+#define MATERIAL_PBR_TEX_ORM 2 // packed occlusion/roughness/metallic
+
+#define MATERIAL_FLAG_ALPHA_MASK (1u << 0)
+#define MATERIAL_FLAG_ALPHA_BLEND (1u << 1)
+#define MATERIAL_FLAG_DOUBLE_SIDED (1u << 2)
+
+// A resolved material: parameter slots plus resolved texture resource
+// handles (-1 = none), ready to sample/bind at draw time. Populated by
+// Material_LoadBaked (MaterialFormat.h).
 typedef struct Material
 {
-    MaterialMap maps[MAX_MATERIAL_MAPS];
+    uint8_t shaderType; // MaterialShaderType
+    uint8_t flags; // MATERIAL_FLAG_* bitmask
+    float floatParams[MATERIAL_MAX_FLOAT_PARAMS];
+    float colorParams[MATERIAL_MAX_COLOR_PARAMS][4]; // RGBA
+    int32_t textureRefs[MATERIAL_MAX_TEXTURE_SLOTS]; // resource handles, -1 = none
 } Material;
 
-// Model, a collection of unindexed meshes plus their materials.
+// Model, a collection of unindexed meshes plus the materials they reference.
 typedef struct Model
 {
     int meshCount; // number of meshes
-    int materialCount; // number of materials
+    int materialCount; // number of materials this model references
     Mesh* meshes; // meshes array
-    Material* materials; // materials array
-    int* meshMaterial; // material index per mesh (may be null → material 0)
+    int32_t* materials; // RES_MATERIAL resource handles, one per referenced material
+    int* meshMaterial; // index into materials[] per mesh (may be null → material 0)
     Vector3 boundsCenter; // object-space bounding sphere over all meshes
     float boundsRadius;
 } Model;

@@ -18,7 +18,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ps2lib import font, ps2a, theme as themelib, tim2
+from ps2lib import font, material as materiallib, ps2a, theme as themelib, tim2
 import cook_assets
 
 
@@ -86,12 +86,27 @@ def validate_tree(directory, cooklist, report):
                 themelib.describe(info["payload"])
             except ValueError as e:
                 report.error(name, f"theme payload unreadable: {e}")
+        elif info["type"] == "MATERIAL":
+            _validate_material(name, info, policy, report)
 
     _validate_deps(directory, names, present, report)
 
     budget = policies.get("TEXTURE", {}).get("budget_bytes")
     if budget and texture_bytes > budget:
         report.error("<textures>", f"cooked textures total {texture_bytes} bytes, over the {budget} byte budget")
+
+
+def _validate_material(name, info, policy, report):
+    try:
+        desc = materiallib.describe(info["payload"])
+    except ValueError as e:
+        report.error(name, f"material payload unreadable: {e}")
+        return
+
+    dep_count = len(info["deps"])
+    for ref in desc["texture_refs"]:
+        if ref != materiallib.TEXREF_NONE and ref >= dep_count:
+            report.error(name, f"material names texture dependency {ref} of only {dep_count}")
 
 
 def _validate_texture(name, info, policy, report):

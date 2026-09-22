@@ -57,6 +57,28 @@ dialog is open the presented frame is handed to the dialog service first — see
 the platform spec; a backend that skips that draws a correct frame with no dialog
 visible on it, while the dialog is open and eating input.
 
+## Materials & lighting
+
+- **Vertex-lit fallback tier.** `SupportsPbrShading()` is the base class's
+  `false` default. A material's albedo texture and `baseColorFactor` tint are
+  sampled; normal and ORM maps never are.
+- **Dynamic lighting is computed on the processor, not the GE's hardware
+  lighting unit.** The hardware vertex format this backend uploads carries no
+  normal attribute at all — deliberately, to save bandwidth on "the most
+  bandwidth-bound platform here" (see the vertex struct's own comment) — so
+  `sceGuLight`/`sceGuAmbient`/`sceGuMaterial` are never engaged. Instead,
+  `ConvertSpan` reads the real per-vertex normal that is still available
+  earlier in the pipeline, on `StagedGeometry::Vertex`, and evaluates the
+  engine-shared `VertexLighting_Compute` helper there (the same additive
+  `baseline + ambient + Σlights` formula documented on
+  [GIFTAG](../../ps2/renderers/GIFTAG.md), also used by
+  [Ps2Gl](../../ps2/renderers/PS2GL.md)'s sector path,
+  [PspGl](PSPGL.md) and [VitaGl](../../vita/renderers/VITAGL.md)) — folding
+  the lit result into the packed colour this vertex format already carries,
+  via the existing `PackColor`, rather than adding a field.
+- **No real-time shadow caster.** This tier never gets one — every shadow
+  here is the level compiler's static bake.
+
 ## Quirks and limits
 
 - **The display list is consumed asynchronously, and the buffer must not be

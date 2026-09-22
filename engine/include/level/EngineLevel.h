@@ -20,17 +20,17 @@ typedef struct
     const uint8_t* entsChunk; // raw ENTS chunk (count/records/props/strings)
     const uint8_t* farfieldChunk; // raw FARF chunk, or null
 
-    int32_t materialTex[LEVEL_MAX_MATERIALS]; // pinned texture resource handles
+    int32_t materialHandles[LEVEL_MAX_MATERIALS]; // pinned RES_MATERIAL resource handles
 } Level;
 
 // Load a compiled level: read its core from the master archive into resident
-// slots, pin material textures, spawn its entities via the game's spawn
-// handler, and prime the resident sector ring. Blocking (call from a load
-// screen). `level->name` must be set; other fields are filled in. Returns
-// false on error.
+// slots, pin its materials, spawn its entities via the game's spawn handler,
+// and prime the resident sector ring. Blocking (call from a load screen).
+// `level->name` must be set; other fields are filled in. Returns false on
+// error.
 bool Engine_Level_Load(Level* level);
 
-// Unload: release the sector ring, unpin textures (unless keepPinned), and
+// Unload: release the sector ring, unpin materials (unless keepPinned), and
 // clear the level-data arena. The master archive stays mounted.
 void Engine_Level_Unload(Level* level, bool keepPinned);
 

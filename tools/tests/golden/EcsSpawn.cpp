@@ -13,6 +13,7 @@ void Game_Spawn_prop_model(const Ecs_prop_model& def, const game::EntitySpawn& s
 void Game_Spawn_func_button(const Ecs_func_button& def, const game::EntitySpawn& spawn);
 void Game_Spawn_func_changeLevel(const Ecs_func_changeLevel& def, const game::EntitySpawn& spawn);
 void Game_Spawn_func_door(const Ecs_func_door& def, const game::EntitySpawn& spawn);
+void Game_Spawn_light(const Ecs_light& def, const game::EntitySpawn& spawn);
 
 namespace
 {
@@ -119,6 +120,40 @@ bool Ecs_SpawnDispatch(const game::EntitySpawn& spawn)
             if (raw) { unsigned long v = std::strtoul(raw, nullptr, 10); def.collisionComponent.layer_mask = (uint32_t)v; }
         }
         Game_Spawn_func_door(def, spawn);
+        return true;
+    }
+    if (std::strcmp(spawn.classname, "light") == 0)
+    {
+        Ecs_light def;
+        {
+            const char* raw = Internal_FindProp(spawn, "position");
+            if (raw) { const char* v = raw; def.transformComponent.position = v; }
+        }
+        {
+            const char* raw = Internal_FindProp(spawn, "angles");
+            if (raw) { const char* v = raw; def.transformComponent.angles = v; }
+        }
+        {
+            const char* raw = Internal_FindProp(spawn, "scale");
+            if (raw) { const char* v = raw; def.transformComponent.scale = v; }
+        }
+        {
+            const char* raw = Internal_FindProp(spawn, "light_type");
+            if (raw) { long v = std::strtol(raw, nullptr, 10); def.lightComponent.light_type = (int)v; }
+        }
+        {
+            const char* raw = Internal_FindProp(spawn, "color");
+            if (raw) { const char* v = raw; def.lightComponent.color = v; }
+        }
+        {
+            const char* raw = Internal_FindProp(spawn, "intensity");
+            if (raw) { double v = std::strtod(raw, nullptr); def.lightComponent.intensity = (float)v; }
+        }
+        {
+            const char* raw = Internal_FindProp(spawn, "range");
+            if (raw) { double v = std::strtod(raw, nullptr); def.lightComponent.range = (float)v; }
+        }
+        Game_Spawn_light(def, spawn);
         return true;
     }
     return false;

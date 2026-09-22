@@ -24,12 +24,15 @@ foreach(_tool NX_ELF2NRO_EXE NX_NACPTOOL_EXE NX_UAM_EXE)
 endforeach()
 
 # One shader stage, compiled offline for the default renderer and embedded as text
-# for the reference one, appending both headers to OUT_LIST.
-function(nx_build_shader OUT_LIST STAGE SOURCE STEM GENERATED_DIR)
+# for the reference one, appending both headers to OUT_LIST. SYMBOL is the full
+# base identifier (e.g. "g_SceneVertex") -- the caller names it explicitly
+# rather than this function deriving it from STEM, since a literal-substring
+# derivation silently stops matching the moment a stem stops looking exactly
+# like the original "scene_vert"/"scene_frag" (as every stem added after the
+# flat shader's own does).
+function(nx_build_shader OUT_LIST STAGE SOURCE STEM SYMBOL GENERATED_DIR)
     set(_dksh "${GENERATED_DIR}/${STEM}_dksh.h")
     set(_glsl "${GENERATED_DIR}/${STEM}_glsl.h")
-    string(REPLACE "scene_vert" "g_SceneVertex" _symbol "${STEM}")
-    string(REPLACE "scene_frag" "g_SceneFragment" _symbol "${_symbol}")
 
     add_custom_command(
         OUTPUT "${_dksh}"
@@ -38,7 +41,7 @@ function(nx_build_shader OUT_LIST STAGE SOURCE STEM GENERATED_DIR)
                 --stage "${STAGE}"
                 --input "${SOURCE}"
                 --output "${_dksh}"
-                --symbol "${_symbol}Dksh"
+                --symbol "${SYMBOL}Dksh"
         DEPENDS "${SOURCE}" "${ENGINE_NX_SHADER_TOOL}"
         COMMENT "Compiling shader ${STEM} for deko3d"
         VERBATIM)
@@ -48,7 +51,7 @@ function(nx_build_shader OUT_LIST STAGE SOURCE STEM GENERATED_DIR)
         COMMAND ${PYTHON3_BIN} "${ENGINE_NX_SHADER_TOOL}" glsl
                 --input "${SOURCE}"
                 --output "${_glsl}"
-                --symbol "${_symbol}Glsl"
+                --symbol "${SYMBOL}Glsl"
         DEPENDS "${SOURCE}" "${ENGINE_NX_SHADER_TOOL}"
         COMMENT "Embedding shader ${STEM} for OpenGL"
         VERBATIM)
@@ -120,8 +123,20 @@ function(platform_configure PLATFORM)
     file(MAKE_DIRECTORY "${_generated}")
 
     set(_shaderHeaders "")
-    nx_build_shader(_shaderHeaders vert "${ENGINE_NX_CONFIG_DIR}/renderer/shaders/scene.vert.glsl" scene_vert "${_generated}")
-    nx_build_shader(_shaderHeaders frag "${ENGINE_NX_CONFIG_DIR}/renderer/shaders/scene.frag.glsl" scene_frag "${_generated}")
+    nx_build_shader(_shaderHeaders vert "${ENGINE_NX_CONFIG_DIR}/renderer/shaders/scene.vert.glsl" scene_vert g_SceneVertex "${_generated}")
+    nx_build_shader(_shaderHeaders frag "${ENGINE_NX_CONFIG_DIR}/renderer/shaders/scene.frag.glsl" scene_frag g_SceneFragment "${_generated}")
+
+    # PBR main-scene pipeline (see docs/formats/MATERIAL_FORMAT.md and
+    # docs/subsystems/RENDERER.md) -- a second shader pair alongside the flat
+    # one above, which stays exactly as-is for the 2D pass and RenderToImage3D's
+    # preview target.
+    nx_build_shader(_shaderHeaders vert "${ENGINE_NX_CONFIG_DIR}/renderer/shaders/scene_pbr.vert.glsl" scene_pbr_vert g_ScenePbrVertex "${_generated}")
+    nx_build_shader(_shaderHeaders frag "${ENGINE_NX_CONFIG_DIR}/renderer/shaders/scene_pbr.frag.glsl" scene_pbr_frag g_ScenePbrFragment "${_generated}")
+
+    # Depth-only shadow pass (dynamic geometry only; see the member comment on
+    # RenderShadowMap in Renderer.h).
+    nx_build_shader(_shaderHeaders vert "${ENGINE_NX_CONFIG_DIR}/renderer/shaders/scene_shadow.vert.glsl" scene_shadow_vert g_SceneShadowVertex "${_generated}")
+    nx_build_shader(_shaderHeaders frag "${ENGINE_NX_CONFIG_DIR}/renderer/shaders/scene_shadow.frag.glsl" scene_shadow_frag g_SceneShadowFragment "${_generated}")
 
     set(ENGINE_PLATFORM_${PLATFORM}_SOURCES
         "${_variantSrcDir}/Platform.cpp"

@@ -36,6 +36,12 @@ header, and they are loaded before it is reported ready. A model is never
 ready before the textures it references. This is what makes a single load request
 sufficient for a whole object graph.
 
+Dependency loading is transitive: a dependency's own dependencies are loaded
+the same way, recursively. This is what lets a model or a level depend on a
+material asset, which itself depends on the material's own texture maps — a
+model's material references and a level's `MATL` entries both resolve through
+exactly the same recursive path a font's atlas dependency already does.
+
 **Reference counting and pinning, and no eviction at all.** A dependency's
 reference count rises with each dependent. Pinning marks an entry the game
 cannot tolerate losing mid-frame — HUD fonts, persistent UI. Nothing is ever

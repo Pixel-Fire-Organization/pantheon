@@ -1,6 +1,7 @@
 #include "platform/win32/renderer/WebGpu.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -19,10 +20,13 @@ namespace
     // ones, so every literal has to be wrapped.
     WGPUStringView Str(const char* s) { return WGPUStringView{s, s ? strlen(s) : 0}; }
 
-    // One shader for every pass. Untextured geometry samples a 1x1 white texture,
-    // which keeps this to two pipelines (3D and 2D) instead of four that differ
-    // only in whether a texture is bound.
-    const char* const kShaderSource = R"WGSL(
+    // Flat/unlit shader: the 2D pass, and RenderToImage3D's preview pipeline
+    // (see the member comment on m_pipeline2D in WebGpu.h for why the preview
+    // path deliberately does not use the PBR shader below). Untextured
+    // geometry samples a 1x1 white texture, which is what keeps this to one
+    // pipeline per pass instead of two that differ only in whether a texture
+    // is bound.
+    const char* const kShaderSourceFlat = R"WGSL(
 struct Uniforms {
     viewProj : mat4x4<f32>,
 };
@@ -45,8 +49,9 @@ fn vs_main(@location(0) pos : vec3<f32>,
     out.clipPos = u.viewProj * vec4<f32>(pos, 1.0);
     out.uv = uv;
 
-    // Fixed headlight term, matching the flat look the PS2 backends produce.
-    // Normals are zero for 2D geometry, which falls through to full brightness.
+    // Fixed headlight term, matching the flat look the vertex-lit backends
+    // produce. Normals are zero for 2D geometry, which falls through to full
+    // brightness.
     let n = length(normal);
     var shade = 1.0;
     if (n > 0.0001) {
@@ -63,6 +68,304 @@ fn fs_main(in : VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(t.rgb * in.color.rgb, t.a * in.color.a);
 }
 )WGSL";
+
+    // Main-scene PBR shader: metallic-roughness Cook-Torrance, screen-space
+    // derivative tangent reconstruction (no vertex tangent attribute), a
+    // fixed dynamic-light array, and single-shadow-caster PCF sampling.
+    // Vertex positions/normals arrive already in world space -- StagedGeometry
+    // bakes each object's model matrix into the vertex buffer on the CPU
+    // rather than uploading one per draw, so the vertex stage here only ever
+    // applies the camera's view-projection.
+    //
+    // A vertex's incoming colour is the level compiler's baked static
+    // lighting result for sector geometry, or flat white for dynamic models
+    // (see docs/formats/MATERIAL_FORMAT.md, "Static vs. dynamic lighting").
+    // It is treated as a precomputed diffuse/indirect term and added to the
+    // dynamic ambient before modulating by albedo -- real-time dynamic lights
+    // are evaluated on top of that with the full BRDF, never replacing it.
+    const char* const kShaderSource3D = R"WGSL(
+struct GpuLight {
+    positionOrDir : vec4<f32>,
+    colorIntensity : vec4<f32>,
+    rangeParams : vec4<f32>,
+};
+
+struct FrameUniforms {
+    viewProj : mat4x4<f32>,
+    lightViewProj : mat4x4<f32>,
+    cameraPos : vec4<f32>,
+    ambient : vec4<f32>,
+    lights : array<GpuLight, GFX_MAX_LIGHTS_PLACEHOLDER>,
+    shadowCaster : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> u : FrameUniforms;
+@group(0) @binding(1) var shadowTex : texture_depth_2d;
+@group(0) @binding(2) var shadowSmp : sampler_comparison;
+
+struct MaterialUniform {
+    baseColor : vec4<f32>,
+    emissive : vec4<f32>,
+    mrna : vec4<f32>, // metallic, roughness, normalScale, alphaCutoff
+    matFlags : vec4<f32>, // x = alpha-mask enabled
+};
+@group(1) @binding(0) var<uniform> mat : MaterialUniform;
+
+@group(2) @binding(0) var albedoTex : texture_2d<f32>;
+@group(2) @binding(1) var normalTex : texture_2d<f32>;
+@group(2) @binding(2) var ormTex : texture_2d<f32>;
+@group(2) @binding(3) var matSmp : sampler;
+
+struct VsOut {
+    @builtin(position) clipPos : vec4<f32>,
+    @location(0) worldPos : vec3<f32>,
+    @location(1) worldNormal : vec3<f32>,
+    @location(2) uv : vec2<f32>,
+    @location(3) color : vec4<f32>,
+};
+
+@vertex
+fn vs_main_3d(@location(0) pos : vec3<f32>,
+              @location(1) normal : vec3<f32>,
+              @location(2) uv : vec2<f32>,
+              @location(3) color : vec4<f32>) -> VsOut {
+    var out : VsOut;
+    out.clipPos = u.viewProj * vec4<f32>(pos, 1.0);
+    out.worldPos = pos;
+    out.worldNormal = normal;
+    out.uv = uv;
+    out.color = color;
+    return out;
+}
+
+const PI : f32 = 3.14159265359;
+
+fn distributionGGX(N : vec3<f32>, H : vec3<f32>, roughness : f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let NdotH = max(dot(N, H), 0.0);
+    let NdotH2 = NdotH * NdotH;
+    let denom = NdotH2 * (a2 - 1.0) + 1.0;
+    return a2 / max(PI * denom * denom, 1e-6);
+}
+
+fn geometrySchlickGGX(NdotV : f32, roughness : f32) -> f32 {
+    let r = roughness + 1.0;
+    let k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+fn geometrySmith(N : vec3<f32>, V : vec3<f32>, L : vec3<f32>, roughness : f32) -> f32 {
+    let NdotV = max(dot(N, V), 0.0);
+    let NdotL = max(dot(N, L), 0.0);
+    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);
+}
+
+fn fresnelSchlick(cosTheta : f32, F0 : vec3<f32>) -> vec3<f32> {
+    return F0 + (vec3<f32>(1.0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+fn sampleShadow(worldPos : vec3<f32>) -> f32 {
+    if (u.shadowCaster.x < 0.0) {
+        return 1.0;
+    }
+    let lightClip = u.lightViewProj * vec4<f32>(worldPos, 1.0);
+    if (lightClip.w <= 0.0) {
+        return 1.0;
+    }
+    let ndc = lightClip.xyz / lightClip.w;
+    let shadowUv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (shadowUv.x < 0.0 || shadowUv.x > 1.0 || shadowUv.y < 0.0 || shadowUv.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
+        return 1.0;
+    }
+    let bias = 0.0025;
+    let texel = 1.0 / GFX_SHADOW_MAP_SIZE_PLACEHOLDER;
+    var sum = 0.0;
+    for (var dy = -1; dy <= 1; dy = dy + 1) {
+        for (var dx = -1; dx <= 1; dx = dx + 1) {
+            let offs = vec2<f32>(f32(dx), f32(dy)) * texel;
+            sum = sum + textureSampleCompare(shadowTex, shadowSmp, shadowUv + offs, ndc.z - bias);
+        }
+    }
+    return sum / 9.0;
+}
+
+@fragment
+fn fs_main_3d(in : VsOut) -> @location(0) vec4<f32> {
+    let albedoSample = textureSample(albedoTex, matSmp, in.uv);
+    // Pure material colour -- the vertex's incoming colour (baked static
+    // lighting, or white for a dynamic model) is deliberately NOT folded in
+    // here: it is added once, below, as the indirect/baked lighting term.
+    // Multiplying it into albedo too would let it double up wherever albedo
+    // is reused (F0, the diffuse BRDF term), squaring a static mesh's baked
+    // shading instead of applying it once.
+    let albedo = albedoSample.rgb * mat.baseColor.rgb;
+    let alpha = albedoSample.a * mat.baseColor.a;
+    if (mat.matFlags.x > 0.5 && alpha < mat.mrna.w) {
+        discard;
+    }
+
+    let metallic = clamp(mat.mrna.x, 0.0, 1.0);
+    let roughness = clamp(mat.mrna.y, 0.045, 1.0);
+
+    var N = normalize(in.worldNormal);
+    if (dot(in.worldNormal, in.worldNormal) < 0.0001) {
+        N = vec3<f32>(0.0, 1.0, 0.0);
+    }
+
+    // Screen-space derivative tangent reconstruction: no vertex tangent
+    // attribute is carried in the shared vertex format.
+    let posDx = dpdx(in.worldPos);
+    let posDy = dpdy(in.worldPos);
+    let uvDx = dpdx(in.uv);
+    let uvDy = dpdy(in.uv);
+    var T = posDx * uvDy.y - posDy * uvDx.y;
+    let TdotT = dot(T, T);
+    if (TdotT < 1e-10) {
+        T = vec3<f32>(1.0, 0.0, 0.0);
+    } else {
+        T = T * inverseSqrt(TdotT);
+    }
+    T = normalize(T - N * dot(N, T));
+    let B = cross(N, T);
+
+    let normalSample = textureSample(normalTex, matSmp, in.uv).xyz * 2.0 - vec3<f32>(1.0);
+    let mapped = normalize(vec3<f32>(normalSample.x * mat.mrna.z, normalSample.y * mat.mrna.z, normalSample.z));
+    N = normalize(T * mapped.x + B * mapped.y + N * mapped.z);
+
+    let orm = textureSample(ormTex, matSmp, in.uv);
+    let occlusion = orm.r;
+    let finalRoughness = clamp(orm.g * roughness, 0.045, 1.0);
+    let finalMetallic = clamp(orm.b * metallic, 0.0, 1.0);
+
+    let V = normalize(u.cameraPos.xyz - in.worldPos);
+    let F0 = mix(vec3<f32>(0.04), albedo, finalMetallic);
+    let shadowCasterIndex = i32(u.shadowCaster.x);
+
+    var Lo = vec3<f32>(0.0);
+    for (var i = 0; i < GFX_MAX_LIGHTS_PLACEHOLDER; i = i + 1) {
+        let light = u.lights[i];
+        if (light.colorIntensity.w <= 0.0) {
+            continue;
+        }
+
+        var L : vec3<f32>;
+        var attenuation = 1.0;
+        if (light.positionOrDir.w < 0.5) {
+            L = normalize(-light.positionOrDir.xyz);
+        } else {
+            let toLight = light.positionOrDir.xyz - in.worldPos;
+            let dist = length(toLight);
+            let range = max(light.rangeParams.x, 1e-4);
+            L = toLight / max(dist, 1e-4);
+            attenuation = clamp(1.0 - (dist / range), 0.0, 1.0);
+            attenuation = attenuation * attenuation;
+        }
+
+        let NdotL = max(dot(N, L), 0.0);
+        if (NdotL <= 0.0) {
+            continue;
+        }
+
+        var shadowFactor = 1.0;
+        if (i == shadowCasterIndex) {
+            shadowFactor = sampleShadow(in.worldPos);
+        }
+
+        let H = normalize(V + L);
+        let NDF = distributionGGX(N, H, finalRoughness);
+        let G = geometrySmith(N, V, L, finalRoughness);
+        let F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+        let specular = (NDF * G * F) / max(4.0 * max(dot(N, V), 0.0) * NdotL, 1e-4);
+        let kD = (vec3<f32>(1.0) - F) * (1.0 - finalMetallic);
+        let radiance = light.colorIntensity.rgb * light.colorIntensity.w * attenuation;
+
+        Lo = Lo + (kD * albedo / PI + specular) * radiance * NdotL * shadowFactor;
+    }
+
+    // The vertex's incoming colour is baked static lighting (sectors) or
+    // flat white (dynamic models); occlusion only attenuates this indirect/
+    // baked term, matching how ambient occlusion is conventionally applied
+    // to indirect rather than direct light.
+    let indirect = (in.color.rgb + u.ambient.rgb) * albedo * occlusion;
+    let finalRgb = indirect + Lo + mat.emissive.rgb;
+    return vec4<f32>(finalRgb, alpha);
+}
+)WGSL";
+
+    // Depth-only shadow pass. Dynamic (model/primitive) geometry only --
+    // static sector geometry already carries baked, shadow-aware lighting
+    // and is never rendered into this target. No alpha-mask cutout support
+    // yet: every dynamic mesh casts a solid silhouette, a deliberate scope
+    // cut documented in docs/subsystems/RENDERER.md.
+    const char* const kShaderSourceShadow = R"WGSL(
+struct ShadowUniforms {
+    lightViewProj : mat4x4<f32>,
+};
+@group(0) @binding(0) var<uniform> u : ShadowUniforms;
+
+@vertex
+fn vs_main_shadow(@location(0) pos : vec3<f32>) -> @builtin(position) vec4<f32> {
+    return u.lightViewProj * vec4<f32>(pos, 1.0);
+}
+)WGSL";
+
+    // WGSL has no macro/include facility, so the two platform constants baked
+    // into kShaderSource3D as text placeholders (the light array's fixed
+    // length, and the shadow map's texel size) are spliced in here at
+    // pipeline-creation time from the real PlatformConstants*.h values,
+    // rather than duplicated as literals that could silently drift from them.
+    // Returns a malloc'd, nul-terminated buffer; the caller frees it once the
+    // shader module is created, since wgpu copies the source internally.
+    char* BuildShaderSource3D()
+    {
+        char lightsStr[16];
+        snprintf(lightsStr, sizeof(lightsStr), "%d", GFX_MAX_LIGHTS);
+        char shadowSizeStr[32];
+        snprintf(shadowSizeStr, sizeof(shadowSizeStr), "%d.0", GFX_SHADOW_MAP_SIZE);
+
+        const char* const kLightsToken = "GFX_MAX_LIGHTS_PLACEHOLDER";
+        const char* const kShadowToken = "GFX_SHADOW_MAP_SIZE_PLACEHOLDER";
+        const size_t lightsTokenLen = strlen(kLightsToken);
+        const size_t shadowTokenLen = strlen(kShadowToken);
+
+        const size_t srcLen = strlen(kShaderSource3D);
+        // Generous headroom: a handful of short numeric substitutions can only
+        // grow the string by a few bytes total.
+        const size_t cap = srcLen + 256;
+        char* out = static_cast<char*>(malloc(cap));
+        if (!out)
+            return nullptr;
+
+        size_t w = 0;
+        for (size_t r = 0; r < srcLen && w + 1 < cap;)
+        {
+            if (strncmp(kShaderSource3D + r, kLightsToken, lightsTokenLen) == 0)
+            {
+                const size_t n = strlen(lightsStr);
+                if (w + n >= cap)
+                    break;
+                memcpy(out + w, lightsStr, n);
+                w += n;
+                r += lightsTokenLen;
+            }
+            else if (strncmp(kShaderSource3D + r, kShadowToken, shadowTokenLen) == 0)
+            {
+                const size_t n = strlen(shadowSizeStr);
+                if (w + n >= cap)
+                    break;
+                memcpy(out + w, shadowSizeStr, n);
+                w += n;
+                r += shadowTokenLen;
+            }
+            else
+            {
+                out[w++] = kShaderSource3D[r++];
+            }
+        }
+        out[w] = '\0';
+        return out;
+    }
 
     struct AdapterRequest
     {
@@ -111,14 +414,20 @@ fn fs_main(in : VsOut) -> @location(0) vec4<f32> {
 } // namespace
 
 WebGpuRenderer::WebGpuRenderer(const EngineConfig& config) :
-    m_instance(nullptr), m_adapter(nullptr), m_device(nullptr), m_queue(nullptr), m_surface(nullptr), m_surfaceFormat(WGPUTextureFormat_BGRA8Unorm), m_pipeline3D(nullptr), m_pipeline2D(nullptr),
-    m_uniformLayout(nullptr), m_textureLayout(nullptr), m_bindGroup3D(nullptr), m_bindGroup2D(nullptr), m_uniformBuffer3D(nullptr), m_uniformBuffer2D(nullptr), m_vertexBuffer(nullptr),
-    m_vertexBufferCapacity(0), m_sampler(nullptr), m_samplerNearest(nullptr), m_depthTexture(nullptr), m_depthView(nullptr), m_whiteTexture{}, m_clearColor{0.0f, 0.0f, 0.0f}, m_width(0), m_height(0),
-    m_frameStats{}, m_initialized(false), m_imagePipeline3D(nullptr), m_imageUniformBuffer(nullptr), m_imageUniformBindGroup(nullptr), m_imageVertexBuffer(nullptr), m_imageVertexBufferCapacity(0),
+    m_instance(nullptr), m_adapter(nullptr), m_device(nullptr), m_queue(nullptr), m_surface(nullptr), m_surfaceFormat(WGPUTextureFormat_BGRA8Unorm), m_pipeline2D(nullptr), m_uniformLayout(nullptr),
+    m_textureLayout(nullptr), m_bindGroup2D(nullptr), m_uniformBuffer2D(nullptr), m_sampler(nullptr), m_samplerNearest(nullptr), m_pipeline3D(nullptr), m_frameLayout3D(nullptr),
+    m_materialLayout3D(nullptr), m_materialTexLayout3D(nullptr), m_frameBindGroup3D(nullptr), m_materialBindGroup3D(nullptr), m_frameUniformBuffer3D(nullptr), m_materialUniformBuffer3D(nullptr),
+    m_materialGroupCount(0), m_shadowPipeline(nullptr), m_shadowPassLayout(nullptr), m_shadowPassBindGroup(nullptr), m_shadowPassUniformBuffer(nullptr), m_shadowMapTexture(nullptr),
+    m_shadowMapView(nullptr), m_shadowSamplerCompare(nullptr), m_shadowActive(false), m_shadowCasterIndex(-1), m_vertexBuffer(nullptr), m_vertexBufferCapacity(0), m_depthTexture(nullptr),
+    m_depthView(nullptr), m_whiteTexture{},
+    m_defaultNormalTexture(nullptr), m_defaultNormalView(nullptr), m_defaultOrmTexture(nullptr), m_defaultOrmView(nullptr), m_clearColor{0.0f, 0.0f, 0.0f}, m_width(0), m_height(0), m_frameStats{},
+    m_initialized(false), m_imagePipeline3D(nullptr), m_imageUniformBuffer(nullptr), m_imageUniformBindGroup(nullptr), m_imageVertexBuffer(nullptr), m_imageVertexBufferCapacity(0),
     m_imageColorTexture(nullptr), m_imageColorView(nullptr), m_imageDepthTexture(nullptr), m_imageDepthView(nullptr), m_imageWidth(0), m_imageHeight(0), m_imageTextureSlot(-1)
 {
     UNUSED_VAR(config);
     memset(m_textures, 0, sizeof(m_textures));
+    memset(m_materialGroups, 0, sizeof(m_materialGroups));
+    memset(m_lastLightViewProj, 0, sizeof(m_lastLightViewProj));
 
     Platform* platform = Engine_GetPlatform();
     platform->GetFramebufferSize(&m_width, &m_height);
@@ -140,6 +449,16 @@ WebGpuRenderer::WebGpuRenderer(const EngineConfig& config) :
     if (!CreatePipelines())
         return;
     if (!CreateWhiteTexture())
+        return;
+    if (!CreateDefaultMaterialTextures())
+        return;
+    // The shadow map (and its comparison sampler) must exist before
+    // CreatePbrPipeline, which binds them into the main pass's group 0.
+    if (!EnsureShadowMap())
+        return;
+    if (!CreatePbrPipeline())
+        return;
+    if (!CreateShadowPipeline())
         return;
     if (!ConfigureSurface(m_width, m_height))
         return;
@@ -261,17 +580,17 @@ bool WebGpuRenderer::CreatePipelines()
     WGPUShaderSourceWGSL wgsl;
     memset(&wgsl, 0, sizeof(wgsl));
     wgsl.chain.sType = WGPUSType_ShaderSourceWGSL;
-    wgsl.code = Str(kShaderSource);
+    wgsl.code = Str(kShaderSourceFlat);
 
     WGPUShaderModuleDescriptor shaderDesc;
     memset(&shaderDesc, 0, sizeof(shaderDesc));
     shaderDesc.nextInChain = &wgsl.chain;
-    shaderDesc.label = Str("engine-shader");
+    shaderDesc.label = Str("engine-shader-flat");
 
     WGPUShaderModule shader = wgpuDeviceCreateShaderModule(m_device, &shaderDesc);
     if (!shader)
     {
-        Engine_LogError("WebGpu: shader module creation failed");
+        Engine_LogError("WebGpu: flat shader module creation failed");
         return false;
     }
 
@@ -327,12 +646,8 @@ bool WebGpuRenderer::CreatePipelines()
     memset(&uniformDesc, 0, sizeof(uniformDesc));
     uniformDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     uniformDesc.size = sizeof(Uniforms);
-    m_uniformBuffer3D = wgpuDeviceCreateBuffer(m_device, &uniformDesc);
     m_uniformBuffer2D = wgpuDeviceCreateBuffer(m_device, &uniformDesc);
 
-    // Two bind groups rather than one rebound mid-pass: the 3D and 2D passes want
-    // different matrices, and swapping the group is cheaper than a buffer write
-    // between them.
     WGPUBindGroupEntry bindEntry;
     memset(&bindEntry, 0, sizeof(bindEntry));
     bindEntry.binding = 0;
@@ -344,8 +659,6 @@ bool WebGpuRenderer::CreatePipelines()
     bindDesc.entryCount = 1;
     bindDesc.entries = &bindEntry;
 
-    bindEntry.buffer = m_uniformBuffer3D;
-    m_bindGroup3D = wgpuDeviceCreateBindGroup(m_device, &bindDesc);
     bindEntry.buffer = m_uniformBuffer2D;
     m_bindGroup2D = wgpuDeviceCreateBindGroup(m_device, &bindDesc);
 
@@ -401,7 +714,6 @@ bool WebGpuRenderer::CreatePipelines()
 
     WGPURenderPipelineDescriptor pipelineDesc;
     memset(&pipelineDesc, 0, sizeof(pipelineDesc));
-    pipelineDesc.label = Str("engine-3d");
     pipelineDesc.layout = pipelineLayout;
     pipelineDesc.vertex.module = shader;
     pipelineDesc.vertex.entryPoint = Str("vs_main");
@@ -414,14 +726,10 @@ bool WebGpuRenderer::CreatePipelines()
     pipelineDesc.primitive.cullMode = WGPUCullMode_None;
     pipelineDesc.multisample.count = 1;
     pipelineDesc.multisample.mask = 0xFFFFFFFFu;
-    pipelineDesc.depthStencil = &depthState;
-    pipelineDesc.fragment = &fragment;
 
-    m_pipeline3D = wgpuDeviceCreateRenderPipeline(m_device, &pipelineDesc);
-
-    // 2D differs in depth and in blending: HUD quads are submitted in draw order
-    // and must not be discarded by Z, and the interface carries per-quad alpha.
-    // 3D is left unblended so world rendering is unaffected.
+    // 2D differs from the image-preview pipeline below in depth and in
+    // blending: HUD quads are submitted in draw order and must not be
+    // discarded by Z, and the interface carries per-quad alpha.
     WGPUDepthStencilState depth2D = depthState;
     depth2D.depthWriteEnabled = WGPUOptionalBool_False;
     depth2D.depthCompare = WGPUCompareFunction_Always;
@@ -446,45 +754,35 @@ bool WebGpuRenderer::CreatePipelines()
     pipelineDesc.fragment = &fragment2D;
     m_pipeline2D = wgpuDeviceCreateRenderPipeline(m_device, &pipelineDesc);
 
-    if (!m_pipeline3D || !m_pipeline2D)
+    if (!m_pipeline2D)
     {
-        Engine_LogError("WebGpu: render pipeline creation failed");
+        Engine_LogError("WebGpu: 2D pipeline creation failed");
         return false;
     }
 
-    // RenderToImage3D's scratch target is RGBA8Unorm, matching UploadTexture's
-    // format so it samples with the same shader/bind-group layout as any
-    // uploaded texture with no special-casing. m_surfaceFormat is usually
-    // BGRA8Unorm on this platform, which a WGPURenderPipeline bakes into its
-    // colour-target state -- so a second pipeline variant is needed only when
-    // the two genuinely differ; otherwise the main one already matches.
-    if (m_surfaceFormat == WGPUTextureFormat_RGBA8Unorm)
-    {
-        m_imagePipeline3D = m_pipeline3D;
-    }
-    else
-    {
-        WGPUColorTargetState imageColorTarget;
-        memset(&imageColorTarget, 0, sizeof(imageColorTarget));
-        imageColorTarget.format = WGPUTextureFormat_RGBA8Unorm;
-        imageColorTarget.writeMask = WGPUColorWriteMask_All;
+    // RenderToImage3D's scratch target is always RGBA8Unorm regardless of the
+    // swapchain's own surface format, so its pipeline is its own dedicated
+    // object rather than a conditional alias of another one.
+    WGPUColorTargetState imageColorTarget;
+    memset(&imageColorTarget, 0, sizeof(imageColorTarget));
+    imageColorTarget.format = WGPUTextureFormat_RGBA8Unorm;
+    imageColorTarget.writeMask = WGPUColorWriteMask_All;
 
-        WGPUFragmentState imageFragment = fragment;
-        imageFragment.targets = &imageColorTarget;
+    WGPUFragmentState imageFragment = fragment;
+    imageFragment.targets = &imageColorTarget;
 
-        pipelineDesc.label = Str("engine-3d-image");
-        pipelineDesc.depthStencil = &depthState;
-        pipelineDesc.fragment = &imageFragment;
-        m_imagePipeline3D = wgpuDeviceCreateRenderPipeline(m_device, &pipelineDesc);
-        if (!m_imagePipeline3D)
-        {
-            Engine_LogError("WebGpu: image-target render pipeline creation failed");
-            return false;
-        }
+    pipelineDesc.label = Str("engine-3d-image");
+    pipelineDesc.depthStencil = &depthState;
+    pipelineDesc.fragment = &imageFragment;
+    m_imagePipeline3D = wgpuDeviceCreateRenderPipeline(m_device, &pipelineDesc);
+    if (!m_imagePipeline3D)
+    {
+        Engine_LogError("WebGpu: image-target render pipeline creation failed");
+        return false;
     }
 
     // Dedicated uniform buffer + bind group for RenderToImage3D -- see the
-    // member comment in WebGpu.h for why this does not reuse m_uniformBuffer3D.
+    // member comment in WebGpu.h for why this does not reuse m_uniformBuffer2D.
     m_imageUniformBuffer = wgpuDeviceCreateBuffer(m_device, &uniformDesc);
     bindEntry.buffer = m_imageUniformBuffer;
     m_imageUniformBindGroup = wgpuDeviceCreateBindGroup(m_device, &bindDesc);
@@ -546,6 +844,439 @@ bool WebGpuRenderer::CreateWhiteTexture()
     m_whiteTexture.bindGroup = wgpuDeviceCreateBindGroup(m_device, &bindDesc);
 
     return m_whiteTexture.bindGroup != nullptr;
+}
+
+bool WebGpuRenderer::CreateDefaultMaterialTextures()
+{
+    // Flat tangent-space normal (encoded 128,128,255) and a neutral ORM
+    // (occlusion=1, roughness=1, metallic=0) -- what a material with no
+    // normal/ORM map of its own samples, via MaterialGroupFor's fallback.
+    WGPUTextureDescriptor desc;
+    memset(&desc, 0, sizeof(desc));
+    desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    desc.dimension = WGPUTextureDimension_2D;
+    desc.size.width = 1;
+    desc.size.height = 1;
+    desc.size.depthOrArrayLayers = 1;
+    desc.format = WGPUTextureFormat_RGBA8Unorm;
+    desc.mipLevelCount = 1;
+    desc.sampleCount = 1;
+
+    WGPUTexelCopyBufferLayout layout;
+    memset(&layout, 0, sizeof(layout));
+    layout.bytesPerRow = 4;
+    layout.rowsPerImage = 1;
+    WGPUExtent3D extent = {1, 1, 1};
+
+    desc.label = Str("engine-default-normal");
+    m_defaultNormalTexture = wgpuDeviceCreateTexture(m_device, &desc);
+    if (!m_defaultNormalTexture)
+        return false;
+    const uint8_t flatNormal[4] = {128, 128, 255, 255};
+    WGPUTexelCopyTextureInfo normalDst;
+    memset(&normalDst, 0, sizeof(normalDst));
+    normalDst.texture = m_defaultNormalTexture;
+    normalDst.aspect = WGPUTextureAspect_All;
+    wgpuQueueWriteTexture(m_queue, &normalDst, flatNormal, sizeof(flatNormal), &layout, &extent);
+    m_defaultNormalView = wgpuTextureCreateView(m_defaultNormalTexture, nullptr);
+
+    desc.label = Str("engine-default-orm");
+    m_defaultOrmTexture = wgpuDeviceCreateTexture(m_device, &desc);
+    if (!m_defaultOrmTexture)
+        return false;
+    const uint8_t neutralOrm[4] = {255, 255, 0, 255};
+    WGPUTexelCopyTextureInfo ormDst;
+    memset(&ormDst, 0, sizeof(ormDst));
+    ormDst.texture = m_defaultOrmTexture;
+    ormDst.aspect = WGPUTextureAspect_All;
+    wgpuQueueWriteTexture(m_queue, &ormDst, neutralOrm, sizeof(neutralOrm), &layout, &extent);
+    m_defaultOrmView = wgpuTextureCreateView(m_defaultOrmTexture, nullptr);
+
+    return m_defaultNormalView != nullptr && m_defaultOrmView != nullptr;
+}
+
+bool WebGpuRenderer::EnsureShadowMap()
+{
+    if (m_shadowMapTexture)
+        return true;
+
+    WGPUSamplerDescriptor compareDesc;
+    memset(&compareDesc, 0, sizeof(compareDesc));
+    compareDesc.addressModeU = WGPUAddressMode_ClampToEdge;
+    compareDesc.addressModeV = WGPUAddressMode_ClampToEdge;
+    compareDesc.addressModeW = WGPUAddressMode_ClampToEdge;
+    compareDesc.magFilter = WGPUFilterMode_Linear;
+    compareDesc.minFilter = WGPUFilterMode_Linear;
+    compareDesc.maxAnisotropy = 1;
+    // <=: a fragment at exactly the occluder's own depth is lit, not shadowed.
+    compareDesc.compare = WGPUCompareFunction_LessEqual;
+    m_shadowSamplerCompare = wgpuDeviceCreateSampler(m_device, &compareDesc);
+    if (!m_shadowSamplerCompare)
+    {
+        Engine_LogError("WebGpu: shadow comparison sampler creation failed");
+        return false;
+    }
+
+    WGPUTextureDescriptor desc;
+    memset(&desc, 0, sizeof(desc));
+    desc.label = Str("engine-shadow-map");
+    desc.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+    desc.dimension = WGPUTextureDimension_2D;
+    desc.size.width = GFX_SHADOW_MAP_SIZE;
+    desc.size.height = GFX_SHADOW_MAP_SIZE;
+    desc.size.depthOrArrayLayers = 1;
+    desc.format = WGPUTextureFormat_Depth32Float;
+    desc.mipLevelCount = 1;
+    desc.sampleCount = 1;
+    m_shadowMapTexture = wgpuDeviceCreateTexture(m_device, &desc);
+    if (!m_shadowMapTexture)
+    {
+        Engine_LogError("WebGpu: shadow map texture creation failed");
+        return false;
+    }
+    m_shadowMapView = wgpuTextureCreateView(m_shadowMapTexture, nullptr);
+    return m_shadowMapView != nullptr;
+}
+
+bool WebGpuRenderer::CreatePbrPipeline()
+{
+    char* source3D = BuildShaderSource3D();
+    if (!source3D)
+    {
+        Engine_LogError("WebGpu: out of memory building the PBR shader source");
+        return false;
+    }
+
+    WGPUShaderSourceWGSL wgsl;
+    memset(&wgsl, 0, sizeof(wgsl));
+    wgsl.chain.sType = WGPUSType_ShaderSourceWGSL;
+    wgsl.code = Str(source3D);
+
+    WGPUShaderModuleDescriptor shaderDesc;
+    memset(&shaderDesc, 0, sizeof(shaderDesc));
+    shaderDesc.nextInChain = &wgsl.chain;
+    shaderDesc.label = Str("engine-shader-pbr");
+
+    WGPUShaderModule shader = wgpuDeviceCreateShaderModule(m_device, &shaderDesc);
+    free(source3D);
+    if (!shader)
+    {
+        Engine_LogError("WebGpu: PBR shader module creation failed");
+        return false;
+    }
+
+    // --- group 0: frame uniforms (camera, lights, ambient) + shadow map -----
+    WGPUBindGroupLayoutEntry frameEntries[3];
+    memset(frameEntries, 0, sizeof(frameEntries));
+    frameEntries[0].binding = 0;
+    frameEntries[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+    frameEntries[0].buffer.type = WGPUBufferBindingType_Uniform;
+    frameEntries[0].buffer.minBindingSize = sizeof(FrameUniforms3D);
+    frameEntries[1].binding = 1;
+    frameEntries[1].visibility = WGPUShaderStage_Fragment;
+    frameEntries[1].texture.sampleType = WGPUTextureSampleType_Depth;
+    frameEntries[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+    frameEntries[2].binding = 2;
+    frameEntries[2].visibility = WGPUShaderStage_Fragment;
+    frameEntries[2].sampler.type = WGPUSamplerBindingType_Comparison;
+
+    WGPUBindGroupLayoutDescriptor frameLayoutDesc;
+    memset(&frameLayoutDesc, 0, sizeof(frameLayoutDesc));
+    frameLayoutDesc.entryCount = 3;
+    frameLayoutDesc.entries = frameEntries;
+    m_frameLayout3D = wgpuDeviceCreateBindGroupLayout(m_device, &frameLayoutDesc);
+
+    // --- group 1: one per-run material, selected by a dynamic offset --------
+    WGPUBindGroupLayoutEntry materialEntry;
+    memset(&materialEntry, 0, sizeof(materialEntry));
+    materialEntry.binding = 0;
+    materialEntry.visibility = WGPUShaderStage_Fragment;
+    materialEntry.buffer.type = WGPUBufferBindingType_Uniform;
+    materialEntry.buffer.hasDynamicOffset = true;
+    materialEntry.buffer.minBindingSize = sizeof(MaterialUniformGpu);
+
+    WGPUBindGroupLayoutDescriptor materialLayoutDesc;
+    memset(&materialLayoutDesc, 0, sizeof(materialLayoutDesc));
+    materialLayoutDesc.entryCount = 1;
+    materialLayoutDesc.entries = &materialEntry;
+    m_materialLayout3D = wgpuDeviceCreateBindGroupLayout(m_device, &materialLayoutDesc);
+
+    // --- group 2: albedo/normal/orm + one shared filtering sampler ----------
+    WGPUBindGroupLayoutEntry texEntries[4];
+    memset(texEntries, 0, sizeof(texEntries));
+    for (uint32_t i = 0; i < 3; ++i)
+    {
+        texEntries[i].binding = i;
+        texEntries[i].visibility = WGPUShaderStage_Fragment;
+        texEntries[i].texture.sampleType = WGPUTextureSampleType_Float;
+        texEntries[i].texture.viewDimension = WGPUTextureViewDimension_2D;
+    }
+    texEntries[3].binding = 3;
+    texEntries[3].visibility = WGPUShaderStage_Fragment;
+    texEntries[3].sampler.type = WGPUSamplerBindingType_Filtering;
+
+    WGPUBindGroupLayoutDescriptor materialTexLayoutDesc;
+    memset(&materialTexLayoutDesc, 0, sizeof(materialTexLayoutDesc));
+    materialTexLayoutDesc.entryCount = 4;
+    materialTexLayoutDesc.entries = texEntries;
+    m_materialTexLayout3D = wgpuDeviceCreateBindGroupLayout(m_device, &materialTexLayoutDesc);
+
+    if (!m_frameLayout3D || !m_materialLayout3D || !m_materialTexLayout3D)
+    {
+        Engine_LogError("WebGpu: PBR bind group layout creation failed");
+        return false;
+    }
+
+    WGPUBufferDescriptor frameBufDesc;
+    memset(&frameBufDesc, 0, sizeof(frameBufDesc));
+    frameBufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    frameBufDesc.size = sizeof(FrameUniforms3D);
+    m_frameUniformBuffer3D = wgpuDeviceCreateBuffer(m_device, &frameBufDesc);
+
+    WGPUBufferDescriptor materialBufDesc;
+    memset(&materialBufDesc, 0, sizeof(materialBufDesc));
+    materialBufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    materialBufDesc.size = static_cast<uint64_t>(GFX_MAX_DRAW_RUNS) * WGPU_MATERIAL_UNIFORM_STRIDE;
+    m_materialUniformBuffer3D = wgpuDeviceCreateBuffer(m_device, &materialBufDesc);
+
+    if (!m_frameUniformBuffer3D || !m_materialUniformBuffer3D)
+    {
+        Engine_LogError("WebGpu: PBR uniform buffer creation failed");
+        return false;
+    }
+
+    WGPUBindGroupEntry frameBindEntries[3];
+    memset(frameBindEntries, 0, sizeof(frameBindEntries));
+    frameBindEntries[0].binding = 0;
+    frameBindEntries[0].buffer = m_frameUniformBuffer3D;
+    frameBindEntries[0].size = sizeof(FrameUniforms3D);
+    frameBindEntries[1].binding = 1;
+    frameBindEntries[1].textureView = m_shadowMapView;
+    frameBindEntries[2].binding = 2;
+    frameBindEntries[2].sampler = m_shadowSamplerCompare;
+
+    WGPUBindGroupDescriptor frameBindDesc;
+    memset(&frameBindDesc, 0, sizeof(frameBindDesc));
+    frameBindDesc.layout = m_frameLayout3D;
+    frameBindDesc.entryCount = 3;
+    frameBindDesc.entries = frameBindEntries;
+    m_frameBindGroup3D = wgpuDeviceCreateBindGroup(m_device, &frameBindDesc);
+
+    WGPUBindGroupEntry materialBindEntry;
+    memset(&materialBindEntry, 0, sizeof(materialBindEntry));
+    materialBindEntry.binding = 0;
+    materialBindEntry.buffer = m_materialUniformBuffer3D;
+    materialBindEntry.size = sizeof(MaterialUniformGpu);
+
+    WGPUBindGroupDescriptor materialBindDesc;
+    memset(&materialBindDesc, 0, sizeof(materialBindDesc));
+    materialBindDesc.layout = m_materialLayout3D;
+    materialBindDesc.entryCount = 1;
+    materialBindDesc.entries = &materialBindEntry;
+    m_materialBindGroup3D = wgpuDeviceCreateBindGroup(m_device, &materialBindDesc);
+
+    if (!m_frameBindGroup3D || !m_materialBindGroup3D)
+    {
+        Engine_LogError("WebGpu: PBR bind group creation failed");
+        return false;
+    }
+
+    WGPUBindGroupLayout layouts[3] = {m_frameLayout3D, m_materialLayout3D, m_materialTexLayout3D};
+    WGPUPipelineLayoutDescriptor pipelineLayoutDesc;
+    memset(&pipelineLayoutDesc, 0, sizeof(pipelineLayoutDesc));
+    pipelineLayoutDesc.bindGroupLayoutCount = 3;
+    pipelineLayoutDesc.bindGroupLayouts = layouts;
+    WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(m_device, &pipelineLayoutDesc);
+
+    WGPUVertexAttribute attributes[4];
+    memset(attributes, 0, sizeof(attributes));
+    attributes[0].format = WGPUVertexFormat_Float32x3; // position
+    attributes[0].offset = 0;
+    attributes[0].shaderLocation = 0;
+    attributes[1].format = WGPUVertexFormat_Float32x3; // normal
+    attributes[1].offset = sizeof(float) * 3;
+    attributes[1].shaderLocation = 1;
+    attributes[2].format = WGPUVertexFormat_Float32x2; // uv
+    attributes[2].offset = sizeof(float) * 6;
+    attributes[2].shaderLocation = 2;
+    attributes[3].format = WGPUVertexFormat_Float32x4; // colour
+    attributes[3].offset = sizeof(float) * 8;
+    attributes[3].shaderLocation = 3;
+
+    WGPUVertexBufferLayout vertexLayout;
+    memset(&vertexLayout, 0, sizeof(vertexLayout));
+    vertexLayout.arrayStride = sizeof(StagedGeometry::Vertex);
+    vertexLayout.stepMode = WGPUVertexStepMode_Vertex;
+    vertexLayout.attributeCount = 4;
+    vertexLayout.attributes = attributes;
+
+    WGPUColorTargetState colorTarget;
+    memset(&colorTarget, 0, sizeof(colorTarget));
+    colorTarget.format = m_surfaceFormat;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fragment;
+    memset(&fragment, 0, sizeof(fragment));
+    fragment.module = shader;
+    fragment.entryPoint = Str("fs_main_3d");
+    fragment.targetCount = 1;
+    fragment.targets = &colorTarget;
+
+    WGPUDepthStencilState depthState;
+    memset(&depthState, 0, sizeof(depthState));
+    depthState.format = WGPUTextureFormat_Depth24Plus;
+    depthState.depthWriteEnabled = WGPUOptionalBool_True;
+    depthState.depthCompare = WGPUCompareFunction_Less;
+    depthState.stencilFront.compare = WGPUCompareFunction_Always;
+    depthState.stencilBack.compare = WGPUCompareFunction_Always;
+
+    WGPURenderPipelineDescriptor pipelineDesc;
+    memset(&pipelineDesc, 0, sizeof(pipelineDesc));
+    pipelineDesc.label = Str("engine-3d-pbr");
+    pipelineDesc.layout = pipelineLayout;
+    pipelineDesc.vertex.module = shader;
+    pipelineDesc.vertex.entryPoint = Str("vs_main_3d");
+    pipelineDesc.vertex.bufferCount = 1;
+    pipelineDesc.vertex.buffers = &vertexLayout;
+    pipelineDesc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pipelineDesc.primitive.frontFace = WGPUFrontFace_CCW;
+    // No back-face culling: the baked level and model geometry does not carry a
+    // guaranteed winding, and dropping triangles is worse than drawing extra.
+    pipelineDesc.primitive.cullMode = WGPUCullMode_None;
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = 0xFFFFFFFFu;
+    pipelineDesc.depthStencil = &depthState;
+    pipelineDesc.fragment = &fragment;
+
+    m_pipeline3D = wgpuDeviceCreateRenderPipeline(m_device, &pipelineDesc);
+    if (!m_pipeline3D)
+    {
+        Engine_LogError("WebGpu: PBR pipeline creation failed");
+        return false;
+    }
+
+    return true;
+}
+
+bool WebGpuRenderer::CreateShadowPipeline()
+{
+    WGPUShaderSourceWGSL wgsl;
+    memset(&wgsl, 0, sizeof(wgsl));
+    wgsl.chain.sType = WGPUSType_ShaderSourceWGSL;
+    wgsl.code = Str(kShaderSourceShadow);
+
+    WGPUShaderModuleDescriptor shaderDesc;
+    memset(&shaderDesc, 0, sizeof(shaderDesc));
+    shaderDesc.nextInChain = &wgsl.chain;
+    shaderDesc.label = Str("engine-shader-shadow");
+
+    WGPUShaderModule shader = wgpuDeviceCreateShaderModule(m_device, &shaderDesc);
+    if (!shader)
+    {
+        Engine_LogError("WebGpu: shadow shader module creation failed");
+        return false;
+    }
+
+    WGPUBindGroupLayoutEntry uniformEntry;
+    memset(&uniformEntry, 0, sizeof(uniformEntry));
+    uniformEntry.binding = 0;
+    uniformEntry.visibility = WGPUShaderStage_Vertex;
+    uniformEntry.buffer.type = WGPUBufferBindingType_Uniform;
+    uniformEntry.buffer.minBindingSize = sizeof(ShadowUniforms);
+
+    WGPUBindGroupLayoutDescriptor layoutDesc;
+    memset(&layoutDesc, 0, sizeof(layoutDesc));
+    layoutDesc.entryCount = 1;
+    layoutDesc.entries = &uniformEntry;
+    m_shadowPassLayout = wgpuDeviceCreateBindGroupLayout(m_device, &layoutDesc);
+    if (!m_shadowPassLayout)
+    {
+        Engine_LogError("WebGpu: shadow bind group layout creation failed");
+        return false;
+    }
+
+    WGPUBufferDescriptor bufDesc;
+    memset(&bufDesc, 0, sizeof(bufDesc));
+    bufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    bufDesc.size = sizeof(ShadowUniforms);
+    m_shadowPassUniformBuffer = wgpuDeviceCreateBuffer(m_device, &bufDesc);
+    if (!m_shadowPassUniformBuffer)
+    {
+        Engine_LogError("WebGpu: shadow uniform buffer creation failed");
+        return false;
+    }
+
+    WGPUBindGroupEntry bindEntry;
+    memset(&bindEntry, 0, sizeof(bindEntry));
+    bindEntry.binding = 0;
+    bindEntry.buffer = m_shadowPassUniformBuffer;
+    bindEntry.size = sizeof(ShadowUniforms);
+
+    WGPUBindGroupDescriptor bindDesc;
+    memset(&bindDesc, 0, sizeof(bindDesc));
+    bindDesc.layout = m_shadowPassLayout;
+    bindDesc.entryCount = 1;
+    bindDesc.entries = &bindEntry;
+    m_shadowPassBindGroup = wgpuDeviceCreateBindGroup(m_device, &bindDesc);
+    if (!m_shadowPassBindGroup)
+    {
+        Engine_LogError("WebGpu: shadow bind group creation failed");
+        return false;
+    }
+
+    WGPUPipelineLayoutDescriptor pipelineLayoutDesc;
+    memset(&pipelineLayoutDesc, 0, sizeof(pipelineLayoutDesc));
+    pipelineLayoutDesc.bindGroupLayoutCount = 1;
+    pipelineLayoutDesc.bindGroupLayouts = &m_shadowPassLayout;
+    WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(m_device, &pipelineLayoutDesc);
+
+    // Position only: the shadow pass ignores normal/uv/colour, but the vertex
+    // buffer is shared with the main pass, so the layout still declares the
+    // full stride and simply does not bind the unused attributes.
+    WGPUVertexAttribute attribute;
+    memset(&attribute, 0, sizeof(attribute));
+    attribute.format = WGPUVertexFormat_Float32x3;
+    attribute.offset = 0;
+    attribute.shaderLocation = 0;
+
+    WGPUVertexBufferLayout vertexLayout;
+    memset(&vertexLayout, 0, sizeof(vertexLayout));
+    vertexLayout.arrayStride = sizeof(StagedGeometry::Vertex);
+    vertexLayout.stepMode = WGPUVertexStepMode_Vertex;
+    vertexLayout.attributeCount = 1;
+    vertexLayout.attributes = &attribute;
+
+    WGPUDepthStencilState depthState;
+    memset(&depthState, 0, sizeof(depthState));
+    depthState.format = WGPUTextureFormat_Depth32Float;
+    depthState.depthWriteEnabled = WGPUOptionalBool_True;
+    depthState.depthCompare = WGPUCompareFunction_Less;
+    depthState.stencilFront.compare = WGPUCompareFunction_Always;
+    depthState.stencilBack.compare = WGPUCompareFunction_Always;
+
+    WGPURenderPipelineDescriptor pipelineDesc;
+    memset(&pipelineDesc, 0, sizeof(pipelineDesc));
+    pipelineDesc.label = Str("engine-shadow");
+    pipelineDesc.layout = pipelineLayout;
+    pipelineDesc.vertex.module = shader;
+    pipelineDesc.vertex.entryPoint = Str("vs_main_shadow");
+    pipelineDesc.vertex.bufferCount = 1;
+    pipelineDesc.vertex.buffers = &vertexLayout;
+    pipelineDesc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pipelineDesc.primitive.frontFace = WGPUFrontFace_CCW;
+    pipelineDesc.primitive.cullMode = WGPUCullMode_None;
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = 0xFFFFFFFFu;
+    pipelineDesc.depthStencil = &depthState;
+    pipelineDesc.fragment = nullptr; // depth-only: no colour target
+
+    m_shadowPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pipelineDesc);
+    if (!m_shadowPipeline)
+    {
+        Engine_LogError("WebGpu: shadow pipeline creation failed");
+        return false;
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -671,6 +1402,12 @@ void WebGpuRenderer::ReleaseTexture(uint32_t handle)
         wgpuTextureRelease(e.texture);
     }
     memset(&e, 0, sizeof(e));
+
+    // Any cached PBR material group naming this handle now holds a view onto
+    // a destroyed texture -- WebGPU invalidates it regardless of the bind
+    // group's own reference, so the entry must be dropped eagerly, not left
+    // to go stale.
+    PurgeMaterialGroupsReferencing(handle);
 }
 
 WGPUBindGroup WebGpuRenderer::BindGroupFor(uint32_t handle) const
@@ -678,6 +1415,120 @@ WGPUBindGroup WebGpuRenderer::BindGroupFor(uint32_t handle) const
     if (handle == 0 || handle > WGPU_MAX_TEXTURES)
         return m_whiteTexture.bindGroup;
     return m_textures[handle - 1u].bindGroup ? m_textures[handle - 1u].bindGroup : m_whiteTexture.bindGroup;
+}
+
+WGPUBindGroup WebGpuRenderer::MaterialGroupFor(uint32_t albedo, uint32_t normal, uint32_t orm)
+{
+    for (uint32_t i = 0; i < m_materialGroupCount; ++i)
+    {
+        const MaterialGroupEntry& e = m_materialGroups[i];
+        if (e.albedo == albedo && e.normal == normal && e.orm == orm)
+            return e.group;
+    }
+
+    if (m_materialGroupCount >= WGPU_MAX_MATERIAL_GROUPS)
+    {
+        // Refuse whole rather than exceed the fixed cache: reuse whatever
+        // group is already cached at slot 0 instead of creating a 257th
+        // object. Visually wrong for this one run, but the material-tex
+        // layout still matches (unlike m_whiteTexture.bindGroup, which is
+        // a different, smaller layout), so the draw itself stays valid.
+        Engine_LogError("WebGpuRenderer: material bind group cache full (%d)", WGPU_MAX_MATERIAL_GROUPS);
+        return m_materialGroups[0].group;
+    }
+
+    WGPUTextureView albedoView = (albedo == 0 || albedo > WGPU_MAX_TEXTURES) ? m_whiteTexture.view : (m_textures[albedo - 1u].view ? m_textures[albedo - 1u].view : m_whiteTexture.view);
+    WGPUTextureView normalView = (normal == 0 || normal > WGPU_MAX_TEXTURES) ? m_defaultNormalView : (m_textures[normal - 1u].view ? m_textures[normal - 1u].view : m_defaultNormalView);
+    WGPUTextureView ormView = (orm == 0 || orm > WGPU_MAX_TEXTURES) ? m_defaultOrmView : (m_textures[orm - 1u].view ? m_textures[orm - 1u].view : m_defaultOrmView);
+
+    WGPUBindGroupEntry entries[4];
+    memset(entries, 0, sizeof(entries));
+    entries[0].binding = 0;
+    entries[0].textureView = albedoView;
+    entries[1].binding = 1;
+    entries[1].textureView = normalView;
+    entries[2].binding = 2;
+    entries[2].textureView = ormView;
+    entries[3].binding = 3;
+    entries[3].sampler = m_sampler;
+
+    WGPUBindGroupDescriptor bindDesc;
+    memset(&bindDesc, 0, sizeof(bindDesc));
+    bindDesc.layout = m_materialTexLayout3D;
+    bindDesc.entryCount = 4;
+    bindDesc.entries = entries;
+
+    WGPUBindGroup group = wgpuDeviceCreateBindGroup(m_device, &bindDesc);
+    if (!group)
+    {
+        Engine_LogError("WebGpuRenderer: material bind group creation failed");
+        return m_whiteTexture.bindGroup;
+    }
+
+    MaterialGroupEntry& slot = m_materialGroups[m_materialGroupCount++];
+    slot.albedo = albedo;
+    slot.normal = normal;
+    slot.orm = orm;
+    slot.group = group;
+    return group;
+}
+
+void WebGpuRenderer::PurgeMaterialGroupsReferencing(uint32_t handle)
+{
+    for (uint32_t i = 0; i < m_materialGroupCount;)
+    {
+        MaterialGroupEntry& e = m_materialGroups[i];
+        if (e.albedo != handle && e.normal != handle && e.orm != handle)
+        {
+            ++i;
+            continue;
+        }
+        if (e.group)
+            wgpuBindGroupRelease(e.group);
+        // Swap-erase: draw-run order never depends on this table's order.
+        m_materialGroups[i] = m_materialGroups[m_materialGroupCount - 1u];
+        --m_materialGroupCount;
+    }
+}
+
+void WebGpuRenderer::UploadMaterialUniforms(const StagedGeometry::DrawRun* runs, uint32_t count)
+{
+    if (count == 0)
+        return;
+    if (count > GFX_MAX_DRAW_RUNS)
+        count = GFX_MAX_DRAW_RUNS; // BuildFrame already enforces this cap; defensive only
+
+    // One CPU-side scratch buffer, written in one call: wgpuQueueWriteBuffer
+    // cannot be interleaved with draw calls inside an already-open render
+    // pass, so every run's material data for this frame is uploaded here,
+    // before the pass begins, and selected per-draw by a dynamic offset.
+    static_assert(sizeof(MaterialUniformGpu) <= WGPU_MATERIAL_UNIFORM_STRIDE, "material uniform stride too small");
+    uint8_t* scratch = static_cast<uint8_t*>(malloc(static_cast<size_t>(count) * WGPU_MATERIAL_UNIFORM_STRIDE));
+    if (!scratch)
+        return;
+
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        MaterialUniformGpu gpu;
+        memset(&gpu, 0, sizeof(gpu));
+        const StagedGeometry::RunMaterial& m = runs[i].material;
+        gpu.baseColor[0] = m.baseColor[0];
+        gpu.baseColor[1] = m.baseColor[1];
+        gpu.baseColor[2] = m.baseColor[2];
+        gpu.baseColor[3] = m.baseColor[3];
+        gpu.emissive[0] = m.emissive[0];
+        gpu.emissive[1] = m.emissive[1];
+        gpu.emissive[2] = m.emissive[2];
+        gpu.metallicRoughnessNormalAlpha[0] = m.metallic;
+        gpu.metallicRoughnessNormalAlpha[1] = m.roughness;
+        gpu.metallicRoughnessNormalAlpha[2] = m.normalScale;
+        gpu.metallicRoughnessNormalAlpha[3] = m.alphaCutoff;
+        gpu.matFlags[0] = (m.flags & MATERIAL_FLAG_ALPHA_MASK) ? 1.0f : 0.0f;
+        memcpy(scratch + static_cast<size_t>(i) * WGPU_MATERIAL_UNIFORM_STRIDE, &gpu, sizeof(gpu));
+    }
+
+    wgpuQueueWriteBuffer(m_queue, m_materialUniformBuffer3D, 0, scratch, static_cast<size_t>(count) * WGPU_MATERIAL_UNIFORM_STRIDE);
+    free(scratch);
 }
 
 
@@ -824,6 +1675,71 @@ void WebGpuRenderer::BeginFrame()
 
 void WebGpuRenderer::Render() { m_geometry.BuildFrame(m_drawLists, &m_frameStats); }
 
+void WebGpuRenderer::RenderShadowMap(const DrawLists& lists)
+{
+    m_shadowActive = false;
+
+    const LightID casterId = lists.GetShadowCasterLight();
+    if (casterId < 0 || casterId >= GFX_MAX_LIGHTS)
+        return; // no caster designated this frame
+    const Light3D& caster = lists.GetLights()[casterId];
+    // Only a directional light can cast the shadow map -- see the member
+    // comment on SetShadowCasterLight in Renderer.h and BuildLightViewProjection
+    // in StagedGeometry.h.
+    if (caster.intensity <= 0.0f || caster.type != LightType::Directional)
+        return;
+
+    const uint32_t dynStart = m_geometry.DynamicVertexStart();
+    const uint32_t dynCount = m_geometry.Count3D() - dynStart;
+    if (dynCount == 0)
+        return; // nothing dynamic to cast this frame; leave the map unsampled (see fs_main_3d)
+
+    // A frustum centred on the camera, not the whole level: this pass only
+    // ever covers dynamic (model/primitive) geometry, which clusters near
+    // wherever the camera is looking, not the static world. See the member
+    // comment on BuildLightViewProjection.
+    const float kShadowHalfExtent = 24.0f;
+    const float kShadowDepthExtent = 120.0f;
+    StagedGeometry::BuildLightViewProjection(caster.direction, lists.GetCamera3D().position, kShadowHalfExtent, kShadowDepthExtent, true, m_lastLightViewProj);
+
+    ShadowUniforms su;
+    memcpy(su.lightViewProj, m_lastLightViewProj, sizeof(su.lightViewProj));
+    wgpuQueueWriteBuffer(m_queue, m_shadowPassUniformBuffer, 0, &su, sizeof(su));
+
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(m_device, nullptr);
+
+    WGPURenderPassDepthStencilAttachment depthAttachment;
+    memset(&depthAttachment, 0, sizeof(depthAttachment));
+    depthAttachment.view = m_shadowMapView;
+    depthAttachment.depthLoadOp = WGPULoadOp_Clear;
+    depthAttachment.depthStoreOp = WGPUStoreOp_Store;
+    depthAttachment.depthClearValue = 1.0f;
+
+    WGPURenderPassDescriptor passDesc;
+    memset(&passDesc, 0, sizeof(passDesc));
+    passDesc.colorAttachmentCount = 0;
+    passDesc.depthStencilAttachment = &depthAttachment;
+
+    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
+    wgpuRenderPassEncoderSetPipeline(pass, m_shadowPipeline);
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, m_shadowPassBindGroup, 0, nullptr);
+    // One draw over every dynamic vertex: the shadow pass has no per-material
+    // texture binding to change between runs (no alpha-mask cutout support
+    // yet -- see kShaderSourceShadow), so there is nothing run boundaries buy it.
+    wgpuRenderPassEncoderSetVertexBuffer(pass, 0, m_vertexBuffer, 0, static_cast<uint64_t>(m_geometry.Count3D()) * sizeof(StagedGeometry::Vertex));
+    wgpuRenderPassEncoderDraw(pass, dynCount, 1, dynStart, 0);
+    wgpuRenderPassEncoderEnd(pass);
+    wgpuRenderPassEncoderRelease(pass);
+
+    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
+    wgpuQueueSubmit(m_queue, 1, &commands);
+    wgpuCommandBufferRelease(commands);
+    wgpuCommandEncoderRelease(encoder);
+
+    m_shadowActive = true;
+    m_shadowCasterIndex = casterId;
+}
+
 void WebGpuRenderer::EndFrame()
 {
     if (!m_initialized)
@@ -878,10 +1794,45 @@ void WebGpuRenderer::EndFrame()
                                  static_cast<size_t>(count2D) * sizeof(StagedGeometry::Vertex));
     }
 
-    Uniforms uniforms;
+    // The shadow map is rendered (its own encoder, submitted separately) and
+    // the per-run material array is uploaded before the main pass's encoder
+    // is even created: both write buffers, and a queue write cannot be
+    // interleaved with draw calls inside an already-open render pass.
+    RenderShadowMap(m_drawLists);
+    UploadMaterialUniforms(m_geometry.Runs(), m_geometry.RunCount());
+
+    FrameUniforms3D frameUniforms;
+    memset(&frameUniforms, 0, sizeof(frameUniforms));
     // WebGPU clips Z to [0,1]; the shared builder takes that as a flag.
-    StagedGeometry::BuildViewProjection(m_drawLists.GetCamera3D(), m_width, m_height, true, uniforms.viewProj);
-    wgpuQueueWriteBuffer(m_queue, m_uniformBuffer3D, 0, &uniforms, sizeof(uniforms));
+    StagedGeometry::BuildViewProjection(m_drawLists.GetCamera3D(), m_width, m_height, true, frameUniforms.viewProj);
+    memcpy(frameUniforms.lightViewProj, m_lastLightViewProj, sizeof(frameUniforms.lightViewProj));
+    const Vector3& camPos = m_drawLists.GetCamera3D().position;
+    frameUniforms.cameraPos[0] = camPos.x;
+    frameUniforms.cameraPos[1] = camPos.y;
+    frameUniforms.cameraPos[2] = camPos.z;
+    const Color3& ambient = m_drawLists.GetAmbientLight();
+    frameUniforms.ambient[0] = ambient.r;
+    frameUniforms.ambient[1] = ambient.g;
+    frameUniforms.ambient[2] = ambient.b;
+    const Light3D* lights = m_drawLists.GetLights();
+    for (uint32_t i = 0; i < GFX_MAX_LIGHTS; ++i)
+    {
+        GpuLight& gl = frameUniforms.lights[i];
+        const Light3D& l = lights[i];
+        gl.positionOrDir[0] = (l.type == LightType::Directional) ? l.direction.x : l.position.x;
+        gl.positionOrDir[1] = (l.type == LightType::Directional) ? l.direction.y : l.position.y;
+        gl.positionOrDir[2] = (l.type == LightType::Directional) ? l.direction.z : l.position.z;
+        gl.positionOrDir[3] = (l.type == LightType::Directional) ? 0.0f : 1.0f;
+        gl.colorIntensity[0] = l.color.r;
+        gl.colorIntensity[1] = l.color.g;
+        gl.colorIntensity[2] = l.color.b;
+        gl.colorIntensity[3] = l.intensity; // <= 0 means "off"; the shader skips it
+        gl.rangeParams[0] = l.range;
+    }
+    frameUniforms.shadowCaster[0] = m_shadowActive ? static_cast<float>(m_shadowCasterIndex) : -1.0f;
+    wgpuQueueWriteBuffer(m_queue, m_frameUniformBuffer3D, 0, &frameUniforms, sizeof(frameUniforms));
+
+    Uniforms uniforms;
     StagedGeometry::BuildOrtho2D(m_width, m_height, true, uniforms.viewProj);
     wgpuQueueWriteBuffer(m_queue, m_uniformBuffer2D, 0, &uniforms, sizeof(uniforms));
 
@@ -914,15 +1865,17 @@ void WebGpuRenderer::EndFrame()
     {
         wgpuRenderPassEncoderSetVertexBuffer(pass, 0, m_vertexBuffer, 0, static_cast<uint64_t>(totalVerts) * sizeof(StagedGeometry::Vertex));
 
-        // 3D: one draw per texture run.
+        // 3D: one draw per material run, PBR-shaded.
         if (count3D > 0)
         {
             wgpuRenderPassEncoderSetPipeline(pass, m_pipeline3D);
-            wgpuRenderPassEncoderSetBindGroup(pass, 0, m_bindGroup3D, 0, nullptr);
+            wgpuRenderPassEncoderSetBindGroup(pass, 0, m_frameBindGroup3D, 0, nullptr);
             const StagedGeometry::DrawRun* runs = m_geometry.Runs();
             for (uint32_t i = 0; i < m_geometry.RunCount(); ++i)
             {
-                wgpuRenderPassEncoderSetBindGroup(pass, 1, BindGroupFor(runs[i].texture), 0, nullptr);
+                const uint32_t materialOffset = i * WGPU_MATERIAL_UNIFORM_STRIDE;
+                wgpuRenderPassEncoderSetBindGroup(pass, 1, m_materialBindGroup3D, 1, &materialOffset);
+                wgpuRenderPassEncoderSetBindGroup(pass, 2, MaterialGroupFor(runs[i].texture, runs[i].material.normalTexture, runs[i].material.ormTexture), 0, nullptr);
                 wgpuRenderPassEncoderDraw(pass, runs[i].count, 1, runs[i].first, 0);
             }
         }
@@ -1169,6 +2122,9 @@ uint32_t WebGpuRenderer::RenderToImage3D(const Renderable3D& what, const Camera3
 void WebGpuRenderer::SetCamera3D(CameraID id, const Camera3D& camera) { m_drawLists.SetCamera3D(id, camera); }
 void WebGpuRenderer::SetActiveCamera3D(CameraID id) { m_drawLists.SetActiveCamera3D(id); }
 void WebGpuRenderer::SetActiveCamera2D(const Camera2D& camera) { m_drawLists.SetActiveCamera2D(camera); }
+void WebGpuRenderer::SetLight3D(LightID id, const Light3D& light) { m_drawLists.SetLight3D(id, light); }
+void WebGpuRenderer::SetAmbientLight(const Color3& color) { m_drawLists.SetAmbientLight(color); }
+void WebGpuRenderer::SetShadowCasterLight(LightID id) { m_drawLists.SetShadowCasterLight(id); }
 
 bool WebGpuRenderer::IsInitialized() const { return m_initialized; }
 
@@ -1180,6 +2136,16 @@ void WebGpuRenderer::Shutdown()
     for (uint32_t i = 0; i < WGPU_MAX_TEXTURES; ++i)
         ReleaseTexture(i + 1u);
 
+    // Any remaining material group is necessarily the all-defaults (0,0,0)
+    // combination -- every entry naming a real texture was already dropped
+    // by the ReleaseTexture loop above, via PurgeMaterialGroupsReferencing.
+    for (uint32_t i = 0; i < m_materialGroupCount; ++i)
+    {
+        if (m_materialGroups[i].group)
+            wgpuBindGroupRelease(m_materialGroups[i].group);
+    }
+    m_materialGroupCount = 0;
+
     if (m_whiteTexture.bindGroup)
         wgpuBindGroupRelease(m_whiteTexture.bindGroup);
     if (m_whiteTexture.view)
@@ -1187,36 +2153,81 @@ void WebGpuRenderer::Shutdown()
     if (m_whiteTexture.texture)
         wgpuTextureRelease(m_whiteTexture.texture);
 
+    if (m_defaultNormalView)
+        wgpuTextureViewRelease(m_defaultNormalView);
+    if (m_defaultNormalTexture)
+    {
+        wgpuTextureDestroy(m_defaultNormalTexture);
+        wgpuTextureRelease(m_defaultNormalTexture);
+    }
+    if (m_defaultOrmView)
+        wgpuTextureViewRelease(m_defaultOrmView);
+    if (m_defaultOrmTexture)
+    {
+        wgpuTextureDestroy(m_defaultOrmTexture);
+        wgpuTextureRelease(m_defaultOrmTexture);
+    }
+
     ReleaseDepthTexture();
     if (m_sampler)
         wgpuSamplerRelease(m_sampler);
     if (m_samplerNearest)
         wgpuSamplerRelease(m_samplerNearest);
+    if (m_shadowSamplerCompare)
+        wgpuSamplerRelease(m_shadowSamplerCompare);
     if (m_vertexBuffer)
         wgpuBufferRelease(m_vertexBuffer);
-    if (m_uniformBuffer3D)
-        wgpuBufferRelease(m_uniformBuffer3D);
     if (m_uniformBuffer2D)
         wgpuBufferRelease(m_uniformBuffer2D);
-    if (m_bindGroup3D)
-        wgpuBindGroupRelease(m_bindGroup3D);
     if (m_bindGroup2D)
         wgpuBindGroupRelease(m_bindGroup2D);
     if (m_uniformLayout)
         wgpuBindGroupLayoutRelease(m_uniformLayout);
     if (m_textureLayout)
         wgpuBindGroupLayoutRelease(m_textureLayout);
-    if (m_pipeline3D)
-        wgpuRenderPipelineRelease(m_pipeline3D);
     if (m_pipeline2D)
         wgpuRenderPipelineRelease(m_pipeline2D);
 
+    // --- PBR 3D pipeline -----------------------------------------------------
+    if (m_frameUniformBuffer3D)
+        wgpuBufferRelease(m_frameUniformBuffer3D);
+    if (m_materialUniformBuffer3D)
+        wgpuBufferRelease(m_materialUniformBuffer3D);
+    if (m_frameBindGroup3D)
+        wgpuBindGroupRelease(m_frameBindGroup3D);
+    if (m_materialBindGroup3D)
+        wgpuBindGroupRelease(m_materialBindGroup3D);
+    if (m_frameLayout3D)
+        wgpuBindGroupLayoutRelease(m_frameLayout3D);
+    if (m_materialLayout3D)
+        wgpuBindGroupLayoutRelease(m_materialLayout3D);
+    if (m_materialTexLayout3D)
+        wgpuBindGroupLayoutRelease(m_materialTexLayout3D);
+    if (m_pipeline3D)
+        wgpuRenderPipelineRelease(m_pipeline3D);
+
+    // --- shadow pass -----------------------------------------------------------
+    if (m_shadowPassUniformBuffer)
+        wgpuBufferRelease(m_shadowPassUniformBuffer);
+    if (m_shadowPassBindGroup)
+        wgpuBindGroupRelease(m_shadowPassBindGroup);
+    if (m_shadowPassLayout)
+        wgpuBindGroupLayoutRelease(m_shadowPassLayout);
+    if (m_shadowPipeline)
+        wgpuRenderPipelineRelease(m_shadowPipeline);
+    if (m_shadowMapView)
+        wgpuTextureViewRelease(m_shadowMapView);
+    if (m_shadowMapTexture)
+    {
+        wgpuTextureDestroy(m_shadowMapTexture);
+        wgpuTextureRelease(m_shadowMapTexture);
+    }
+
     // m_imageColorTexture/m_imageColorView were already released above by the
     // ReleaseTexture(slot) loop, since RenderToImage3D registers them into the
-    // ordinary m_textures[] table. m_imagePipeline3D may alias m_pipeline3D
-    // (already released just above) rather than being a distinct object --
-    // see CreatePipelines.
-    if (m_imagePipeline3D && m_imagePipeline3D != m_pipeline3D)
+    // ordinary m_textures[] table. m_imagePipeline3D is always its own
+    // dedicated object (see CreatePipelines), unlike the old m_pipeline3D alias.
+    if (m_imagePipeline3D)
         wgpuRenderPipelineRelease(m_imagePipeline3D);
     if (m_imageUniformBindGroup)
         wgpuBindGroupRelease(m_imageUniformBindGroup);

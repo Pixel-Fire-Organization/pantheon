@@ -1,5 +1,6 @@
 #include "platform/psp/renderer/Gu.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <malloc.h>
@@ -311,14 +312,94 @@ void GuRenderer::BindTexture(uint32_t handle)
 uint32_t GuRenderer::ConvertSpan(const StagedGeometry::Vertex* src, uint32_t count, GuVertex* dst, uint32_t dstCapacity) const
 {
     const uint32_t n = (count < dstCapacity) ? count : dstCapacity;
+
+    // Real dynamic per-vertex Lambertian lighting, computed here rather than
+    // by the GE's own hardware lighting unit: GuVertex deliberately carries
+    // no normal (see its own comment -- this is the most bandwidth-bound
+    // platform here), so there is nothing for sceGuLight to read per-vertex.
+    // StagedGeometry::Vertex, the source format, does carry one; this pass is
+    // where it gets consumed, folded into the colour this format does carry,
+    // and then discarded -- no vertex-format growth, no bandwidth cost added.
+    const Light3D* lights = m_drawLists.GetLights();
+    const Color3& ambient = m_drawLists.GetAmbientLight();
+
     for (uint32_t i = 0; i < n; ++i)
     {
-        dst[i].u = src[i].u;
-        dst[i].v = src[i].v;
-        dst[i].color = PackColor(src[i].r, src[i].g, src[i].b, src[i].a);
-        dst[i].x = src[i].x;
-        dst[i].y = src[i].y;
-        dst[i].z = src[i].z;
+        const StagedGeometry::Vertex& v = src[i];
+
+        // v.r/g/b is already the right baseline for whatever produced this
+        // vertex -- StagedGeometry::AppendMesh writes the level compiler's
+        // baked colour for sector meshes, or flat white for models/
+        // primitives (nothing is baked for those yet). Ambient and every
+        // active light are added on TOP of that baseline, never multiplied
+        // into a sum that starts at zero -- that would erase a bake, or
+        // render dynamic geometry black whenever no light happens to be
+        // configured. See docs/subsystems/RENDERER.md.
+        float litR = v.r, litG = v.g, litB = v.b;
+
+        const float nLenSq = v.nx * v.nx + v.ny * v.ny + v.nz * v.nz;
+        if (nLenSq > 0.0001f)
+        {
+            const float invLen = 1.0f / sqrtf(nLenSq);
+            const float Nx = v.nx * invLen, Ny = v.ny * invLen, Nz = v.nz * invLen;
+
+            litR += ambient.r;
+            litG += ambient.g;
+            litB += ambient.b;
+
+            for (uint32_t li = 0; li < GFX_MAX_LIGHTS; ++li)
+            {
+                const Light3D& light = lights[li];
+                if (light.intensity <= 0.0f)
+                    continue;
+
+                float Lx, Ly, Lz, attenuation = 1.0f;
+                if (light.type == LightType::Directional)
+                {
+                    const float dx = light.direction.x, dy = light.direction.y, dz = light.direction.z;
+                    const float dLenSq = dx * dx + dy * dy + dz * dz;
+                    const float dInv = (dLenSq > 0.0001f) ? (1.0f / sqrtf(dLenSq)) : 0.0f;
+                    Lx = -dx * dInv;
+                    Ly = -dy * dInv;
+                    Lz = -dz * dInv;
+                }
+                else
+                {
+                    const float tx = light.position.x - v.x, ty = light.position.y - v.y, tz = light.position.z - v.z;
+                    const float dist = sqrtf(tx * tx + ty * ty + tz * tz);
+                    const float dInv = (dist > 0.0001f) ? (1.0f / dist) : 0.0f;
+                    Lx = tx * dInv;
+                    Ly = ty * dInv;
+                    Lz = tz * dInv;
+
+                    const float range = (light.range > 0.0001f) ? light.range : 0.0001f;
+                    float att = 1.0f - (dist / range);
+                    att = (att < 0.0f) ? 0.0f : ((att > 1.0f) ? 1.0f : att);
+                    attenuation = att * att;
+                }
+
+                const float NdotL = Nx * Lx + Ny * Ly + Nz * Lz;
+                if (NdotL <= 0.0f)
+                    continue;
+
+                const float scale = NdotL * light.intensity * attenuation;
+                litR += light.color.r * scale;
+                litG += light.color.g * scale;
+                litB += light.color.b * scale;
+            }
+        }
+        // else: no normal (2D/UI geometry, which StagedGeometry always zeroes
+        // -- see AddQuad2D) -- the baseline passes through unlit, same
+        // convention as every other backend.
+
+        dst[i].u = v.u;
+        dst[i].v = v.v;
+        // PackColor already saturates each channel to [0,255], so the
+        // unclamped sum above is safe to hand it directly.
+        dst[i].color = PackColor(litR, litG, litB, v.a);
+        dst[i].x = v.x;
+        dst[i].y = v.y;
+        dst[i].z = v.z;
     }
     return n;
 }
@@ -619,6 +700,9 @@ uint32_t GuRenderer::RenderToImage3D(const Renderable3D& what, const Camera3D& c
 void GuRenderer::SetCamera3D(CameraID id, const Camera3D& camera) { m_drawLists.SetCamera3D(id, camera); }
 void GuRenderer::SetActiveCamera3D(CameraID id) { m_drawLists.SetActiveCamera3D(id); }
 void GuRenderer::SetActiveCamera2D(const Camera2D& camera) { m_drawLists.SetActiveCamera2D(camera); }
+void GuRenderer::SetLight3D(LightID id, const Light3D& light) { m_drawLists.SetLight3D(id, light); }
+void GuRenderer::SetAmbientLight(const Color3& color) { m_drawLists.SetAmbientLight(color); }
+void GuRenderer::SetShadowCasterLight(LightID id) { m_drawLists.SetShadowCasterLight(id); }
 
 bool GuRenderer::IsInitialized() const { return m_initialized; }
 

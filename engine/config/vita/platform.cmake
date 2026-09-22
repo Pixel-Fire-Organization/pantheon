@@ -125,6 +125,21 @@ function(platform_configure PLATFORM)
                         aPosition aTexcoord aColor uViewProj)
     vita_compile_shader(_shaderHeaders fragment "${_VITA_DIR}/renderer/shaders/scene_f.cg" g_SceneFragmentGxp "${_generated}")
 
+    # PBR main-scene pipeline (see docs/formats/MATERIAL_FORMAT.md and
+    # docs/subsystems/RENDERER.md) -- a second shader pair alongside the flat
+    # one above, which stays exactly as-is for the 2D pass and RenderToImage3D's
+    # preview target.
+    vita_compile_shader(_shaderHeaders vertex   "${_VITA_DIR}/renderer/shaders/scene_pbr_v.cg" g_ScenePbrVertexGxp   "${_generated}"
+                        aPosition aNormal aTexcoord aColor uViewProj)
+    vita_compile_shader(_shaderHeaders fragment "${_VITA_DIR}/renderer/shaders/scene_pbr_f.cg" g_ScenePbrFragmentGxp "${_generated}"
+                        uCameraPos uAmbient uLightPosOrDir uLightColorIntensity uLightRange uShadowCaster uLightViewProj uBaseColor uEmissive uMrna uAlphaMask)
+
+    # Depth-only shadow pass (dynamic geometry only; see the member comment on
+    # RenderShadowMap in Renderer.h).
+    vita_compile_shader(_shaderHeaders vertex   "${_VITA_DIR}/renderer/shaders/scene_shadow_v.cg" g_SceneShadowVertexGxp   "${_generated}"
+                        aPosition uLightViewProj)
+    vita_compile_shader(_shaderHeaders fragment "${_VITA_DIR}/renderer/shaders/scene_shadow_f.cg" g_SceneShadowFragmentGxp "${_generated}")
+
     set(ENGINE_PLATFORM_${PLATFORM}_SOURCES
         "${_baseSrcDir}/Platform.cpp"
         "${_baseSrcDir}/Entry.cpp"

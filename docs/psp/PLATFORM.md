@@ -304,9 +304,12 @@ together. The fallback backend presents through its library's swap.
 
 **The binding constraint.** Memory bandwidth, then the main processor. Every
 vertex is touched three times on the way to the hardware — staged into a
-layout carrying a normal no backend here reads, converted into the hardware's
-layout, written back from the cache — and every resident sector is staged
-whether or not it is in view. The vector unit is unused. Textures are sampled
+layout carrying a normal, read on the default backend to fold dynamic
+lighting into the packed colour during conversion (see
+[GU.md](renderers/GU.md)'s Materials & lighting section) but never itself
+stored in the hardware's own vertex layout, converted into that layout,
+written back from the cache — and every resident sector is staged whether or
+not it is in view. The vector unit is unused. Textures are sampled
 unswizzled. Content fits here by bytes moved per frame first.
 
 **Per-frame ceilings.**
@@ -345,6 +348,17 @@ reports geometry build, upload or buffer fill.
 testbed's timing scenes on an original-model console — not the emulator, which
 models memory this hardware does not have — and records the split and the heap
 here.
+
+**Material system, 2026-09-22 — not yet measured.** Both backends now evaluate
+the engine-shared `VertexLighting_Compute` Lambertian formula per vertex on
+the main processor for dynamic geometry (see [GU.md](renderers/GU.md)/
+[PSPGL.md](renderers/PSPGL.md)'s own Materials & lighting sections) — on the
+default backend this is folded into the same conversion pass that already
+touches every vertex, so it adds processor work rather than a fourth touch;
+on the fallback backend it is a genuinely new pass writing a scratch colour
+buffer ahead of the draw. No console or emulator measurement was available in
+this session (see the baseline note below); retake the baseline with this in
+the scene once hardware access exists.
 
 **Left on the table**, in the order to attack it: overlapping the list in
 flight with the next frame's build; culling sectors and models before staging;

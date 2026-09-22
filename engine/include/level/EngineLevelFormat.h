@@ -92,7 +92,9 @@ typedef struct
     uint32_t reserved[2];
 } LevelInfoChunk;
 
-// MATL — materialCount entries: the canonical archive key of each TIM2 .PS2A.
+// MATL — materialCount entries: the canonical archive key of each material's
+// RES_MATERIAL .PS2A (see MaterialFormat.h). Its own texture dependencies
+// resolve and stream in exactly as a model's already do.
 typedef struct
 {
     char assetKey[64];
@@ -131,7 +133,7 @@ typedef struct
 // absolute byte offsets. The runtime builds Mesh views straight into the arena
 // slot — zero-copy into the existing render path.
 #define LEVEL_SECTOR_MAGIC 0x43455350u /* "PSEC" */
-#define LEVEL_SECTOR_VERSION 1u
+#define LEVEL_SECTOR_VERSION 2u /* v2: BakedMeshEntry gained colorsOffset (ModelFormat.h) */
 
 typedef struct
 {

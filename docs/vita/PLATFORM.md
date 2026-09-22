@@ -261,10 +261,14 @@ default backend.
 
 **The binding constraint.** The processor — the weakest in the family. Every
 vertex of every visible object is transformed on it every frame, into a layout
-that carries a normal the shader set never reads, and every resident sector is
-transformed whether or not it is in view. Textures are uncompressed 32-bit
-colour, which is spent from video memory and from bandwidth alike. Content
-fits here by processor-side vertex count first.
+that carries a normal — now read by both backends (the default backend's PBR
+shaders sample it directly for lighting and normal mapping; the fallback
+computes dynamic lighting from it on the processor before upload, see
+[GXM.md](renderers/GXM.md)/[VITAGL.md](renderers/VITAGL.md)'s own Materials &
+lighting sections) — and every resident sector is transformed whether or not
+it is in view. Textures are uncompressed 32-bit colour, which is spent from
+video memory and from bandwidth alike. Content fits here by processor-side
+vertex count first.
 
 **Per-frame ceilings.**
 
@@ -302,10 +306,17 @@ only.
 testbed's timing scenes on the handheld and records the split, the buffer fill
 and the heap here, naming hardware or emulator.
 
-**Left on the table**, in the order to attack it: the unread normal, a quarter
-of every vertex's work and bytes; culling sectors and models before staging; a
-compressed texture vocabulary in the cook list; the sky; asynchronous sector
-recentring.
+**Material system, 2026-09-22 — not yet measured.** The default backend gained
+a second shader pair (PBR, three textures per run) and a third (depth-only,
+the real-time shadow pass — its own `sceGxmBeginScene`/`sceGxmFinish` cycle,
+strictly before the main scene's own), on top of the flat pair that already
+existed; the fallback gained a per-vertex CPU lighting pass ahead of upload.
+No hardware or emulator measurement exists yet for either — fold this scene
+into the same baseline pass above rather than measuring it separately.
+
+**Left on the table**, in the order to attack it: culling sectors and models
+before staging; a compressed texture vocabulary in the cook list; the sky;
+asynchronous sector recentring.
 
 ## Known limitations
 

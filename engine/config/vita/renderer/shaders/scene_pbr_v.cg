@@ -1,0 +1,23 @@
+// PBR main-scene vertex shader. Vertex positions/normals arrive already in
+// world space -- StagedGeometry bakes each object's model matrix into the
+// vertex buffer on the CPU rather than uploading one per draw, so this stage
+// only ever applies the camera's view-projection. See scene_pbr_f.cg for the
+// shading model and docs/vita/renderers/GXM.md.
+void main(
+    float3 aPosition  : POSITION,
+    float3 aNormal    : NORMAL,
+    float2 aTexcoord  : TEXCOORD0,
+    float4 aColor     : COLOR0,
+    uniform float4x4  uViewProj,
+    out float4 vPosition    : POSITION,
+    out float3 vWorldPos    : TEXCOORD0,
+    out float3 vWorldNormal : TEXCOORD1,
+    out float2 vTexcoord    : TEXCOORD2,
+    out float4 vColor       : COLOR0)
+{
+    vPosition    = mul(float4(aPosition, 1.0f), uViewProj);
+    vWorldPos    = aPosition;
+    vWorldNormal = aNormal;
+    vTexcoord    = aTexcoord;
+    vColor       = aColor;
+}

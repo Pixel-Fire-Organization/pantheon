@@ -148,6 +148,27 @@ public:
     // Set the single 2D / UI camera.
     virtual void SetActiveCamera2D(const Camera2D& camera) = 0;
 
+    // --- Dynamic lights (fixed-slot model, mirrors cameras) ---
+    // Write one of the GFX_MAX_LIGHTS slots; a light with intensity <= 0 is
+    // off. Unlike a camera, every slot with a positive intensity is active
+    // simultaneously -- shading sums their contribution. See
+    // docs/subsystems/RENDERER.md.
+    virtual void SetLight3D(LightID id, const Light3D& light) = 0;
+    // The flat ambient term added on top of every active light's contribution.
+    virtual void SetAmbientLight(const Color3& color) = 0;
+    // Which light slot (if any) casts the single real-time shadow map this
+    // frame; an invalid id means no shadows. Only PBR-tier backends honour
+    // this (SupportsPbrShading() == true) -- see RenderShadowMap below.
+    virtual void SetShadowCasterLight(LightID id) = 0;
+
+    /// Whether this backend shades per pixel with real material maps
+    /// (metallic-roughness PBR) rather than per-vertex flat/Lambertian
+    /// shading. The safe default is false, mirroring GetTextureBudgetBytes's
+    /// "answer honestly, override only where it differs" shape; only backends
+    /// with programmable, multi-texture shading override it true. Real-time
+    /// shadow-casting (SetShadowCasterLight) is implied by this flag.
+    virtual bool SupportsPbrShading() const { return false; }
+
     // --- Texture upload / release ---
     // Upload a decoded texture and return a backend handle; 0 means failure.
     // Pixel pointers must be 16-byte aligned.
@@ -183,4 +204,14 @@ protected:
     virtual void RenderSkybox(const DrawLists& lists) = 0;
     virtual void RenderPrimitives(DrawLists& lists) = 0;
     virtual void RenderModels(const DrawLists& lists) = 0;
+
+    /// The single real-time shadow pass: render dynamic (model) geometry
+    /// depth-only from the designated shadow-caster light, into a scratch
+    /// depth target this backend owns. Default no-op, so every backend's
+    /// Render() can call it unconditionally -- one hardcoded extra step, not
+    /// a render graph. Only overridden by PBR-tier backends
+    /// (SupportsPbrShading() == true); static level geometry does not need
+    /// it, since it already carries baked, shadow-aware lighting from the
+    /// level compiler. See docs/subsystems/RENDERER.md.
+    virtual void RenderShadowMap(const DrawLists& lists) { (void)lists; }
 };

@@ -119,6 +119,40 @@
       ]
     },
     {
+      "name": "LightComponent",
+      "description": "Marks an entity as a static light the level compiler bakes into nearby static geometry's per-vertex colour (see docs/formats/MATERIAL_FORMAT.md). Composable onto any entity -- not a dedicated classname -- alongside TransformComponent, whose position (point lights) or angles (directional lights) it reads.",
+      "properties": [
+        {
+          "name": "light_type",
+          "type": "choices",
+          "description": "Directional lights read this entity's TransformComponent angles for their direction; point lights read its position.",
+          "default": 1,
+          "options": {
+            "0": "Directional",
+            "1": "Point"
+          }
+        },
+        {
+          "name": "color",
+          "type": "color255",
+          "description": "Light colour, RGB 0-255.",
+          "default": "255 255 255"
+        },
+        {
+          "name": "intensity",
+          "type": "float",
+          "description": "Brightness multiplier.",
+          "default": 1.0
+        },
+        {
+          "name": "range",
+          "type": "float",
+          "description": "Point lights only: world-unit distance at which attenuation reaches zero. Ignored for directional lights.",
+          "default": 512.0
+        }
+      ]
+    },
+    {
       "name": "DoorComponent",
       "description": "Has info, used by func_door",
       "properties": [
@@ -190,6 +224,15 @@
       "description": "Door that can be interacted by a player, NPCs or other physics objecs",
       "components": [
         "CollisionComponent"
+      ]
+    },
+    {
+      "classname": "light",
+      "classType": "PointClass",
+      "description": "A static light the level compiler bakes into nearby geometry. Its TransformComponent position places a point light, or its angles orient a directional one.",
+      "components": [
+        "TransformComponent",
+        "LightComponent"
       ]
     }
   ]

@@ -45,6 +45,11 @@ public:
     void SetActiveCamera3D(CameraID id) override;
     void SetActiveCamera2D(const Camera2D& camera) override;
 
+    void SetLight3D(LightID id, const Light3D& light) override;
+    void SetAmbientLight(const Color3& color) override;
+    void SetShadowCasterLight(LightID id) override;
+    bool SupportsPbrShading() const override { return true; }
+
     /// Expand to RGBA8, stage in processor-visible memory and transfer into a texture block; waits for the queue.
     uint32_t UploadTexture(const TextureUpload& upload) override;
 
@@ -64,6 +69,7 @@ protected:
     void RenderSkybox(const DrawLists& lists) override;
     void RenderPrimitives(DrawLists& lists) override;
     void RenderModels(const DrawLists& lists) override;
+    void RenderShadowMap(const DrawLists& lists) override;
 
 private:
     struct Texture
@@ -86,6 +92,19 @@ private:
     bool CreateBuffers();
     bool CreateSamplers();
     bool CreateWhiteTexture();
+
+    /// Upload the flat-normal / neutral-ORM 1x1 textures a material with no
+    /// normal/ORM map of its own samples. Ordinary resident-texture-registry
+    /// entries (via UploadTexture), so Destroy()'s existing texture loop
+    /// frees them like any other texture.
+    bool CreateDefaultMaterialTextures();
+
+    /// Allocate the fixed-size (GFX_SHADOW_MAP_SIZE) depth-only render target
+    /// the real-time shadow pass renders into, and register its colour image
+    /// as a resident texture slot so the PBR pass can sample it. Called once
+    /// at construction, unlike EnsureImageTarget's lazy re-creation -- this
+    /// target's size never changes.
+    bool CreateShadowTarget();
 
     /// Release every block and object in reverse order of creation, swapchain first. Safe on a partial construction.
     void Destroy();
@@ -113,11 +132,24 @@ private:
     /// Record the render-target binding, viewport, scissor, clear and the state every pass shares.
     void BeginPass(DkCmdBuf cmdbuf, const DkImageView& color, const DkImageView& depth, uint32_t width, uint32_t height, const Color3& clearColor, uint32_t slice);
 
-    /// Record the depth, blend and uniform state for one pass kind.
+    /// Record the depth/blend state for one pass kind, without touching
+    /// shaders or uniforms -- split out of BindPassState so the PBR world
+    /// pass, which uses its own frame/material uniform buffers instead of
+    /// the flat shader's single matrix, can still share this part.
+    void ApplyDepthBlendState(DkCmdBuf cmdbuf, PassKind kind);
+
+    /// Record the depth, blend and uniform state for one pass kind (flat program only).
     void BindPassState(DkCmdBuf cmdbuf, PassKind kind, const float matrix[16]);
 
     /// Record one draw per run, clamped to the vertices actually uploaded.
     void DrawRuns(DkCmdBuf cmdbuf, const StagedGeometry::DrawRun* runs, uint32_t runCount, uint32_t base, uint32_t uploaded);
+
+    /// Record one draw per run against the PBR program: a per-run material
+    /// uniform write plus albedo/normal/ORM texture binds, clamped to the
+    /// vertices actually uploaded. Always drawn at base 0 -- static sector
+    /// and dynamic model/primitive runs share the one PBR pass; only the
+    /// real-time shadow pass itself distinguishes dynamic from static.
+    void DrawPbrRuns(DkCmdBuf cmdbuf, const StagedGeometry::DrawRun* runs, uint32_t runCount, uint32_t uploaded);
 
     bool EnsureImageTarget(int width, int height);
     void DestroyImageTarget();
@@ -142,6 +174,33 @@ private:
     DkMemBlock m_shaderMemory;
     DkShader m_vertexShader;
     DkShader m_fragmentShader;
+
+    // PBR program: the main 3D scene pass. Compiled into the same
+    // m_shaderMemory block as the flat program above -- see CreateShaders().
+    DkShader m_pbrVertexShader;
+    DkShader m_pbrFragmentShader;
+    DkMemBlock m_pbrFrameUniformMemory; // binding 0 (vertex+fragment) -- FrameUniforms
+    DkMemBlock m_pbrMaterialUniformMemory; // binding 1 (fragment); one aligned slot per draw run this frame
+
+    // Depth-only shadow program: dynamic (model/primitive) geometry only.
+    DkShader m_shadowVertexShader;
+    DkShader m_shadowFragmentShader;
+    DkMemBlock m_shadowUniformMemory; // binding 0 (vertex) -- mat4 lightViewProj
+    DkImage m_shadowColorImage; // depth written into the R channel -- see scene_shadow.frag.glsl
+    DkImage m_shadowDepthImage; // the shadow pass's own depth test; never sampled
+    DkMemBlock m_shadowColorMemory;
+    DkMemBlock m_shadowDepthMemory;
+    int m_shadowTextureSlot; // resident texture slot the PBR pass samples; never releasable, like m_imageTextureSlot
+
+    // PBR defaults for a material with no normal/ORM map of its own: flat
+    // tangent-space normal, and occlusion=1/roughness=1/metallic=0.
+    uint32_t m_defaultNormalTexture;
+    uint32_t m_defaultOrmTexture;
+
+    // Result of this frame's RenderShadowMap, consumed by EndFrame's main pass right afterwards.
+    float m_lastLightViewProj[16];
+    bool m_shadowActive;
+    LightID m_shadowCasterIndex;
 
     DkMemBlock m_vertexMemory[GFX_NX_FRAME_SLICES];
     DkMemBlock m_uniformMemory;

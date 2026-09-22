@@ -20,6 +20,11 @@
     },
     "THEME": {
       "enabled": true
+    },
+    "MATERIAL": {
+      "enabled": true,
+      "bake_normal": true,
+      "bake_orm": true
     }
   },
   "level_textures": {

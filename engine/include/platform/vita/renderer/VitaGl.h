@@ -44,6 +44,10 @@ public:
     void SetActiveCamera3D(CameraID id) override;
     void SetActiveCamera2D(const Camera2D& camera) override;
 
+    void SetLight3D(LightID id, const Light3D& light) override;
+    void SetAmbientLight(const Color3& color) override;
+    void SetShadowCasterLight(LightID id) override;
+
     /// Upload a cooked texture.
     /// @param upload Source texture; expanded to RGBA8.
     /// @return A handle, or 0 on failure.
@@ -68,8 +72,25 @@ private:
     void BindVertexArrays(const StagedGeometry::Vertex* base);
     void DrawStagedGeometry();
 
+    /// Compute ambient + dynamic-light Lambertian shading for this frame's 3D
+    /// vertices into m_litColors3D (4 floats/vertex), growing it on demand to
+    /// match -- this backend's own vertex budget is unbounded (see
+    /// m_geometry's SetFrameBudget(0, ...) call), so there is no fixed cap to
+    /// preallocate against; this mirrors that same already-accepted "grows
+    /// from the heap" gap rather than introducing a new one. Real hardware
+    /// GL_LIGHTING is not used: every kind of geometry (sectors, models,
+    /// primitives) is already flattened into one StagedGeometry vertex buffer
+    /// with a uniform "baked colour, or white" per-vertex convention (see
+    /// StagedGeometry::AppendMesh), so one uniform CPU pass over all of it is
+    /// both simpler and more consistent than branching fixed-function state
+    /// per draw call to approximate the same thing.
+    void ComputeLitColors3D();
+
     uint32_t m_whiteTexture;
     uint32_t m_textures[VITAGL_MAX_RESIDENT_TEXTURES];
+
+    float* m_litColors3D;
+    uint32_t m_litColors3DCapacity; // vertices, not floats/bytes
 
     StagedGeometry m_geometry;
 

@@ -19,6 +19,10 @@ extern "C" {
 
 #include "scene_f.h"
 #include "scene_v.h"
+#include "scene_pbr_f.h"
+#include "scene_pbr_v.h"
+#include "scene_shadow_f.h"
+#include "scene_shadow_v.h"
 
 namespace
 {
@@ -155,18 +159,28 @@ GxmRenderer::GxmRenderer(const EngineConfig& config) :
     m_context(nullptr), m_vdmRing(nullptr), m_vertexRing(nullptr), m_fragmentRing(nullptr), m_fragmentUsseRing(nullptr), m_vdmRingUid(-1), m_vertexRingUid(-1), m_fragmentRingUid(-1),
     m_fragmentUsseRingUid(-1), m_hostMem(nullptr), m_renderTarget(nullptr), m_backBufferIndex(0), m_frontBufferIndex(GFX_GXM_DISPLAY_BUFFERS - 1), m_depthData(nullptr), m_depthUid(-1),
     m_shaderPatcher(nullptr), m_patcherBuffer(nullptr), m_patcherVertexUsse(nullptr), m_patcherFragmentUsse(nullptr), m_patcherBufferUid(-1), m_patcherVertexUsseUid(-1), m_patcherFragmentUsseUid(-1),
-    m_vertexProgram(nullptr), m_fragmentProgram(nullptr), m_viewProjParam(nullptr), m_vertexBuffer(nullptr), m_indexBuffer(nullptr), m_vertexBufferUid(-1), m_indexBufferUid(-1), m_whiteTexture(0),
-    m_geometry(), m_clearColor(Color3{0.0f, 0.0f, 0.0f}), m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_frameVertices(0), m_frame3DVertices(0), m_frame2DVertices(0), m_reportedOverflow(0),
+    m_vertexProgram(nullptr), m_fragmentProgram(nullptr), m_viewProjParam(nullptr), m_pbrVertexProgramId(), m_pbrFragmentProgramId(), m_pbrVertexProgram(nullptr), m_pbrFragmentProgram(nullptr),
+    m_pbrViewProjParam(nullptr), m_pbrCameraPosParam(nullptr), m_pbrAmbientParam(nullptr), m_pbrLightPosOrDirParam(nullptr), m_pbrLightColorIntensityParam(nullptr), m_pbrLightRangeParam(nullptr),
+    m_pbrShadowCasterParam(nullptr), m_pbrLightViewProjParam(nullptr), m_pbrBaseColorParam(nullptr), m_pbrEmissiveParam(nullptr), m_pbrMrnaParam(nullptr), m_pbrAlphaMaskParam(nullptr),
+    m_shadowVertexProgramId(), m_shadowFragmentProgramId(), m_shadowVertexProgram(nullptr), m_shadowFragmentProgram(nullptr), m_shadowLightViewProjParam(nullptr), m_shadowRenderTarget(nullptr),
+    m_shadowColorData(nullptr), m_shadowColorUid(-1), m_shadowDepthData(nullptr), m_shadowDepthUid(-1), m_shadowTextureSlot(-1), m_defaultNormalTexture(0), m_defaultOrmTexture(0),
+    m_shadowActive(false), m_shadowCasterIndex(-1), m_vertexBuffer(nullptr), m_indexBuffer(nullptr), m_vertexBufferUid(-1), m_indexBufferUid(-1), m_whiteTexture(0), m_geometry(),
+    m_clearColor(Color3{0.0f, 0.0f, 0.0f}), m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_frameVertices(0), m_frame3DVertices(0), m_frame2DVertices(0), m_reportedOverflow(0),
     m_frameStats(), m_sceneActive(false), m_initialized(false), m_imageRenderTarget(nullptr), m_imageColorData(nullptr), m_imageColorUid(-1), m_imageDepthData(nullptr), m_imageDepthUid(-1),
     m_imageWidth(0), m_imageHeight(0), m_imageTextureSlot(-1)
 {
     UNUSED_VAR(config);
     memset(m_displayBuffers, 0, sizeof(m_displayBuffers));
     memset(m_textures, 0, sizeof(m_textures));
+    memset(m_lastLightViewProj, 0, sizeof(m_lastLightViewProj));
     for (uint32_t i = 0; i < GFX_GXM_DISPLAY_BUFFERS; ++i)
         m_displayBuffers[i].uid = -1;
 
-    if (!InitPrimitives() || !InitGraphics() || !InitRenderTarget() || !InitShaders() || !InitBuffers())
+    static_assert(GFX_MAX_LIGHTS == 4, "scene_pbr_f.cg hardcodes a 4-element light array (no preprocessor-define injection for this shader tool)");
+    static_assert(GFX_SHADOW_MAP_SIZE == 512, "scene_pbr_f.cg hardcodes the shadow map's texel size as 1.0/512.0");
+
+    if (!InitPrimitives() || !InitGraphics() || !InitRenderTarget() || !InitShaders() || !InitDefaultMaterialTextures() || !InitShadowTarget() || !InitPbrShaders() || !InitShadowShaders() ||
+        !InitBuffers())
     {
         Engine_LogError("GxmRenderer: initialisation failed");
         DestroyGraphics();
@@ -414,6 +428,292 @@ bool GxmRenderer::InitShaders()
     if (sceGxmShaderPatcherCreateFragmentProgram(m_shaderPatcher, m_fragmentProgramId, SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4, SCE_GXM_MULTISAMPLE_NONE, &blendInfo, vertexGxp, &m_fragmentProgram) < 0)
     {
         Engine_LogError("GxmRenderer: sceGxmShaderPatcherCreateFragmentProgram failed");
+        return false;
+    }
+    return true;
+}
+
+bool GxmRenderer::InitDefaultMaterialTextures()
+{
+    // Flat tangent-space normal (encoded 128,128,255) and a neutral ORM
+    // (occlusion=1, roughness=1, metallic=0) -- what a material with no
+    // normal/ORM map of its own samples. Created through the ordinary
+    // UploadTexture path (same as m_whiteTexture, see InitBuffers), so their
+    // GPU memory is released by the existing texture-registry cleanup loop
+    // in DestroyGraphics with no special-casing needed.
+    static uint8_t normalPixels[4] = {128, 128, 255, 255};
+    TextureUpload normalUpload;
+    memset(&normalUpload, 0, sizeof(normalUpload));
+    normalUpload.levelPtr[0] = normalPixels;
+    normalUpload.mipCount = 1;
+    normalUpload.width = 1;
+    normalUpload.height = 1;
+    normalUpload.format = PixelFormat::RGBA32;
+    m_defaultNormalTexture = UploadTexture(normalUpload);
+
+    static uint8_t ormPixels[4] = {255, 255, 0, 255};
+    TextureUpload ormUpload;
+    memset(&ormUpload, 0, sizeof(ormUpload));
+    ormUpload.levelPtr[0] = ormPixels;
+    ormUpload.mipCount = 1;
+    ormUpload.width = 1;
+    ormUpload.height = 1;
+    ormUpload.format = PixelFormat::RGBA32;
+    m_defaultOrmTexture = UploadTexture(ormUpload);
+
+    if (!m_defaultNormalTexture || !m_defaultOrmTexture)
+    {
+        Engine_LogError("GxmRenderer: could not create the default material textures");
+        return false;
+    }
+    return true;
+}
+
+bool GxmRenderer::InitShadowTarget()
+{
+    const uint32_t size = GFX_SHADOW_MAP_SIZE;
+
+    SceGxmRenderTargetParams targetParams;
+    memset(&targetParams, 0, sizeof(targetParams));
+    targetParams.flags = 0;
+    targetParams.width = static_cast<uint16_t>(size);
+    targetParams.height = static_cast<uint16_t>(size);
+    targetParams.scenesPerFrame = 1;
+    targetParams.multisampleMode = SCE_GXM_MULTISAMPLE_NONE;
+    targetParams.multisampleLocations = 0;
+    targetParams.driverMemBlock = -1;
+    if (sceGxmCreateRenderTarget(&targetParams, &m_shadowRenderTarget) < 0)
+    {
+        Engine_LogError("GxmRenderer: sceGxmCreateRenderTarget failed for the shadow map");
+        return false;
+    }
+
+    const uint32_t colorBytes = size * size * 4u;
+    m_shadowColorData = GpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, colorBytes, SCE_GXM_COLOR_SURFACE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_RW, &m_shadowColorUid);
+    if (!m_shadowColorData)
+    {
+        Engine_LogError("GxmRenderer: no CDRAM for the shadow map");
+        return false;
+    }
+    memset(m_shadowColorData, 0, colorBytes);
+
+    // Depth written into an ordinary A8B8G8R8 colour surface's R channel by
+    // scene_shadow_f.cg -- see the shader's own comment for why (no confirmed
+    // readable-depth-texture path on this profile).
+    if (sceGxmColorSurfaceInit(&m_shadowColorSurface, SCE_GXM_COLOR_FORMAT_A8B8G8R8, SCE_GXM_COLOR_SURFACE_LINEAR, SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT, size, size,
+                               size, m_shadowColorData) < 0)
+    {
+        Engine_LogError("GxmRenderer: sceGxmColorSurfaceInit failed for the shadow map");
+        return false;
+    }
+
+    const uint32_t alignedSize = AlignUp(size, SCE_GXM_TILE_SIZEX);
+    const uint32_t depthBytes = alignedSize * alignedSize * 4u;
+    m_shadowDepthData = GpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE, depthBytes, SCE_GXM_DEPTHSTENCIL_SURFACE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_RW, &m_shadowDepthUid);
+    if (!m_shadowDepthData)
+    {
+        Engine_LogError("GxmRenderer: no memory for the shadow map's depth buffer");
+        return false;
+    }
+    if (sceGxmDepthStencilSurfaceInit(&m_shadowDepthSurface, SCE_GXM_DEPTH_STENCIL_FORMAT_S8D24, SCE_GXM_DEPTH_STENCIL_SURFACE_TILED, alignedSize, m_shadowDepthData, nullptr) < 0)
+    {
+        Engine_LogError("GxmRenderer: sceGxmDepthStencilSurfaceInit failed for the shadow map");
+        return false;
+    }
+
+    for (int i = 0; i < GXM_MAX_RESIDENT_TEXTURES; ++i)
+    {
+        if (!m_textures[i].used)
+        {
+            m_shadowTextureSlot = i;
+            break;
+        }
+    }
+    if (m_shadowTextureSlot < 0)
+    {
+        Engine_LogError("GxmRenderer: texture registry full (%d), no slot for the shadow map", GXM_MAX_RESIDENT_TEXTURES);
+        return false;
+    }
+
+    Texture& tex = m_textures[m_shadowTextureSlot];
+    if (sceGxmTextureInitLinear(&tex.texture, m_shadowColorData, SCE_GXM_TEXTURE_FORMAT_A8B8G8R8, size, size, 0) < 0)
+    {
+        Engine_LogError("GxmRenderer: sceGxmTextureInitLinear failed for the shadow map");
+        return false;
+    }
+    // Point, not linear: the main pass does its own manual 3x3 PCF (see
+    // scene_pbr_f.cg), and filtering here on top of that would double up.
+    sceGxmTextureSetMinFilter(&tex.texture, SCE_GXM_TEXTURE_FILTER_POINT);
+    sceGxmTextureSetMagFilter(&tex.texture, SCE_GXM_TEXTURE_FILTER_POINT);
+    sceGxmTextureSetUAddrMode(&tex.texture, SCE_GXM_TEXTURE_ADDR_CLAMP);
+    sceGxmTextureSetVAddrMode(&tex.texture, SCE_GXM_TEXTURE_ADDR_CLAMP);
+    // data/uid are NOT set to m_shadowColorData/m_shadowColorUid: that memory
+    // is owned and released by DestroyGraphics directly (mirroring
+    // EnsureImageTarget's own reasoning), not by ReleaseTexture. uid stays -1,
+    // GpuFree's own no-op sentinel.
+    tex.data = m_shadowColorData;
+    tex.uid = -1;
+    tex.used = true;
+
+    return true;
+}
+
+bool GxmRenderer::InitPbrShaders()
+{
+    const SceGxmProgram* vertexGxp = reinterpret_cast<const SceGxmProgram*>(g_ScenePbrVertexGxp);
+    const SceGxmProgram* fragmentGxp = reinterpret_cast<const SceGxmProgram*>(g_ScenePbrFragmentGxp);
+
+    if (sceGxmProgramCheck(vertexGxp) < 0 || sceGxmProgramCheck(fragmentGxp) < 0)
+    {
+        Engine_LogError("GxmRenderer: a compiled PBR shader failed validation");
+        return false;
+    }
+
+    if (sceGxmShaderPatcherRegisterProgram(m_shaderPatcher, vertexGxp, &m_pbrVertexProgramId) < 0 || sceGxmShaderPatcherRegisterProgram(m_shaderPatcher, fragmentGxp, &m_pbrFragmentProgramId) < 0)
+    {
+        Engine_LogError("GxmRenderer: sceGxmShaderPatcherRegisterProgram failed for the PBR shaders");
+        return false;
+    }
+
+    const SceGxmProgramParameter* pPosition = sceGxmProgramFindParameterByName(vertexGxp, "aPosition");
+    const SceGxmProgramParameter* pNormal = sceGxmProgramFindParameterByName(vertexGxp, "aNormal");
+    const SceGxmProgramParameter* pTexcoord = sceGxmProgramFindParameterByName(vertexGxp, "aTexcoord");
+    const SceGxmProgramParameter* pColor = sceGxmProgramFindParameterByName(vertexGxp, "aColor");
+    m_pbrViewProjParam = sceGxmProgramFindParameterByName(vertexGxp, "uViewProj");
+
+    if (!pPosition || !pNormal || !pTexcoord || !pColor || !m_pbrViewProjParam)
+    {
+        Engine_LogError("GxmRenderer: the PBR vertex shader is missing an expected parameter");
+        return false;
+    }
+
+    m_pbrCameraPosParam = sceGxmProgramFindParameterByName(fragmentGxp, "uCameraPos");
+    m_pbrAmbientParam = sceGxmProgramFindParameterByName(fragmentGxp, "uAmbient");
+    m_pbrLightPosOrDirParam = sceGxmProgramFindParameterByName(fragmentGxp, "uLightPosOrDir");
+    m_pbrLightColorIntensityParam = sceGxmProgramFindParameterByName(fragmentGxp, "uLightColorIntensity");
+    m_pbrLightRangeParam = sceGxmProgramFindParameterByName(fragmentGxp, "uLightRange");
+    m_pbrShadowCasterParam = sceGxmProgramFindParameterByName(fragmentGxp, "uShadowCaster");
+    m_pbrLightViewProjParam = sceGxmProgramFindParameterByName(fragmentGxp, "uLightViewProj");
+    m_pbrBaseColorParam = sceGxmProgramFindParameterByName(fragmentGxp, "uBaseColor");
+    m_pbrEmissiveParam = sceGxmProgramFindParameterByName(fragmentGxp, "uEmissive");
+    m_pbrMrnaParam = sceGxmProgramFindParameterByName(fragmentGxp, "uMrna");
+    m_pbrAlphaMaskParam = sceGxmProgramFindParameterByName(fragmentGxp, "uAlphaMask");
+
+    if (!m_pbrCameraPosParam || !m_pbrAmbientParam || !m_pbrLightPosOrDirParam || !m_pbrLightColorIntensityParam || !m_pbrLightRangeParam || !m_pbrShadowCasterParam || !m_pbrLightViewProjParam ||
+        !m_pbrBaseColorParam || !m_pbrEmissiveParam || !m_pbrMrnaParam || !m_pbrAlphaMaskParam)
+    {
+        Engine_LogError("GxmRenderer: the PBR fragment shader is missing an expected parameter");
+        return false;
+    }
+
+    SceGxmVertexAttribute attributes[4];
+    memset(attributes, 0, sizeof(attributes));
+
+    attributes[0].streamIndex = 0;
+    attributes[0].offset = offsetof(StagedGeometry::Vertex, x);
+    attributes[0].format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
+    attributes[0].componentCount = 3;
+    attributes[0].regIndex = sceGxmProgramParameterGetResourceIndex(pPosition);
+
+    attributes[1].streamIndex = 0;
+    attributes[1].offset = offsetof(StagedGeometry::Vertex, nx);
+    attributes[1].format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
+    attributes[1].componentCount = 3;
+    attributes[1].regIndex = sceGxmProgramParameterGetResourceIndex(pNormal);
+
+    attributes[2].streamIndex = 0;
+    attributes[2].offset = offsetof(StagedGeometry::Vertex, u);
+    attributes[2].format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
+    attributes[2].componentCount = 2;
+    attributes[2].regIndex = sceGxmProgramParameterGetResourceIndex(pTexcoord);
+
+    attributes[3].streamIndex = 0;
+    attributes[3].offset = offsetof(StagedGeometry::Vertex, r);
+    attributes[3].format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
+    attributes[3].componentCount = 4;
+    attributes[3].regIndex = sceGxmProgramParameterGetResourceIndex(pColor);
+
+    SceGxmVertexStream stream;
+    memset(&stream, 0, sizeof(stream));
+    stream.stride = sizeof(StagedGeometry::Vertex);
+    stream.indexSource = SCE_GXM_INDEX_SOURCE_INDEX_32BIT;
+
+    if (sceGxmShaderPatcherCreateVertexProgram(m_shaderPatcher, m_pbrVertexProgramId, attributes, 4, &stream, 1, &m_pbrVertexProgram) < 0)
+    {
+        Engine_LogError("GxmRenderer: sceGxmShaderPatcherCreateVertexProgram failed for the PBR pipeline");
+        return false;
+    }
+
+    // Opaque only (no AlphaBlend material support -- matches every other
+    // backend's own scope cut): straight overwrite, no blend function needed.
+    SceGxmBlendInfo blendInfo;
+    memset(&blendInfo, 0, sizeof(blendInfo));
+    blendInfo.colorMask = SCE_GXM_COLOR_MASK_ALL;
+    blendInfo.colorFunc = SCE_GXM_BLEND_FUNC_ADD;
+    blendInfo.alphaFunc = SCE_GXM_BLEND_FUNC_ADD;
+    blendInfo.colorSrc = SCE_GXM_BLEND_FACTOR_ONE;
+    blendInfo.colorDst = SCE_GXM_BLEND_FACTOR_ZERO;
+    blendInfo.alphaSrc = SCE_GXM_BLEND_FACTOR_ONE;
+    blendInfo.alphaDst = SCE_GXM_BLEND_FACTOR_ZERO;
+
+    if (sceGxmShaderPatcherCreateFragmentProgram(m_shaderPatcher, m_pbrFragmentProgramId, SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4, SCE_GXM_MULTISAMPLE_NONE, &blendInfo, vertexGxp,
+                                                  &m_pbrFragmentProgram) < 0)
+    {
+        Engine_LogError("GxmRenderer: sceGxmShaderPatcherCreateFragmentProgram failed for the PBR pipeline");
+        return false;
+    }
+    return true;
+}
+
+bool GxmRenderer::InitShadowShaders()
+{
+    const SceGxmProgram* vertexGxp = reinterpret_cast<const SceGxmProgram*>(g_SceneShadowVertexGxp);
+    const SceGxmProgram* fragmentGxp = reinterpret_cast<const SceGxmProgram*>(g_SceneShadowFragmentGxp);
+
+    if (sceGxmProgramCheck(vertexGxp) < 0 || sceGxmProgramCheck(fragmentGxp) < 0)
+    {
+        Engine_LogError("GxmRenderer: a compiled shadow shader failed validation");
+        return false;
+    }
+
+    if (sceGxmShaderPatcherRegisterProgram(m_shaderPatcher, vertexGxp, &m_shadowVertexProgramId) < 0 ||
+        sceGxmShaderPatcherRegisterProgram(m_shaderPatcher, fragmentGxp, &m_shadowFragmentProgramId) < 0)
+    {
+        Engine_LogError("GxmRenderer: sceGxmShaderPatcherRegisterProgram failed for the shadow shaders");
+        return false;
+    }
+
+    const SceGxmProgramParameter* pPosition = sceGxmProgramFindParameterByName(vertexGxp, "aPosition");
+    m_shadowLightViewProjParam = sceGxmProgramFindParameterByName(vertexGxp, "uLightViewProj");
+    if (!pPosition || !m_shadowLightViewProjParam)
+    {
+        Engine_LogError("GxmRenderer: the shadow vertex shader is missing an expected parameter");
+        return false;
+    }
+
+    SceGxmVertexAttribute attribute;
+    memset(&attribute, 0, sizeof(attribute));
+    attribute.streamIndex = 0;
+    attribute.offset = offsetof(StagedGeometry::Vertex, x);
+    attribute.format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
+    attribute.componentCount = 3;
+    attribute.regIndex = sceGxmProgramParameterGetResourceIndex(pPosition);
+
+    SceGxmVertexStream stream;
+    memset(&stream, 0, sizeof(stream));
+    stream.stride = sizeof(StagedGeometry::Vertex);
+    stream.indexSource = SCE_GXM_INDEX_SOURCE_INDEX_32BIT;
+
+    if (sceGxmShaderPatcherCreateVertexProgram(m_shaderPatcher, m_shadowVertexProgramId, &attribute, 1, &stream, 1, &m_shadowVertexProgram) < 0)
+    {
+        Engine_LogError("GxmRenderer: sceGxmShaderPatcherCreateVertexProgram failed for the shadow pipeline");
+        return false;
+    }
+
+    if (sceGxmShaderPatcherCreateFragmentProgram(m_shaderPatcher, m_shadowFragmentProgramId, SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4, SCE_GXM_MULTISAMPLE_NONE, nullptr, vertexGxp,
+                                                  &m_shadowFragmentProgram) < 0)
+    {
+        Engine_LogError("GxmRenderer: sceGxmShaderPatcherCreateFragmentProgram failed for the shadow pipeline");
         return false;
     }
     return true;
@@ -857,6 +1157,114 @@ void GxmRenderer::UploadVertices()
     m_frameVertices = take3D + take2D;
 }
 
+void GxmRenderer::RenderShadowMap(const DrawLists& lists)
+{
+    m_shadowActive = false;
+
+    const LightID casterId = lists.GetShadowCasterLight();
+    if (casterId < 0 || casterId >= GFX_MAX_LIGHTS)
+        return; // no caster designated this frame
+    const Light3D& caster = lists.GetLights()[casterId];
+    // Only a directional light can cast the shadow map -- see the member
+    // comment on SetShadowCasterLight in Renderer.h and BuildLightViewProjection
+    // in StagedGeometry.h.
+    if (caster.intensity <= 0.0f || caster.type != LightType::Directional)
+        return;
+
+    // m_frame3DVertices is this frame's already-uploaded (and possibly
+    // overflow-clamped) 3D vertex count -- DynamicVertexStart indexes the
+    // same m_vertexBuffer this frame's UploadVertices just filled.
+    const uint32_t dynStart = m_geometry.DynamicVertexStart();
+    if (dynStart >= m_frame3DVertices)
+        return; // nothing dynamic uploaded this frame; leave the map unsampled (see scene_pbr_f.cg)
+    uint32_t dynCount = m_frame3DVertices - dynStart;
+    dynCount -= dynCount % 3u; // defensive: an overflow clamp could have cut mid-triangle
+    if (dynCount == 0)
+        return;
+
+    // A frustum centred on the camera, not the whole level: this pass only
+    // ever covers dynamic (model/primitive) geometry, which clusters near
+    // wherever the camera is looking, not the static world.
+    const float kShadowHalfExtent = 24.0f;
+    const float kShadowDepthExtent = 120.0f;
+    StagedGeometry::BuildLightViewProjection(caster.direction, lists.GetCamera3D().position, kShadowHalfExtent, kShadowDepthExtent, true, m_lastLightViewProj);
+
+    if (sceGxmBeginScene(m_context, 0, m_shadowRenderTarget, nullptr, nullptr, nullptr, &m_shadowColorSurface, &m_shadowDepthSurface) < 0)
+    {
+        Engine_LogError("GxmRenderer: sceGxmBeginScene failed for the shadow map");
+        return;
+    }
+
+    // sceGxm has no direct "clear colour" call -- a beginning scene's colour
+    // surface must be flood-filled by an actual draw, exactly like
+    // DrawClearQuad does for the main scene (see its own comment) and
+    // RenderToImage3D does for the offscreen preview target. Unlike those two,
+    // this flood-fills white (1.0, encoded into every channel -- see
+    // scene_shadow_f.cg) rather than a caller-chosen background colour: an
+    // uncovered shadow-map texel must read back as "nothing occludes here",
+    // not black (which SampleShadow would read as the nearest possible depth,
+    // falsely shadowing anything that samples it).
+    {
+        sceGxmSetFrontDepthFunc(m_context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+        sceGxmSetFrontDepthWriteEnable(m_context, SCE_GXM_DEPTH_WRITE_DISABLED);
+        sceGxmSetVertexProgram(m_context, m_vertexProgram);
+        sceGxmSetFragmentProgram(m_context, m_fragmentProgram);
+        sceGxmSetVertexStream(m_context, 0, m_vertexBuffer);
+
+        static const float kIdentity[16] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+        void* clearUniforms = nullptr;
+        sceGxmReserveVertexDefaultUniformBuffer(m_context, &clearUniforms);
+        sceGxmSetUniformDataF(clearUniforms, m_viewProjParam, 0, 16, kIdentity);
+        if (m_whiteTexture && m_textures[m_whiteTexture - 1u].used)
+            sceGxmSetFragmentTexture(m_context, 0, &m_textures[m_whiteTexture - 1u].texture);
+
+        // Reuses the same clear-quad vertex slot DrawClearQuad/RenderToImage3D
+        // keep just past the frame budget: this shadow scene begins, draws and
+        // ends entirely before the main scene's own BeginScene (see below),
+        // so nothing else is using it yet.
+        static const float kCorners[kClearQuadVertices][2] = {{-1.0f, -1.0f}, {1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, 1.0f}};
+        StagedGeometry::Vertex* clearQuad = static_cast<StagedGeometry::Vertex*>(m_vertexBuffer) + GFX_GXM_MAX_FRAME_VERTICES;
+        for (uint32_t i = 0; i < kClearQuadVertices; ++i)
+        {
+            memset(&clearQuad[i], 0, sizeof(StagedGeometry::Vertex));
+            clearQuad[i].x = kCorners[i][0];
+            clearQuad[i].y = kCorners[i][1];
+            clearQuad[i].r = 1.0f;
+            clearQuad[i].g = 1.0f;
+            clearQuad[i].b = 1.0f;
+            clearQuad[i].a = 1.0f;
+        }
+        const uint32_t* clearIndices = static_cast<const uint32_t*>(m_indexBuffer);
+        sceGxmDraw(m_context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U32, clearIndices + GFX_GXM_MAX_FRAME_VERTICES, kClearQuadVertices);
+    }
+
+    sceGxmSetFrontDepthFunc(m_context, SCE_GXM_DEPTH_FUNC_LESS_EQUAL);
+    sceGxmSetFrontDepthWriteEnable(m_context, SCE_GXM_DEPTH_WRITE_ENABLED);
+    sceGxmSetVertexProgram(m_context, m_shadowVertexProgram);
+    sceGxmSetFragmentProgram(m_context, m_shadowFragmentProgram);
+    sceGxmSetVertexStream(m_context, 0, m_vertexBuffer);
+
+    void* uniforms = nullptr;
+    sceGxmReserveVertexDefaultUniformBuffer(m_context, &uniforms);
+    sceGxmSetUniformDataF(uniforms, m_shadowLightViewProjParam, 0, 16, m_lastLightViewProj);
+
+    // One draw over every dynamic vertex: no per-material texture binding to
+    // change between runs (no alpha-mask cutout support yet -- see
+    // scene_shadow_f.cg), so there is nothing run boundaries buy it.
+    const uint32_t* indices = static_cast<const uint32_t*>(m_indexBuffer);
+    sceGxmDraw(m_context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U32, indices + dynStart, dynCount);
+
+    sceGxmEndScene(m_context, nullptr, nullptr);
+    // sceGxmEndScene only queues the work; the main pass samples this target
+    // as a texture this same frame, so it must actually be finished, not
+    // merely submitted, before that happens -- same reasoning as
+    // RenderToImage3D's own sceGxmFinish call.
+    sceGxmFinish(m_context);
+
+    m_shadowActive = true;
+    m_shadowCasterIndex = casterId;
+}
+
 void GxmRenderer::DrawClearQuad()
 {
     StagedGeometry::Vertex* quad = static_cast<StagedGeometry::Vertex*>(m_vertexBuffer) + GFX_GXM_MAX_FRAME_VERTICES;
@@ -902,8 +1310,6 @@ void GxmRenderer::DrawStagedGeometry()
 
     const uint32_t* indices = static_cast<const uint32_t*>(m_indexBuffer);
 
-    sceGxmSetVertexProgram(m_context, m_vertexProgram);
-    sceGxmSetFragmentProgram(m_context, m_fragmentProgram);
     sceGxmSetVertexStream(m_context, 0, m_vertexBuffer);
 
     float matrix[16];
@@ -912,12 +1318,59 @@ void GxmRenderer::DrawStagedGeometry()
     {
         sceGxmSetFrontDepthFunc(m_context, SCE_GXM_DEPTH_FUNC_LESS_EQUAL);
         sceGxmSetFrontDepthWriteEnable(m_context, SCE_GXM_DEPTH_WRITE_ENABLED);
+        sceGxmSetVertexProgram(m_context, m_pbrVertexProgram);
+        sceGxmSetFragmentProgram(m_context, m_pbrFragmentProgram);
 
         StagedGeometry::BuildViewProjection(m_drawLists.GetCamera3D(), m_width, m_height, true, matrix);
 
-        void* uniforms = nullptr;
-        sceGxmReserveVertexDefaultUniformBuffer(m_context, &uniforms);
-        sceGxmSetUniformDataF(uniforms, m_viewProjParam, 0, 16, matrix);
+        void* vertUniforms = nullptr;
+        sceGxmReserveVertexDefaultUniformBuffer(m_context, &vertUniforms);
+        sceGxmSetUniformDataF(vertUniforms, m_pbrViewProjParam, 0, 16, matrix);
+
+        // Frame-constant fragment uniforms (camera, ambient, lights, shadow
+        // caster), set once here rather than per run.
+        void* fragUniforms = nullptr;
+        sceGxmReserveFragmentDefaultUniformBuffer(m_context, &fragUniforms);
+
+        const Camera3D& camera = m_drawLists.GetCamera3D();
+        const float cameraPos[3] = {camera.position.x, camera.position.y, camera.position.z};
+        sceGxmSetUniformDataF(fragUniforms, m_pbrCameraPosParam, 0, 3, cameraPos);
+
+        const Color3& ambient = m_drawLists.GetAmbientLight();
+        const float ambientArr[3] = {ambient.r, ambient.g, ambient.b};
+        sceGxmSetUniformDataF(fragUniforms, m_pbrAmbientParam, 0, 3, ambientArr);
+
+        float lightPosOrDir[GFX_MAX_LIGHTS * 4];
+        float lightColorIntensity[GFX_MAX_LIGHTS * 4];
+        float lightRange[GFX_MAX_LIGHTS * 4];
+        const Light3D* lights = m_drawLists.GetLights();
+        for (uint32_t i = 0; i < GFX_MAX_LIGHTS; ++i)
+        {
+            const Light3D& l = lights[i];
+            const bool directional = (l.type == LightType::Directional);
+            lightPosOrDir[i * 4 + 0] = directional ? l.direction.x : l.position.x;
+            lightPosOrDir[i * 4 + 1] = directional ? l.direction.y : l.position.y;
+            lightPosOrDir[i * 4 + 2] = directional ? l.direction.z : l.position.z;
+            lightPosOrDir[i * 4 + 3] = directional ? 0.0f : 1.0f;
+            lightColorIntensity[i * 4 + 0] = l.color.r;
+            lightColorIntensity[i * 4 + 1] = l.color.g;
+            lightColorIntensity[i * 4 + 2] = l.color.b;
+            lightColorIntensity[i * 4 + 3] = l.intensity; // <= 0 means "off"; the shader skips it
+            lightRange[i * 4 + 0] = l.range;
+            lightRange[i * 4 + 1] = 0.0f;
+            lightRange[i * 4 + 2] = 0.0f;
+            lightRange[i * 4 + 3] = 0.0f;
+        }
+        sceGxmSetUniformDataF(fragUniforms, m_pbrLightPosOrDirParam, 0, GFX_MAX_LIGHTS * 4, lightPosOrDir);
+        sceGxmSetUniformDataF(fragUniforms, m_pbrLightColorIntensityParam, 0, GFX_MAX_LIGHTS * 4, lightColorIntensity);
+        sceGxmSetUniformDataF(fragUniforms, m_pbrLightRangeParam, 0, GFX_MAX_LIGHTS * 4, lightRange);
+
+        const float shadowCaster = m_shadowActive ? static_cast<float>(m_shadowCasterIndex) : -1.0f;
+        sceGxmSetUniformDataF(fragUniforms, m_pbrShadowCasterParam, 0, 1, &shadowCaster);
+        sceGxmSetUniformDataF(fragUniforms, m_pbrLightViewProjParam, 0, 16, m_lastLightViewProj);
+
+        if (m_shadowTextureSlot >= 0)
+            sceGxmSetFragmentTexture(m_context, 3, &m_textures[m_shadowTextureSlot].texture);
 
         const StagedGeometry::DrawRun* runs = m_geometry.Runs();
         for (uint32_t i = 0; i < m_geometry.RunCount(); ++i)
@@ -932,9 +1385,28 @@ void GxmRenderer::DrawStagedGeometry()
             if (!count)
                 continue;
 
-            const uint32_t handle = runs[i].texture ? runs[i].texture : m_whiteTexture;
-            if (handle && handle <= GXM_MAX_RESIDENT_TEXTURES && m_textures[handle - 1u].used)
-                sceGxmSetFragmentTexture(m_context, 0, &m_textures[handle - 1u].texture);
+            const StagedGeometry::RunMaterial& mat = runs[i].material;
+
+            void* runFragUniforms = nullptr;
+            sceGxmReserveFragmentDefaultUniformBuffer(m_context, &runFragUniforms);
+            sceGxmSetUniformDataF(runFragUniforms, m_pbrBaseColorParam, 0, 4, mat.baseColor);
+            sceGxmSetUniformDataF(runFragUniforms, m_pbrEmissiveParam, 0, 3, mat.emissive);
+            const float mrna[4] = {mat.metallic, mat.roughness, mat.normalScale, mat.alphaCutoff};
+            sceGxmSetUniformDataF(runFragUniforms, m_pbrMrnaParam, 0, 4, mrna);
+            const float alphaMask = (mat.flags & MATERIAL_FLAG_ALPHA_MASK) ? 1.0f : 0.0f;
+            sceGxmSetUniformDataF(runFragUniforms, m_pbrAlphaMaskParam, 0, 1, &alphaMask);
+
+            const uint32_t albedoHandle = runs[i].texture ? runs[i].texture : m_whiteTexture;
+            if (albedoHandle && albedoHandle <= GXM_MAX_RESIDENT_TEXTURES && m_textures[albedoHandle - 1u].used)
+                sceGxmSetFragmentTexture(m_context, 0, &m_textures[albedoHandle - 1u].texture);
+
+            const uint32_t normalHandle = mat.normalTexture ? mat.normalTexture : m_defaultNormalTexture;
+            if (normalHandle && normalHandle <= GXM_MAX_RESIDENT_TEXTURES && m_textures[normalHandle - 1u].used)
+                sceGxmSetFragmentTexture(m_context, 1, &m_textures[normalHandle - 1u].texture);
+
+            const uint32_t ormHandle = mat.ormTexture ? mat.ormTexture : m_defaultOrmTexture;
+            if (ormHandle && ormHandle <= GXM_MAX_RESIDENT_TEXTURES && m_textures[ormHandle - 1u].used)
+                sceGxmSetFragmentTexture(m_context, 2, &m_textures[ormHandle - 1u].texture);
 
             sceGxmDraw(m_context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U32, indices + first, count);
         }
@@ -944,6 +1416,8 @@ void GxmRenderer::DrawStagedGeometry()
     {
         sceGxmSetFrontDepthFunc(m_context, SCE_GXM_DEPTH_FUNC_ALWAYS);
         sceGxmSetFrontDepthWriteEnable(m_context, SCE_GXM_DEPTH_WRITE_DISABLED);
+        sceGxmSetVertexProgram(m_context, m_vertexProgram);
+        sceGxmSetFragmentProgram(m_context, m_fragmentProgram);
 
         StagedGeometry::BuildOrtho2D(m_width, m_height, true, matrix);
 
@@ -982,6 +1456,11 @@ void GxmRenderer::EndFrame()
     const double uploadStart = platform->GetTimeSeconds();
     UploadVertices();
     m_frameStats.geometryUploadMs = static_cast<float>((platform->GetTimeSeconds() - uploadStart) * 1000.0);
+
+    // A complete scene of its own (sceGxm forbids a second open scene), so
+    // this must run and finish strictly before the main frame's
+    // sceGxmBeginScene below -- never nested inside it.
+    RenderShadowMap(m_drawLists);
 
     DisplayBuffer& back = m_displayBuffers[m_backBufferIndex];
 
@@ -1031,6 +1510,9 @@ void GxmRenderer::EndFrame()
 void GxmRenderer::SetCamera3D(CameraID id, const Camera3D& camera) { m_drawLists.SetCamera3D(id, camera); }
 void GxmRenderer::SetActiveCamera3D(CameraID id) { m_drawLists.SetActiveCamera3D(id); }
 void GxmRenderer::SetActiveCamera2D(const Camera2D& camera) { m_drawLists.SetActiveCamera2D(camera); }
+void GxmRenderer::SetLight3D(LightID id, const Light3D& light) { m_drawLists.SetLight3D(id, light); }
+void GxmRenderer::SetAmbientLight(const Color3& color) { m_drawLists.SetAmbientLight(color); }
+void GxmRenderer::SetShadowCasterLight(LightID id) { m_drawLists.SetShadowCasterLight(id); }
 
 bool GxmRenderer::IsInitialized() const { return m_initialized; }
 
@@ -1064,11 +1546,30 @@ void GxmRenderer::DestroyGraphics()
             sceGxmShaderPatcherReleaseVertexProgram(m_shaderPatcher, m_vertexProgram);
         sceGxmShaderPatcherUnregisterProgram(m_shaderPatcher, m_fragmentProgramId);
         sceGxmShaderPatcherUnregisterProgram(m_shaderPatcher, m_vertexProgramId);
+
+        if (m_pbrFragmentProgram)
+            sceGxmShaderPatcherReleaseFragmentProgram(m_shaderPatcher, m_pbrFragmentProgram);
+        if (m_pbrVertexProgram)
+            sceGxmShaderPatcherReleaseVertexProgram(m_shaderPatcher, m_pbrVertexProgram);
+        sceGxmShaderPatcherUnregisterProgram(m_shaderPatcher, m_pbrFragmentProgramId);
+        sceGxmShaderPatcherUnregisterProgram(m_shaderPatcher, m_pbrVertexProgramId);
+
+        if (m_shadowFragmentProgram)
+            sceGxmShaderPatcherReleaseFragmentProgram(m_shaderPatcher, m_shadowFragmentProgram);
+        if (m_shadowVertexProgram)
+            sceGxmShaderPatcherReleaseVertexProgram(m_shaderPatcher, m_shadowVertexProgram);
+        sceGxmShaderPatcherUnregisterProgram(m_shaderPatcher, m_shadowFragmentProgramId);
+        sceGxmShaderPatcherUnregisterProgram(m_shaderPatcher, m_shadowVertexProgramId);
+
         sceGxmShaderPatcherDestroy(m_shaderPatcher);
         m_shaderPatcher = nullptr;
     }
     m_vertexProgram = nullptr;
     m_fragmentProgram = nullptr;
+    m_pbrVertexProgram = nullptr;
+    m_pbrFragmentProgram = nullptr;
+    m_shadowVertexProgram = nullptr;
+    m_shadowFragmentProgram = nullptr;
 
     GpuFree(m_vertexBufferUid);
     GpuFree(m_indexBufferUid);
@@ -1095,6 +1596,22 @@ void GxmRenderer::DestroyGraphics()
     // EnsureImageTarget), so GpuFree there was already a safe no-op; this
     // frees the surfaces and the render target that slot pointed at.
     DestroyImageTarget();
+
+    // Same reasoning as the image target above: the shadow map's texture
+    // registry entry is already handled by the cleanup loop (uid -1, see
+    // InitShadowTarget); this frees the backing memory and render target
+    // that slot pointed at.
+    GpuFree(m_shadowDepthUid);
+    m_shadowDepthUid = -1;
+    m_shadowDepthData = nullptr;
+    GpuFree(m_shadowColorUid);
+    m_shadowColorUid = -1;
+    m_shadowColorData = nullptr;
+    if (m_shadowRenderTarget)
+    {
+        sceGxmDestroyRenderTarget(m_shadowRenderTarget);
+        m_shadowRenderTarget = nullptr;
+    }
 
     if (m_renderTarget)
     {

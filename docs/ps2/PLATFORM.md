@@ -268,6 +268,20 @@ establishes pacing and memory, not headroom. No figure from hardware yet. This
 baseline predates the vector-unit batch path being enabled (see below) and
 should be retaken now that transform work has moved off the main processor.
 
+**Material system, 2026-09-22 — not yet measured.** Both backends now do real
+per-vertex dynamic lighting on the main processor for models and primitives
+(see [GIFTAG.md](renderers/GIFTAG.md)/[PS2GL.md](renderers/PS2GL.md)'s own
+Materials & lighting sections); on the direct backend this is genuinely new EE
+work with no fixed-function substrate to hand it to, unlike ps2gl's sector
+path, which folds it into VU1-accelerated `GL_LIGHTING` for primitives/models
+and a comparable EE cost only for sectors. Neither this session's environment
+nor `tools/ps2/emu_capture.py` had a working PCSX2 install to capture a real
+number against, so this is a structural description, not a measured one — retake
+alongside the vector-unit batch path's own pending hardware measurement below,
+and give `GifTagRenderer` a tighter `GFX_MAX_LIGHTS` override if the EE cost
+does not fit once it is actually measured, per
+[docs/guidelines/PERFORMANCE.md](../guidelines/PERFORMANCE.md).
+
 **Left on the table**, in the order to attack it: back-face rejection on world
 geometry, which needs correctly wound content; far-field impostors, which the
 level format budgets for and nothing draws; asynchronous sector recentring.

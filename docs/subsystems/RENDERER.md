@@ -99,6 +99,46 @@ actionable rejection into a stream of failures inside the backend. See
 **Cameras are addressed by slot.** Several three-dimensional cameras may be
 configured; one is active. Two-dimensional rendering uses a separate camera.
 
+**A model or level mesh's appearance comes from its material, resolved
+through Resource, never from a parameter on the draw call.** Materials are a
+Resource asset type ([formats/MATERIAL_FORMAT.md](../formats/MATERIAL_FORMAT.md)),
+not part of this contract; `AddModelToDrawList`/`AddLevelToDrawList` carry no
+material argument because the model or level resource already names one.
+Shading is split into two independent halves:
+
+- **Static geometry** (level sectors) carries a baked per-vertex colour from
+  the level compiler's own offline lighting pass — ambient, every placed
+  light, and shadowing all folded in at compile time, identical on every
+  backend regardless of tier. See [Level](LEVEL.md).
+- **Dynamic lights** are addressed by a fixed slot, mirroring cameras: several
+  may be configured, and every one with a positive intensity is active
+  simultaneously (unlike a camera, where exactly one is). `SetLight3D` writes
+  a slot; `SetAmbientLight` sets the flat term added on top. A dynamic light
+  shades models live every frame, and may additionally light static geometry
+  in real time as a top-up over its baked base — baking is a base layer, not
+  a ceiling.
+
+**Backend shading is not uniform, and the gap is a queryable capability, not
+a guess.** `SupportsPbrShading()` answers whether this backend shades per
+pixel with real material maps (metallic-roughness PBR) rather than
+per-vertex flat/Lambertian shading — false by default, the same
+"answer honestly, override only where it differs" shape `GetTextureBudgetBytes`
+already uses. A backend with no programmable, multi-texture shading path
+answers false and still draws every model and level correctly, just without
+normal/ORM sampling or a real BRDF; each backend spec states which side of
+this line it falls on.
+
+**One real-time shadow map, from one designated light, for dynamic geometry
+only.** `SetShadowCasterLight` designates which light slot (if any) casts it;
+an invalid slot means no shadows this frame. Only a backend answering
+`SupportsPbrShading() == true` honours this — a backend's `RenderShadowMap`
+hook is a no-op by default, called unconditionally from `Render()` so this
+stays one hardcoded extra step rather than a render graph (see the "no
+render graph" limit below, which this does not relax). Static geometry does
+not need this pass: it already carries baked, shadow-aware lighting, so the
+shadow map only ever has to cover moving things, which keeps its resolution
+and cost small. There are no cascades and no per-light shadow maps.
+
 **A model or primitive may be rendered to an image instead of the frame.**
 This is a distinct, synchronous entry point (`RenderToImage3D`), not a flag on
 the ordinary draw-list submission: the ordinary path defers everything
@@ -194,8 +234,16 @@ zero cost.
 - One active three-dimensional camera at a time.
 - Backend feature coverage is not uniform, and the gaps are recorded in each
   backend spec rather than being discoverable only by observing a missing effect.
-- There is no render graph, no post-processing chain, and no shadow system.
-  `RenderToImage3D` is not an exception to this: it is one caller-chosen object
+- There is no render graph and no post-processing chain. Real-time shadowing
+  is not an exception to this: it is one fixed, hardcoded extra pass (see
+  "one real-time shadow map" above) — a single map, from a single designated
+  light, covering dynamic geometry only, on backends where
+  `SupportsPbrShading()` is true. There are no cascades, no per-light shadow
+  maps, and no real-time shadows at all on a backend without per-pixel
+  shading; each backend spec says which. Static geometry's shadowing comes
+  from the level compiler's own offline bake instead — see
+  [Level](LEVEL.md) — not from anything this renderer schedules per frame.
+  `RenderToImage3D` is not an exception either: it is one caller-chosen object
   rendered into one scratch target, synchronously, on request — not a
   general graph of passes the renderer schedules on its own.
 - **`RenderToImage3D` draws exactly one object, always at the origin**, into a

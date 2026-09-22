@@ -51,6 +51,22 @@ namespace game
     // camera moves. Collapses the old make/update/begin_mode_3d trio into one call.
     void SetCamera3D(float posX, float posY, float posZ, float targetX, float targetY, float targetZ, float fovy);
 
+    // --- Lights -------------------------------------------------------------------
+    // Fixed dynamic-light slots, mirroring the camera-slot model. A slot with
+    // intensity <= 0 is off. `x,y,z` is a direction (normalized) for a
+    // directional light, or a world position for a point light; `range` is a
+    // point light's attenuation distance and is ignored for directional.
+    // Colour components are 0..255.
+    void SetLight(int slot, bool directional, float x, float y, float z, int r, int g, int b, float intensity, float range);
+
+    // The flat ambient term added on top of every active light's contribution.
+    void SetAmbientLight(int r, int g, int b);
+
+    // Which light slot (if any) casts the single real-time shadow map this
+    // frame; a negative slot means no shadows. Only honoured on backends
+    // whose shading is per-pixel PBR -- see docs/subsystems/RENDERER.md.
+    void SetShadowCaster(int slot);
+
     // --- Frame / background -----------------------------------------------------
     void Clear(int r, int g, int b); // clear colour, components 0..255
 
