@@ -20,7 +20,8 @@ typedef struct
     int16_t cellZ;
     uint8_t arenaSlot; // ARENA_LEVEL_DATA slot holding this sector's PSEC blob
     uint8_t state; // SectorState
-    uint8_t generation; // incremented on eviction; async callbacks compare against this
+    uint8_t generation;
+    bool isLod1; // incremented on eviction; async callbacks compare against this
     uint8_t _pad;
     uint32_t meshCount;
     Mesh meshes[LEVEL_MAX_MESHES_PER_SECTOR]; // views into the slot geometry
@@ -39,3 +40,5 @@ void Engine_Sector_Update(float worldX, float worldZ);
 // entries whose state != SECTOR_EMPTY need not be contiguous — iterate all and
 // skip SECTOR_EMPTY.
 const SectorResident* Engine_Sector_GetResidents(uint32_t* outCount);
+const SectorResident* Engine_Sector_GetLod1Residents(uint32_t* outCount);
+bool Engine_Sector_IsLod0Ready(int16_t cellX, int16_t cellZ);

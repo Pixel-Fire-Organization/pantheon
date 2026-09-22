@@ -17,8 +17,8 @@ typedef struct
     const LevelInfoChunk* info; // views into ARENA_LEVEL_DATA core slot
     const LevelMaterialEntry* materials;
     const LevelGridCell* grid;
-    const uint8_t* entsChunk; // raw ENTS chunk (count/records/props/strings)
-    const uint8_t* farfieldChunk; // raw FARF chunk, or null
+    const uint8_t* entsChunk;
+    const uint8_t* visiChunk; // raw ENTS chunk (count/records/props/strings)
 
     int32_t materialTex[LEVEL_MAX_MATERIALS]; // pinned texture resource handles
 } Level;

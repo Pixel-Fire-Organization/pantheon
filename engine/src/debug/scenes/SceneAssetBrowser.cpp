@@ -86,8 +86,8 @@ namespace
         uint16_t entityProps[BROWSE_MAX_ENTITIES];
         uint32_t entitiesShown;
 
-        bool haveFarfield;
-        FarfieldHeader farfield;
+        bool haveVisi;
+        VisiHeader visi;
     };
 
     /// One streamed sector payload: its header and mesh table.
@@ -365,8 +365,8 @@ namespace
             case LEVEL_CHUNK_ENTITIES:
                 ParseLevelEntities(locator, chunk);
                 break;
-            case LEVEL_CHUNK_FARFIELD:
-                s_Level.haveFarfield = Engine_Archive_ReadSync(&locator, chunk.offset, &s_Level.farfield, sizeof(s_Level.farfield));
+            case LEVEL_CHUNK_VISI:
+                s_Level.haveVisi = Engine_Archive_ReadSync(&locator, chunk.offset, &s_Level.visi, sizeof(s_Level.visi));
                 break;
             default:
                 break;
@@ -977,21 +977,10 @@ namespace
             Ui_EndTree();
         }
 
-        if (s_Level.haveFarfield && Ui_BeginTree("FAR FIELD", false))
+        if (s_Level.haveVisi && Ui_BeginTree("VISI (LOD1)", false))
         {
-            snprintf(value, sizeof(value), "%u", static_cast<unsigned>(s_Level.farfield.clusterCount));
-            Ui_LabelValue("CLUSTERS", value);
-            snprintf(value, sizeof(value), "%u", static_cast<unsigned>(s_Level.farfield.atlasCount));
-            Ui_LabelValue("ATLASES", value);
-            snprintf(value, sizeof(value), "%u", static_cast<unsigned>(s_Level.farfield.azimuthCount));
-            Ui_LabelValue("AZIMUTHS", value);
-            for (uint32_t i = 0; i < s_Level.farfield.atlasCount && i < 4; ++i)
-            {
-                char label[20];
-                snprintf(label, sizeof(label), "ATLAS %u MATL", static_cast<unsigned>(i));
-                snprintf(value, sizeof(value), "%u", static_cast<unsigned>(s_Level.farfield.atlasMaterial[i]));
-                Ui_LabelValue(label, value);
-            }
+            snprintf(value, sizeof(value), "%u", static_cast<unsigned>(s_Level.visi.totalCells));
+            Ui_LabelValue("TOTAL CELLS", value);
             Ui_EndTree();
         }
 

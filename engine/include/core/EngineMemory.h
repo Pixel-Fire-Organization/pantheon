@@ -26,6 +26,7 @@ typedef enum
 {
     ARENA_CONFIG,
     ARENA_LEVEL_DATA,
+    ARENA_LEVEL_LOD1,
     ARENA_RENDERER,
     ARENA_COUNT
 } ArenaType;

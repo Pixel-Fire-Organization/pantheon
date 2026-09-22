@@ -18,10 +18,14 @@
 #define MEM_BLOCK_LEVEL_DATA_SIZE (8 * 1024 * 1024) // 8 MB
 #define MEM_BLOCK_LEVEL_DATA_SLOTS 16
 
+#define MEM_BLOCK_LEVEL_LOD1_SIZE (8 * 1024 * 1024)
+#define MEM_BLOCK_LEVEL_LOD1_SLOTS 64
+
+
 #define MEM_BLOCK_RENDERER_SIZE (3 * 1024 * 1024) // 3 MB
 #define MEM_BLOCK_RENDERER_SLOTS 1
 
-#define MEM_ARENA_MAX_SLOTS 32
+#define MEM_ARENA_MAX_SLOTS 64
 
 // Slots are 16KB aligned so every slot start is quadword-aligned for DMA/VIF.
 #define MEM_ARENA_SLOT_ALIGNMENT (16 * 1024) // 16 KB
@@ -33,7 +37,7 @@
 /** ASYNC IO                  **/
 /*******************************/
 
-#define IO_ASYNC_MAX_REQUESTS 16
+#define IO_ASYNC_MAX_REQUESTS 64
 #define IO_THREAD_SLEEP_USEC 1000
 
 // Thread priorities, lowest number scheduled first. The kernel does not

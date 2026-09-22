@@ -58,6 +58,7 @@ namespace
     constexpr uint64_t GSREG_RGBAQ = 0x01;
     constexpr uint64_t GSREG_ST = 0x02;
     constexpr uint64_t GSREG_UV = 0x03;
+    constexpr uint64_t GSREG_XYZF2 = 0x04;
     constexpr uint64_t GSREG_XYZ2 = 0x05;
 
     constexpr uint64_t GIFTAG_NLOOP_MASK = 0x7FFFull;
@@ -68,6 +69,7 @@ namespace
 
     constexpr uint32_t PRIM_BIT_IIP = 1u << 3;
     constexpr uint32_t PRIM_BIT_TME = 1u << 4;
+    constexpr uint32_t PRIM_BIT_FGE = 1u << 5;
     constexpr uint32_t PRIM_BIT_ABE = 1u << 6;
     constexpr uint32_t PRIM_BIT_FST = 1u << 8;
 
@@ -348,12 +350,19 @@ void GifTagRenderer::BeginFrame()
     blend.fixed_alpha = 0x80;
     packet2_update(m_geom, draw_alpha_blending(m_geom->next, 0, &blend));
 
+    m_clearColor = Color3{0.6f, 0.6f, 0.6f};
     EmitClear(m_clearColor);
 
-    packet2_add_u64(m_geom, GifTagAd(1));
+    packet2_add_u64(m_geom, GifTagAd(2));
     packet2_add_u64(m_geom, GIF_REG_AD);
     packet2_add_u64(m_geom, GS_SET_PRMODECONT(1));
     packet2_add_u64(m_geom, GS_REG_PRMODECONT);
+    const uint8_t fr = static_cast<uint8_t>(m_clearColor.r * 255.0f);
+    const uint8_t fg = static_cast<uint8_t>(m_clearColor.g * 255.0f);
+    const uint8_t fb = static_cast<uint8_t>(m_clearColor.b * 255.0f);
+    const uint64_t fogCol = static_cast<uint64_t>(fr) | (static_cast<uint64_t>(fg) << 8) | (static_cast<uint64_t>(fb) << 16);
+    packet2_add_u64(m_geom, fogCol); // Fog Color matches sky/void
+    packet2_add_u64(m_geom, 0x3D); // GS_REG_FOGCOL
 }
 
 void GifTagRenderer::EmitPrim(uint32_t prim)
@@ -513,6 +522,7 @@ void GifTagRenderer::FlushQuads2D()
     m_quad2DCount = 0;
 }
 
+
 void GifTagRenderer::DrawGrid(int32_t slices, float spacing)
 {
     UNUSED_VAR(slices);
@@ -582,54 +592,107 @@ void GifTagRenderer::RenderLevel(const float vp[16], const FrustumPlanes& frustu
     if (!Engine_Level_Current())
         return;
 
-    uint32_t count = 0;
-    const SectorResident* residents = Engine_Sector_GetResidents(&count);
-    if (!residents)
-        return;
-
     const bool savedCull = m_backfaceCull;
     m_backfaceCull = false;
 
     uint32_t renderable = 0, visible = 0, drawnMeshes = 0;
 
-    for (uint32_t s = 0; s < count; ++s)
-    {
-        const SectorResident& sector = residents[s];
-        if (sector.state != SECTOR_READY || sector.meshCount == 0)
-            continue;
-        ++renderable;
-        if (!Frustum_AabbVisible(&frustum, sector.bounds))
+    auto renderList = [&](const SectorResident* residents, uint32_t count, bool isLod1) {
+        if (!residents) return;
+        const Vector3& camPos = m_drawLists.GetCamera3D().position;
+        
+        for (uint32_t s = 0; s < count; ++s)
         {
-            ++m_frameStats.entriesCulled;
-            continue;
-        }
-        ++visible;
-
-        for (uint32_t m = 0; m < sector.meshCount && m < LEVEL_MAX_MESHES_PER_SECTOR; ++m)
-        {
-            const Mesh& mesh = sector.meshes[m];
-            if (!mesh.vertices || mesh.vertexCount == 0)
+            const SectorResident& sector = residents[s];
+            if (sector.state != SECTOR_READY || sector.meshCount == 0)
                 continue;
 
-            uint32_t texId = 0;
-            const int32_t texResId = sector.meshTexture[m];
-            if (texResId >= 0)
+            // Ensure LOD0 is fully loaded (all textures available) before drawing,
+            // to allow LOD1 to bridge the gap and prevent white texture pop-in.
+            if (!isLod1)
             {
-                const auto* tex = static_cast<const Texture2D*>(Engine_Resource_Get(texResId));
-                if (tex)
-                    texId = tex->id;
+                bool texturesLoaded = true;
+                for (uint32_t m = 0; m < sector.meshCount; ++m)
+                {
+                    if (sector.meshTexture[m] >= 0 && !Engine_Resource_Get(sector.meshTexture[m]))
+                    {
+                        texturesLoaded = false;
+                        break;
+                    }
+                }
+                if (!texturesLoaded)
+                    continue;
             }
 
-            ++drawnMeshes;
+            ++renderable;
+            if (!Frustum_AabbVisible(&frustum, sector.bounds))
+            {
+                ++m_frameStats.entriesCulled;
+                continue;
+            }
+            ++visible;
 
-            const int components = (mesh.vertexComponents == 4) ? 4 : 3;
-            const float* uv = texId ? mesh.texcoords : nullptr;
-            if (mesh.topology == MESH_TOPOLOGY_STRIP)
-                DrawStrip(vp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId, mesh.minU, mesh.maxU, mesh.minV, mesh.maxV);
-            else
-                DrawTriangles(vp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId, mesh.minU, mesh.maxU, mesh.minV, mesh.maxV);
+            // Distance for alpha fade
+            float dx = camPos.x - sector.bounds.min.x;
+            float dz = camPos.z - sector.bounds.min.z;
+            float dist = sqrtf(dx*dx + dz*dz);
+            float alpha = 1.0f;
+            if (isLod1 && m_lodFadeEnabled)
+            {
+                const Level* curLevel = Engine_Level_Current();
+                float cellSize = curLevel ? curLevel->info->cellSize : 32.0f;
+                // Fade in starting at the LOD0 radius (1.5 cells away)
+                float fadeStart = cellSize * 1.5f;
+                float fadeEnd = fadeStart + cellSize;
+                
+                // If we are close enough that LOD1 *should* be faded out, but LOD0 hasn't
+                // finished loading its geometry and textures from the disk yet, keep LOD1
+                // fully visible to bridge the gap and prevent popping!
+                if (dist < fadeEnd && !Engine_Sector_IsLod0Ready(sector.cellX, sector.cellZ))
+                {
+                    alpha = 1.0f;
+                }
+                else
+                {
+                    if (dist < fadeStart) alpha = 0.0f;
+                    else if (dist < fadeEnd) alpha = (dist - fadeStart) / (fadeEnd - fadeStart);
+                }
+            }
+            
+            if (alpha <= 0.0f) continue;
+
+            for (uint32_t m = 0; m < sector.meshCount && m < LEVEL_MAX_MESHES_PER_SECTOR; ++m)
+            {
+                const Mesh& mesh = sector.meshes[m];
+                if (!mesh.vertices || mesh.vertexCount == 0)
+                    continue;
+
+                uint32_t texId = 0;
+                const int32_t texResId = sector.meshTexture[m];
+                if (texResId >= 0)
+                {
+                    const auto* tex = static_cast<const Texture2D*>(Engine_Resource_Get(texResId));
+                    if (tex)
+                        texId = tex->id;
+                }
+
+                ++drawnMeshes;
+
+                const int components = (mesh.vertexComponents == 4) ? 4 : 3;
+                const float* uv = texId ? mesh.texcoords : nullptr;
+                if (mesh.topology == MESH_TOPOLOGY_STRIP)
+                    DrawStrip(vp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId, mesh.minU, mesh.maxU, mesh.minV, mesh.maxV, alpha);
+                else
+                    DrawTriangles(vp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId, mesh.minU, mesh.maxU, mesh.minV, mesh.maxV, alpha);
+            }
         }
-    }
+    };
+
+    uint32_t count0 = 0;
+    renderList(Engine_Sector_GetResidents(&count0), count0, false);
+    
+    uint32_t count1 = 0;
+    renderList(Engine_Sector_GetLod1Residents(&count1), count1, true);
 
     m_backfaceCull = savedCull;
 
@@ -637,7 +700,7 @@ void GifTagRenderer::RenderLevel(const float vp[16], const FrustumPlanes& frustu
     if (!s_LoggedLevelStats)
     {
         s_LoggedLevelStats = true;
-        Engine_LogInfo("RenderLevel: residents=%u renderable=%u visible=%u drawnMeshes=%u", count, renderable, visible, drawnMeshes);
+        Engine_LogInfo("RenderLevel: residents=%u lod1=%u renderable=%u visible=%u drawnMeshes=%u", count0, count1, renderable, visible, drawnMeshes);
     }
 }
 
@@ -651,7 +714,7 @@ bool GifTagRenderer::PacketHasSpace(uint32_t qwNeeded) const
 
 uint32_t GifTagRenderer::BindCostQwords(uint32_t textureId) const { return (textureId != 0u && textureId != m_lastBoundTex) ? static_cast<uint32_t>(GFX_GIFTAG_TEXBIND_QW) : 0u; }
 
-void GifTagRenderer::DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU, uint16_t maxU, uint16_t minV, uint16_t maxV)
+void GifTagRenderer::DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU, uint16_t maxU, uint16_t minV, uint16_t maxV, float alpha)
 {
     if (!verts || vertexCount < 3)
         return;
@@ -748,11 +811,13 @@ void GifTagRenderer::DrawTriangles(const float mvp[16], const float* verts, int 
     const uint8_t r = static_cast<uint8_t>(color.r * colorScale);
     const uint8_t g = static_cast<uint8_t>(color.g * colorScale);
     const uint8_t b = static_cast<uint8_t>(color.b * colorScale);
-    const uint64_t rgbaLo = static_cast<uint64_t>(r) | (static_cast<uint64_t>(g) << 8) | (static_cast<uint64_t>(b) << 16) | (static_cast<uint64_t>(0x80) << 24);
+    const uint8_t a = static_cast<uint8_t>(alpha * 128.0f);
+    const uint64_t rgbaLo = static_cast<uint64_t>(r) | (static_cast<uint64_t>(g) << 8) | (static_cast<uint64_t>(b) << 16) | (static_cast<uint64_t>(a) << 24);
 
-    const uint32_t prim = PRIM_TRIANGLE | PRIM_BIT_IIP | (textured ? PRIM_BIT_TME : 0u);
+    uint32_t abe = (alpha < 0.99f) ? PRIM_BIT_ABE : 0u;
+    const uint32_t prim = PRIM_TRIANGLE | PRIM_BIT_IIP | PRIM_BIT_FGE | abe | (textured ? PRIM_BIT_TME : 0u);
     const uint32_t nreg = textured ? 3u : 2u;
-    const uint64_t reglist = textured ? (GSREG_ST | (GSREG_RGBAQ << 4) | (GSREG_XYZ2 << 8)) : (GSREG_RGBAQ | (GSREG_XYZ2 << 4));
+    const uint64_t reglist = textured ? (GSREG_ST | (GSREG_RGBAQ << 4) | (GSREG_XYZF2 << 8)) : (GSREG_RGBAQ | (GSREG_XYZF2 << 4));
 
     EmitPrim(prim);
     packet2_add_u64(m_geom, GifTagLo(emitted, nreg));
@@ -761,6 +826,19 @@ void GifTagRenderer::DrawTriangles(const float mvp[16], const float* verts, int 
     for (uint32_t k = 0; k < emitted; ++k)
     {
         const float q = m_q[k];
+        
+        uint32_t f = 255;
+        if (m_fogEnabled)
+        {
+            float clipW = 1.0f / q;
+            float fogDepth = (clipW - 10.0f) / 40.0f; // near 10, far 50
+            if (fogDepth < 0.0f) fogDepth = 0.0f;
+            if (fogDepth > 1.0f) fogDepth = 1.0f;
+            f = 255 - static_cast<uint32_t>(fogDepth * 255.0f);
+        }
+
+        m_xyz[k].z = (m_xyz[k].z & 0x00FFFFFF) | (f << 24);
+
         if (textured)
         {
             const float* uv = uvs + m_srcIdx[k] * 2;
@@ -918,7 +996,7 @@ void GifTagRenderer::TransformStrip(const float mvp[16], const float* verts, int
     }
 }
 
-void GifTagRenderer::DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU, uint16_t maxU, uint16_t minV, uint16_t maxV)
+void GifTagRenderer::DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU, uint16_t maxU, uint16_t minV, uint16_t maxV, float alpha)
 {
     if (!verts || vertexCount < 3)
         return;
@@ -957,11 +1035,13 @@ void GifTagRenderer::DrawStrip(const float mvp[16], const float* verts, int comp
     const uint8_t r = static_cast<uint8_t>(color.r * colorScale);
     const uint8_t g = static_cast<uint8_t>(color.g * colorScale);
     const uint8_t b = static_cast<uint8_t>(color.b * colorScale);
-    const uint64_t rgbaLo = static_cast<uint64_t>(r) | (static_cast<uint64_t>(g) << 8) | (static_cast<uint64_t>(b) << 16) | (static_cast<uint64_t>(0x80) << 24);
+    const uint8_t a = static_cast<uint8_t>(alpha * 128.0f);
+    const uint64_t rgbaLo = static_cast<uint64_t>(r) | (static_cast<uint64_t>(g) << 8) | (static_cast<uint64_t>(b) << 16) | (static_cast<uint64_t>(a) << 24);
 
-    const uint32_t prim = PRIM_TRIANGLE_STRIP | PRIM_BIT_IIP | (textured ? PRIM_BIT_TME : 0u);
+    uint32_t abe = (alpha < 0.99f) ? PRIM_BIT_ABE : 0u;
+    const uint32_t prim = PRIM_TRIANGLE_STRIP | PRIM_BIT_IIP | PRIM_BIT_FGE | abe | (textured ? PRIM_BIT_TME : 0u);
     const uint32_t nreg = textured ? 3u : 2u;
-    const uint64_t reglist = textured ? (GSREG_ST | (GSREG_RGBAQ << 4) | (GSREG_XYZ2 << 8)) : (GSREG_RGBAQ | (GSREG_XYZ2 << 4));
+    const uint64_t reglist = textured ? (GSREG_ST | (GSREG_RGBAQ << 4) | (GSREG_XYZF2 << 8)) : (GSREG_RGBAQ | (GSREG_XYZF2 << 4));
 
     uint32_t emittedTotal = 0;
     uint32_t submittedTris = 0;
@@ -989,6 +1069,19 @@ void GifTagRenderer::DrawStrip(const float mvp[16], const float* verts, int comp
         for (uint32_t k = start; k < i; ++k)
         {
             const float q = m_q[k];
+            
+            uint32_t f = 255;
+            if (m_fogEnabled)
+            {
+                float clipW = 1.0f / q;
+                float fogDepth = (clipW - 10.0f) / 40.0f;
+                if (fogDepth < 0.0f) fogDepth = 0.0f;
+                if (fogDepth > 1.0f) fogDepth = 1.0f;
+                f = 255 - static_cast<uint32_t>(fogDepth * 255.0f);
+            }
+
+            m_xyz[k].z = (m_xyz[k].z & 0x00FFFFFF) | (f << 24);
+
             if (textured)
             {
                 const float* uv = uvs + k * 2;

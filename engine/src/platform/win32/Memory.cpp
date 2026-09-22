@@ -21,12 +21,11 @@ bool Win32Platform::Win32Memory::Reserve(EngineMemoryMap* outMap)
     if (!outMap)
         return false;
 
-    const size_t arenaTotal = MEM_BLOCK_CONFIG_SIZE + MEM_BLOCK_LEVEL_DATA_SIZE + MEM_BLOCK_RENDERER_SIZE;
+    const size_t arenaTotal = MEM_BLOCK_CONFIG_SIZE + MEM_BLOCK_LEVEL_DATA_SIZE + MEM_BLOCK_LEVEL_LOD1_SIZE + MEM_BLOCK_RENDERER_SIZE;
     const size_t required = arenaTotal + MEM_POOL_MAIN_SIZE;
 
-    // Desktop has RAM to spare, but the budget is still enforced. The engine
-    // contract is that an over-budget load fails loudly instead of being quietly
-    // swapped out, and that only means something if a budget exists.
+    // The platform enforces its own ceiling. On desktop, this is an artificial
+    // testbed ceiling, bounded largely by how much physical RAM exists in a PS2.
     if (required > MEM_LIMIT_TOTAL_BUDGET)
     {
         Engine_LogError("%s: engine memory map is %zu KB, over the %d KB budget", m_owner->GetName(), required / 1024, MEM_LIMIT_TOTAL_BUDGET / 1024);
@@ -38,7 +37,7 @@ bool Win32Platform::Win32Memory::Reserve(EngineMemoryMap* outMap)
 
     if (!m_arenaBlock || !m_poolBlock)
     {
-        Engine_LogError("%s: out of memory reserving %zu KB", m_owner->GetName(), required / 1024);
+        Engine_LogError("%s: out of heap reserving %zu KB", m_owner->GetName(), required / 1024);
         Release();
         return false;
     }
@@ -52,14 +51,16 @@ bool Win32Platform::Win32Memory::Reserve(EngineMemoryMap* outMap)
     outMap->poolChunkSize = MEM_POOL_CHUNK_SIZE;
     outMap->slotAlignment = MEM_ARENA_SLOT_ALIGNMENT;
 
-    // Order matches ArenaType (ARENA_CONFIG, ARENA_LEVEL_DATA, ARENA_RENDERER).
+    // Order matches ArenaType (ARENA_CONFIG, ARENA_LEVEL_DATA, ARENA_LEVEL_LOD1, ARENA_RENDERER).
     outMap->arenas[0].size = MEM_BLOCK_CONFIG_SIZE;
     outMap->arenas[0].slots = MEM_BLOCK_CONFIG_SLOTS;
     outMap->arenas[1].size = MEM_BLOCK_LEVEL_DATA_SIZE;
     outMap->arenas[1].slots = MEM_BLOCK_LEVEL_DATA_SLOTS;
-    outMap->arenas[2].size = MEM_BLOCK_RENDERER_SIZE;
-    outMap->arenas[2].slots = MEM_BLOCK_RENDERER_SLOTS;
-    outMap->arenaCount = 3;
+    outMap->arenas[2].size = MEM_BLOCK_LEVEL_LOD1_SIZE;
+    outMap->arenas[2].slots = MEM_BLOCK_LEVEL_LOD1_SLOTS;
+    outMap->arenas[3].size = MEM_BLOCK_RENDERER_SIZE;
+    outMap->arenas[3].slots = MEM_BLOCK_RENDERER_SLOTS;
+    outMap->arenaCount = 4;
 
     Engine_LogInfo("%s: reserved %zu KB arenas + %d KB pool", m_owner->GetName(), arenaTotal / 1024, MEM_POOL_MAIN_SIZE / 1024);
     return true;

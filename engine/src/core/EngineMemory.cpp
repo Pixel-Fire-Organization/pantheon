@@ -22,6 +22,7 @@ static inline uintptr_t AlignForward(uintptr_t ptr, size_t alignment)
 // GFX resources are managed by Raylib — only engine-internal arenas remain.
 static MemoryArena g_ConfigArena;
 static MemoryArena g_LevelDataArena;
+MemoryArena g_LevelLod1Arena;
 static MemoryArena g_RendererArena;
 
 // Global pool (Encapsulated)
@@ -83,9 +84,15 @@ void Engine_ArenasInitSegmented(void* base_ptr)
     Internal_InitSlots(ARENA_CONFIG, &g_ConfigArena, MEM_BLOCK_CONFIG_SLOTS);
     ptr += MEM_BLOCK_CONFIG_SIZE;
 
+
     Engine_ArenaInit(&g_LevelDataArena, ptr, MEM_BLOCK_LEVEL_DATA_SIZE);
     Internal_InitSlots(ARENA_LEVEL_DATA, &g_LevelDataArena, MEM_BLOCK_LEVEL_DATA_SLOTS);
     ptr += MEM_BLOCK_LEVEL_DATA_SIZE;
+
+    Engine_ArenaInit(&g_LevelLod1Arena, ptr, MEM_BLOCK_LEVEL_LOD1_SIZE);
+    Internal_InitSlots(ARENA_LEVEL_LOD1, &g_LevelLod1Arena, MEM_BLOCK_LEVEL_LOD1_SLOTS);
+    ptr += MEM_BLOCK_LEVEL_LOD1_SIZE;
+
 
     Engine_ArenaInit(&g_RendererArena, ptr, MEM_BLOCK_RENDERER_SIZE);
     Internal_InitSlots(ARENA_RENDERER, &g_RendererArena, MEM_BLOCK_RENDERER_SLOTS);
@@ -253,6 +260,9 @@ void Engine_GetArenaStats(ArenaType type, size_t* outCapacity, size_t* outUsed)
         break;
     case ARENA_LEVEL_DATA:
         a = &g_LevelDataArena;
+        break;
+    case ARENA_LEVEL_LOD1:
+        a = &g_LevelLod1Arena;
         break;
     case ARENA_RENDERER:
         a = &g_RendererArena;

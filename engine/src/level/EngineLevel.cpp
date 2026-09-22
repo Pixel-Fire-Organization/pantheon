@@ -102,68 +102,6 @@ static bool Internal_EntitiesAreSane(const char* name, uint8_t* ents, size_t ent
 /// @param farfSize Its size in bytes.
 /// @param materialCount Entries in the level's material table.
 /// @return Whether every atlas, cluster and frame reference is in range.
-static bool Internal_FarfieldIsSane(const char* name, const uint8_t* farf, size_t farfSize, uint16_t materialCount)
-{
-    if (farfSize < sizeof(FarfieldHeader))
-    {
-        Engine_LogError("Level '%s': FARF chunk is %zu bytes, shorter than its header", name, farfSize);
-        return false;
-    }
-
-    const FarfieldHeader* hdr = reinterpret_cast<const FarfieldHeader*>(farf);
-    if (hdr->atlasCount > LEVEL_FARFIELD_MAX_ATLASES)
-    {
-        Engine_LogError("Level '%s': FARF names %u atlases, the header holds %d", name, hdr->atlasCount, LEVEL_FARFIELD_MAX_ATLASES);
-        return false;
-    }
-    for (uint32_t a = 0; a < hdr->atlasCount; ++a)
-    {
-        if (hdr->atlasMaterial[a] >= materialCount)
-        {
-            Engine_LogError("Level '%s': FARF atlas %u names material %u of %u", name, a, hdr->atlasMaterial[a], materialCount);
-            return false;
-        }
-    }
-    if (hdr->azimuthCount == 0)
-    {
-        Engine_LogError("Level '%s': FARF declares no azimuth views per cluster", name);
-        return false;
-    }
-
-    const uint64_t clusterBytes = static_cast<uint64_t>(hdr->clusterCount) * sizeof(FarfieldCluster);
-    if (!Level_SpanFits(sizeof(FarfieldHeader), clusterBytes, farfSize))
-    {
-        Engine_LogError("Level '%s': FARF declares %u clusters, past the end of its chunk", name, hdr->clusterCount);
-        return false;
-    }
-    const uint64_t frameBytes = farfSize - sizeof(FarfieldHeader) - clusterBytes;
-    if (frameBytes % sizeof(FarfieldFrame) != 0)
-    {
-        Engine_LogError("Level '%s': FARF frame array is %llu bytes, not a whole number of frames", name, static_cast<unsigned long long>(frameBytes));
-        return false;
-    }
-    const uint64_t frameTotal = frameBytes / sizeof(FarfieldFrame);
-
-    const FarfieldCluster* clusters = reinterpret_cast<const FarfieldCluster*>(farf + sizeof(FarfieldHeader));
-    for (uint32_t c = 0; c < hdr->clusterCount; ++c)
-    {
-        if (clusters[c].atlasIndex >= hdr->atlasCount)
-        {
-            Engine_LogError("Level '%s': FARF cluster %u samples atlas %u of %u", name, c, clusters[c].atlasIndex, hdr->atlasCount);
-            return false;
-        }
-        const uint64_t last = static_cast<uint64_t>(clusters[c].firstFrame) + hdr->azimuthCount;
-        if (last > frameTotal)
-        {
-            Engine_LogError("Level '%s': FARF cluster %u claims frames %u..%llu of %llu", name, c, clusters[c].firstFrame, static_cast<unsigned long long>(last),
-                            static_cast<unsigned long long>(frameTotal));
-            return false;
-        }
-    }
-    return true;
-}
-
-// Read the compiled level core (.ps2l) into ARENA_LEVEL_DATA slot 0 and point the
 // Level's chunk views at it. Returns false on any format/size error.
 static bool Internal_ReadCore(Level* level)
 {
@@ -220,12 +158,14 @@ static bool Internal_ReadCore(Level* level)
     uint8_t* infoChunk = nullptr;
     uint8_t* materialsChunk = nullptr;
     uint8_t* entsChunk = nullptr;
-    uint8_t* farfieldChunk = nullptr;
+    uint8_t* visiChunk = nullptr;
+    uint32_t visiSize = 0;
+    
     uint32_t infoSize = 0;
     uint32_t materialsSize = 0;
     uint32_t gridSize = 0;
     uint32_t entsSize = 0;
-    uint32_t farfieldSize = 0;
+    uint32_t farfieldSize = 0; (void)visiSize; (void)farfieldSize;
 
     const LevelChunkEntry* table = reinterpret_cast<const LevelChunkEntry*>(core + sizeof(LevelFileHeaderV2));
     for (uint32_t i = 0; i < hdr->chunkCount; ++i)
@@ -263,8 +203,11 @@ static bool Internal_ReadCore(Level* level)
             entsChunk = chunk;
             entsSize = chunkSize;
             break;
+        case LEVEL_CHUNK_VISI:
+            visiChunk = chunk;
+            visiSize = chunkSize;
+            break;
         case LEVEL_CHUNK_FARFIELD:
-            farfieldChunk = chunk;
             farfieldSize = chunkSize;
             break;
         case LEVEL_CHUNK_BSP:
@@ -338,13 +281,7 @@ static bool Internal_ReadCore(Level* level)
             return false;
         level->entsChunk = entsChunk;
     }
-
-    if (farfieldChunk)
-    {
-        if (!Internal_FarfieldIsSane(level->name, farfieldChunk, farfieldSize, info->materialCount))
-            return false;
-        level->farfieldChunk = farfieldChunk;
-    }
+    level->visiChunk = visiChunk;
 
     return true;
 }
@@ -408,7 +345,7 @@ bool Engine_Level_Load(Level* level)
     level->materials = nullptr;
     level->grid = nullptr;
     level->entsChunk = nullptr;
-    level->farfieldChunk = nullptr;
+    level->visiChunk = nullptr;
 
     // The level's core, sectors and materials live in the master archive
     // alongside every other asset (see docs/subsystems/LEVEL.md) - Internal_
@@ -420,7 +357,7 @@ bool Engine_Level_Load(Level* level)
         level->materials = nullptr;
         level->grid = nullptr;
         level->entsChunk = nullptr;
-        level->farfieldChunk = nullptr;
+    level->visiChunk = nullptr;
         return false;
     }
 

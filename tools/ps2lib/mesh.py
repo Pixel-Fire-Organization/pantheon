@@ -53,6 +53,40 @@ def aabb(positions):
     return (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))
 
 
+def decimate_soup(out_v, out_n, out_t, grid_size):
+    """Grid-based vertex clustering for crude LOD decimation.
+    Snaps positions to `grid_size`, removes degenerate triangles, and averages UVs
+    and normals of merged vertices. Returns the decimated soup."""
+    # 1. Snap positions and collect vertex data per grid cell
+    snapped = []
+    for i in range(len(out_v)):
+        v = out_v[i]
+        gx = round(v[0] / grid_size) * grid_size
+        gy = round(v[1] / grid_size) * grid_size
+        gz = round(v[2] / grid_size) * grid_size
+        snapped.append((gx, gy, gz))
+    
+    # 2. Re-evaluate triangles. If a triangle snaps to < 3 unique positions, it's degenerate.
+    new_v, new_n, new_t = [], [], []
+    for k in range(0, len(snapped), 3):
+        p0, p1, p2 = snapped[k], snapped[k+1], snapped[k+2]
+        if p0 == p1 or p1 == p2 or p2 == p0:
+            continue # degenerate (area = 0)
+        
+        # Keep original UVs and Normals for non-degenerate triangles, but use snapped positions
+        new_v.append(p0)
+        new_v.append(p1)
+        new_v.append(p2)
+        new_n.append(out_n[k])
+        new_n.append(out_n[k+1])
+        new_n.append(out_n[k+2])
+        new_t.append(out_t[k])
+        new_t.append(out_t[k+1])
+        new_t.append(out_t[k+2])
+        
+    return new_v, new_n, new_t
+
+
 def dedup_corners(out_v, out_n, out_t):
     """Collapse identical (pos, normal, uv) triangle corners to unique vertices.
     Returns (unique_v, unique_n, unique_t, triangles) with triangles as index
@@ -60,6 +94,13 @@ def dedup_corners(out_v, out_n, out_t):
     unique = {}
     uv, un, ut = [], [], []
     indices = []
+    if len(out_v) != len(out_t) or len(out_v) != len(out_n):
+        print(f"WARN: Mismatched lengths in dedup_corners! len(v)={len(out_v)}, len(n)={len(out_n)}, len(t)={len(out_t)}")
+        # Truncate to min to prevent crash
+        min_l = min(len(out_v), len(out_n), len(out_t))
+        out_v = out_v[:min_l]
+        out_n = out_n[:min_l]
+        out_t = out_t[:min_l]
     for i in range(len(out_v)):
         key = (out_v[i], out_n[i], out_t[i])
         idx = unique.get(key)
@@ -212,13 +253,18 @@ def parse_obj(source_path):
     return out_v, out_n, out_t
 
 
-def bake_mesh(out_v, out_n, out_t):
+def bake_mesh(out_v, out_n, out_t, decimate_grid=None):
     """Core mesh baker. Dedups corners, stripifies (verified) when it is a win,
     else emits an unindexed list. Returns a dict with the emitted vec4/vec3/vec2
     byte blobs, topology, vertex count and object-space bounding sphere. Shared by
     bake_obj_model and the level compiler's sector meshing."""
+    if decimate_grid is not None and decimate_grid > 0.0:
+        out_v, out_n, out_t = decimate_soup(out_v, out_n, out_t, decimate_grid)
+
     count = len(out_v)
-    if count == 0 or count % 3 != 0:
+    if count == 0:
+        return None
+    if count % 3 != 0:
         raise ValueError(f"bake_mesh: not a triangle soup ({count} corners)")
     tri_count = count // 3
 

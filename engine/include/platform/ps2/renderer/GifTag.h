@@ -28,6 +28,8 @@ class GifTagRenderer final : public Renderer
     packet2_t* m_env = nullptr;
     uint8_t m_geomIndex = 0;
     bool m_framePending = false;
+    bool m_fogEnabled = true;
+    bool m_lodFadeEnabled = true;
 
     xyz_t* m_xyz = nullptr;
     uint32_t* m_srcIdx = nullptr;
@@ -108,7 +110,7 @@ class GifTagRenderer final : public Renderer
     /// @param components Floats per position: 3, or 4 for baked geometry.
     /// @param uvs Two floats per vertex, or null when untextured.
     /// @param textureId A backend texture handle, or zero when untextured.
-    void DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU = 0, uint16_t maxU = 0, uint16_t minV = 0, uint16_t maxV = 0);
+    void DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU = 0, uint16_t maxU = 0, uint16_t minV = 0, uint16_t maxV = 0, float alpha = 1.0f);
 
     /// Transform and emit one triangle strip, split into runs of visible
     /// vertices.
@@ -116,7 +118,7 @@ class GifTagRenderer final : public Renderer
     /// @param components Floats per position: 3, or 4 for baked geometry.
     /// @param uvs Two floats per vertex, or null when untextured.
     /// @param textureId A backend texture handle, or zero when untextured.
-    void DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU = 0, uint16_t maxU = 0, uint16_t minV = 0, uint16_t maxV = 0);
+    void DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId, uint16_t minU = 0, uint16_t maxU = 0, uint16_t minV = 0, uint16_t maxV = 0, float alpha = 1.0f);
     /// Write the sampling and buffer registers for a texture, unless that same
     /// texture is already bound this frame.
     void BindTexture(uint32_t textureId);
@@ -181,6 +183,9 @@ public:
 
     bool IsInitialized() const override;
     void Shutdown() override;
+
+    void SetFogEnabled(bool enabled) override { m_fogEnabled = enabled; }
+    void SetLodFadeEnabled(bool enabled) override { m_lodFadeEnabled = enabled; }
 
     DrawStats GetLastStats() const override;
     Camera3D GetActiveCamera3D() const override;

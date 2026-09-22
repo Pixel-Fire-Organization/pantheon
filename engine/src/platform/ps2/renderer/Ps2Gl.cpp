@@ -539,6 +539,24 @@ void Ps2GlRenderer::RenderLevel()
         const SectorResident& sec = residents[s];
         if (sec.state != SECTOR_READY || sec.meshCount == 0)
             continue;
+
+        // Ensure LOD0 is fully loaded (all textures available) before drawing,
+        // to allow LOD1 to bridge the gap and prevent white texture pop-in.
+        if (!sec.isLod1)
+        {
+            bool texturesLoaded = true;
+            for (uint32_t m = 0; m < sec.meshCount; ++m)
+            {
+                if (sec.meshTexture[m] >= 0 && !Engine_Resource_Get(sec.meshTexture[m]))
+                {
+                    texturesLoaded = false;
+                    break;
+                }
+            }
+            if (!texturesLoaded)
+                continue;
+        }
+
         ++renderable;
         if (!Frustum_AabbVisible(&m_frustum, sec.bounds))
         {

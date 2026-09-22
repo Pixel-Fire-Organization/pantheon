@@ -17,6 +17,10 @@
 #define MEM_BLOCK_LEVEL_DATA_SIZE (32 * 1024 * 1024) // 32 MB
 #define MEM_BLOCK_LEVEL_DATA_SLOTS 16
 
+#define MEM_BLOCK_LEVEL_LOD1_SIZE (16 * 1024 * 1024) // 16 MB
+#define MEM_BLOCK_LEVEL_LOD1_SLOTS 32
+
+
 #define MEM_BLOCK_RENDERER_SIZE (16 * 1024 * 1024) // 16 MB
 #define MEM_BLOCK_RENDERER_SLOTS 1
 
@@ -33,7 +37,7 @@
 /** ASYNC IO                  **/
 /*******************************/
 
-#define IO_ASYNC_MAX_REQUESTS 32
+#define IO_ASYNC_MAX_REQUESTS 64
 #define IO_THREAD_SLEEP_USEC 1000
 #define IO_DRAIN_MAX_SPINS 10000
 #define IO_THREAD_STACK_SIZE (64 * 1024)

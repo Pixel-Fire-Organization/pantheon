@@ -348,7 +348,7 @@ void Engine_PerfLogger_Tick()
     Engine_LogInfo("[PERF] System Heap (malloc) : %zu / %zu KB", heapUsed / 1024, heapTotal / 1024);
 
     // 2. Arenas (Sub-allocated from Heap)
-    const char* arenaNames[] = {"Config", "LevelData", "Renderer"};
+    const char* arenaNames[] = {"Config", "LevelData", "LevelLod1", "Renderer"};
     for (int i = 0; i < (int)ARENA_COUNT; ++i)
     {
         size_t cap = 0, used = 0;

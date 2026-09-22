@@ -145,6 +145,42 @@
           "engineHook": "LockDoor"
         }
       ]
+    },
+    {
+      "name": "DetailComponent",
+      "description": "Marks structural brushes as detail, and optionally controls LOD1 generation.",
+      "properties": [
+        {
+          "name": "include_in_lod1",
+          "type": "bool",
+          "description": "If false, this detail brush will be stripped from the LOD1 low-poly mesh.",
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "WorldComponent",
+      "description": "Global map compilation settings. Only evaluated at compile-time by compile_level.py.",
+      "properties": [
+        {
+          "name": "_map_scale",
+          "type": "float",
+          "description": "World scale factor. Quake units (QU) to Engine meters (EM). e.g., 0.03125 EM for 1 QU = 1/32 EM.",
+          "default": 0.03125
+        },
+        {
+          "name": "_sector_size",
+          "type": "float",
+          "description": "Streaming grid cell size in EM. Determines streaming chunk granularity.",
+          "default": 32.0
+        },
+        {
+          "name": "_max_edge",
+          "type": "float",
+          "description": "Max triangle edge length in EM. Prevents large polygons from vanishing abruptly on PS2.",
+          "default": 16.0
+        }
+      ]
     }
   ],
   "entities": [
@@ -190,6 +226,22 @@
       "description": "Door that can be interacted by a player, NPCs or other physics objecs",
       "components": [
         "CollisionComponent"
+      ]
+    },
+    {
+      "classname": "func_detail",
+      "classType": "SolidClass",
+      "description": "Decorative brushwork that does not cut BSP leaves. Dropped from LOD1 unless include_in_lod1 is true.",
+      "components": [
+        "DetailComponent"
+      ]
+    },
+    {
+      "classname": "worldspawn",
+      "classType": "SolidClass",
+      "description": "The base world geometry. Holds global map properties.",
+      "components": [
+        "WorldComponent"
       ]
     }
   ]

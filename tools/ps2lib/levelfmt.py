@@ -16,10 +16,11 @@ CHUNK_GRID = 0x44524753       # "SGRD"
 CHUNK_ENTITIES = 0x53544E45   # "ENTS"
 CHUNK_FARFIELD = 0x46524146   # "FARF"
 CHUNK_BSP = 0x54505342        # "BSPT" (reserved)
+CHUNK_VISI = 0x49534956       # "VISI"
 
 CHUNK_NAMES = {
     CHUNK_INFO: "INFO", CHUNK_MATERIALS: "MATL", CHUNK_GRID: "SGRD",
-    CHUNK_ENTITIES: "ENTS", CHUNK_FARFIELD: "FARF", CHUNK_BSP: "BSPT",
+    CHUNK_ENTITIES: "ENTS", CHUNK_FARFIELD: "FARF", CHUNK_BSP: "BSPT", CHUNK_VISI: "VISI",
 }
 
 SECTOR_MAGIC = 0x43455350  # "PSEC"
@@ -206,111 +207,18 @@ def pack_sector(meshes):
     return bytes(buf), (tuple(mn), tuple(mx))
 
 
-def pack_farfield(atlas_materials, azimuth_count, clusters, frames):
-    """clusters: list of {center(3), half_w, half_h, atlas_index, first_frame}.
-    frames: flat list of (u0, v0, u1, v1)."""
-    if len(atlas_materials) > FARFIELD_MAX_ATLASES:
-        raise ValueError(f"far field names {len(atlas_materials)} atlases, the header holds {FARFIELD_MAX_ATLASES}")
-    for c in clusters:
-        if c["first_frame"] + azimuth_count > len(frames):
-            raise ValueError(f"far-field cluster at frame {c['first_frame']} needs {azimuth_count} frames, {len(frames)} exist")
-    atlas = list(atlas_materials) + [0] * (FARFIELD_MAX_ATLASES - len(atlas_materials))
-    out = bytearray()
-    out += struct.pack(_FARFHDR, len(clusters), len(atlas_materials),
-                       atlas[0], atlas[1], atlas[2], atlas[3], azimuth_count, 0)
-    for c in clusters:
-        ct = c["center"]
-        out += struct.pack(_FARFCLUSTER, ct[0], ct[1], ct[2], c["half_w"], c["half_h"],
-                           c["atlas_index"], c["first_frame"])
-    for f in frames:
-        out += struct.pack(_FARFFRAME, *f)
+
+def pack_visi(cells_x, cells_z, pvs):
+    """Packs visibility graph. pvs is a list of lists of (tx, tz)."""
+    # format: uint32 total_cells
+    # for each cell: uint32 num_visible, [uint16 tx, uint16 tz] * num_visible
+    out = bytearray(struct.pack('<I', cells_x * cells_z))
+    for visible in pvs:
+        out.extend(struct.pack('<I', len(visible)))
+        for (tx, tz) in visible:
+            out.extend(struct.pack('<HH', tx, tz))
+    
+    # padding
+    pad = (16 - (len(out) % 16)) % 16
+    out.extend(b'\x00' * pad)
     return bytes(out)
-
-
-# --- readers (for dump_level.py / tests) ------------------------------------
-
-def parse_ps2l(blob):
-    magic, version, chunk_count, total = struct.unpack_from(_HDR, blob, 0)
-    if magic != LEVEL_FILE_MAGIC:
-        raise ValueError(f"bad .ps2l magic 0x{magic:08X}")
-    chunks = []
-    pos = 16
-    for _ in range(chunk_count):
-        ctype, off, size, _res = struct.unpack_from(_CHUNK, blob, pos)
-        pos += 16
-        chunks.append({"type": ctype, "name": CHUNK_NAMES.get(ctype, "????"),
-                       "offset": off, "size": size})
-    return {"magic": magic, "version": version, "chunk_count": chunk_count,
-            "total_size": total, "chunks": chunks}
-
-
-def parse_info(blob, chunk):
-    name, ox, oz, cs, cx, cz, mc, ec, _r0, _r1 = struct.unpack_from(_INFO, blob, chunk["offset"])
-    return {"name": name.split(b"\x00")[0].decode("utf-8", "ignore"),
-            "origin_x": ox, "origin_z": oz, "cell_size": cs,
-            "cells_x": cx, "cells_z": cz, "material_count": mc, "entity_count": ec}
-
-
-def parse_materials(blob, chunk):
-    keys = []
-    pos = chunk["offset"]
-    end = chunk["offset"] + chunk["size"]
-    while pos < end:
-        (raw,) = struct.unpack_from(_MATERIAL, blob, pos)
-        keys.append(raw.split(b"\x00")[0].decode("utf-8", "ignore"))
-        pos += 64
-    return keys
-
-
-def parse_grid(blob, chunk, cells_x, cells_z):
-    cells = []
-    pos = chunk["offset"]
-    for _ in range(cells_x * cells_z):
-        sb, mnx, mny, mnz, mxx, mxy, mxz, ef, ec = struct.unpack_from(_GRIDCELL, blob, pos)
-        pos += 32
-        cells.append({"sector_bytes": sb, "aabb_min": (mnx, mny, mnz),
-                      "aabb_max": (mxx, mxy, mxz), "ent_first": ef, "ent_count": ec})
-    return cells
-
-
-def parse_sector(blob):
-    magic, version, mesh_count, bvh, mnx, mny, mnz, mxx, mxy, mxz, _r0, _r1 = struct.unpack_from(_SECHDR, blob, 0)
-    if magic != SECTOR_MAGIC:
-        raise ValueError(f"bad PSEC magic 0x{magic:08X}")
-    meshes = []
-    pos = struct.calcsize(_SECHDR)
-    for _ in range(mesh_count):
-        vc, mi, vo, no, uo, topo, cxx, cyy, czz, rad, min_u, max_u, min_v, max_v = struct.unpack_from(_MESHENTRY, blob, pos)
-        pos += 48
-        meshes.append({"vert_count": vc, "material_index": mi, "verts_offset": vo,
-                       "norms_offset": no, "uvs_offset": uo, "topology": topo,
-                       "center": (cxx, cyy, czz), "radius": rad,
-                       "min_u": min_u, "max_u": max_u, "min_v": min_v, "max_v": max_v})
-    return {"magic": magic, "version": version, "mesh_count": mesh_count,
-            "aabb_min": (mnx, mny, mnz), "aabb_max": (mxx, mxy, mxz), "meshes": meshes}
-
-
-def parse_farfield(blob, chunk):
-    """Header, clusters and frames of a FARF chunk. The frame count is whatever
-    the chunk has room for after the clusters, exactly as the runtime derives it."""
-    base = chunk["offset"]
-    cluster_count, atlas_count, a0, a1, a2, a3, azimuth_count, ground = struct.unpack_from(_FARFHDR, blob, base)
-    header_size = struct.calcsize(_FARFHDR)
-    cluster_size = struct.calcsize(_FARFCLUSTER)
-    frame_size = struct.calcsize(_FARFFRAME)
-    clusters = []
-    pos = base + header_size
-    for _ in range(cluster_count):
-        cx, cy, cz, hw, hh, ai, ff = struct.unpack_from(_FARFCLUSTER, blob, pos)
-        pos += cluster_size
-        clusters.append({"center": (cx, cy, cz), "half_w": hw, "half_h": hh,
-                         "atlas_index": ai, "first_frame": ff})
-    frame_bytes = chunk["size"] - header_size - cluster_size * cluster_count
-    frames = []
-    for _ in range(frame_bytes // frame_size):
-        frames.append(struct.unpack_from(_FARFFRAME, blob, pos))
-        pos += frame_size
-    return {"cluster_count": cluster_count, "atlas_count": atlas_count,
-            "atlas_materials": (a0, a1, a2, a3)[:atlas_count],
-            "azimuth_count": azimuth_count, "ground_offset": ground,
-            "clusters": clusters, "frames": frames, "frame_bytes": frame_bytes}
