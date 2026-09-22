@@ -13,6 +13,7 @@
 #include "core/EngineMemory.h"
 #include "graphics/DrawList.h"
 #include "graphics/PrimitiveGeometry.h"
+#include "graphics/VertexLighting.h"
 #include "level/EngineLevel.h"
 #include "level/EngineSector.h"
 #include "resources/EngineResource.h"
@@ -186,6 +187,20 @@ Ps2GlRenderer::Ps2GlRenderer(const EngineConfig& config)
     glEnable(GL_CULL_FACE);
     glEnable(GL_TEXTURE_2D);
 
+    // Dynamic lighting for models/primitives (no baked colour -- see
+    // RenderLevel for why sector meshes are handled differently): left
+    // enabled for the whole renderer's lifetime, same as depth test/cull
+    // above. GL_LIGHTING itself is toggled per frame in Render() (only on
+    // while at least one light or nonzero ambient is active, so untouched
+    // content isn't forced dark by an empty light rig).
+
+    m_litColorScratch = static_cast<float*>(memalign(16, sizeof(float) * 4 * GFX_GIFTAG_MAX_VERTS));
+    if (!m_litColorScratch)
+    {
+        Engine_LogError("Ps2GlRenderer: out of memory for the lit-colour scratch buffer");
+        return;
+    }
+
     // Separated primitive geometry lives in the renderer arena; DrawLists fills
     // it, then we compile ps2gl display lists from it (GL context is ready now).
     m_megaBatch = static_cast<float*>(Engine_GetSlot(ARENA_RENDERER, 0));
@@ -218,6 +233,8 @@ void Ps2GlRenderer::Shutdown()
     if (m_dlCylinder)
         glDeleteLists(m_dlCylinder, 1);
     m_dlCube = m_dlSphere = m_dlCylinder = 0;
+    free(m_litColorScratch);
+    m_litColorScratch = nullptr;
     m_drawLists.Shutdown();
     pglFinish();
     m_initialized = false;
@@ -495,6 +512,14 @@ void Ps2GlRenderer::Render()
     glLoadIdentity();
     ApplyCameraTransform(camera);
 
+    // Dynamic lights, world-space: fixed-function GL bakes GL_POSITION into
+    // whatever the modelview matrix is AT THE MOMENT glLightfv is called (real
+    // GL 1.x behaviour, and ps2gl mirrors it -- see CImmLight::SetPosition/
+    // SetDirection in external/ps2gl/src/lighting.cpp), so this must run here,
+    // with modelview still the view-only transform ApplyCameraTransform just
+    // loaded -- never after a per-object model matrix has been pushed.
+    ApplyDynamicLights();
+
     // Rebuild the CPU cull frustum from the same projection/view fed to GL.
     {
         float proj[16], view[16], vp[16];
@@ -525,12 +550,22 @@ void Ps2GlRenderer::RenderLevel()
     uint32_t count = 0;
     const SectorResident* residents = Engine_Sector_GetResidents(&count);
 
-    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
     // Compiled level faces are not guaranteed to be wound for GL's front-face
     // convention after the map->engine coordinate transform, so draw both sides
     // (no back-face cull) — like the skybox and the 2D pass.
     glDisable(GL_CULL_FACE);
+    // Sector meshes are lit on the EE (VertexLighting_Compute below), not
+    // through fixed-function GL_LIGHTING: that equation multiplies a per-
+    // vertex "diffuse material" by each light, which is correct for a raw,
+    // unlit material colour but wrong for an already-baked one -- it would
+    // let a dark baked shadow block any new dynamic light from ever
+    // relighting it, however bright that light is. Left off for the rest of
+    // the frame too (harmless -- next frame's Render() sets it fresh via
+    // ApplyDynamicLights before anything else draws).
+    glDisable(GL_LIGHTING);
     int32_t lastTexResId = -2;
+    int32_t lastMaterialHandle = -2;
+    float materialTint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 
     uint32_t renderable = 0, visibleSectors = 0, drawnMeshes = 0;
 
@@ -556,7 +591,8 @@ void Ps2GlRenderer::RenderLevel()
                 continue;
             ++drawnMeshes;
 
-            const int32_t texResId = sec.meshTexture[m];
+            const int32_t materialHandle = sec.meshMaterial[m];
+            const int32_t texResId = Engine_Resource_GetMaterialTexture(materialHandle, MATERIAL_PBR_TEX_ALBEDO);
             if (texResId != lastTexResId)
             {
                 const auto* tex = (texResId >= 0) ? static_cast<const Texture2D*>(Engine_Resource_Get(texResId)) : nullptr;
@@ -573,15 +609,57 @@ void Ps2GlRenderer::RenderLevel()
                     lastTexResId = -2;
                 }
             }
+            if (materialHandle != lastMaterialHandle)
+            {
+                materialTint[0] = materialTint[1] = materialTint[2] = materialTint[3] = 1.0f;
+                Engine_Resource_GetMaterialColor(materialHandle, MATERIAL_PBR_COLOR_BASE, materialTint);
+                lastMaterialHandle = materialHandle;
+            }
+
+            const int components = (mesh.vertexComponents == 4) ? 4 : 3;
 
             glEnableClientState(GL_VERTEX_ARRAY);
             glEnableClientState(GL_NORMAL_ARRAY);
             glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-            glVertexPointer((mesh.vertexComponents == 4) ? 4 : 3, GL_FLOAT, 0, mesh.vertices);
+            glVertexPointer(components, GL_FLOAT, 0, mesh.vertices);
             if (mesh.normals)
                 glNormalPointer(GL_FLOAT, 0, mesh.normals);
             if (mesh.texcoords)
                 glTexCoordPointer(2, GL_FLOAT, 0, mesh.texcoords);
+
+            // Baked static lighting (level compiler output) plus this frame's
+            // dynamic lights, composed additively on the EE -- see the
+            // comment on VertexLighting_Compute and the one above, on why
+            // real GL_LIGHTING cannot be used for this. mesh.vertices/
+            // normals/colors are already world-space (baked that way by the
+            // compiler), so no per-vertex transform is needed here, only the
+            // light sum.
+            const uint32_t litCount = (static_cast<uint32_t>(mesh.vertexCount) < GFX_GIFTAG_MAX_VERTS) ? static_cast<uint32_t>(mesh.vertexCount) : GFX_GIFTAG_MAX_VERTS;
+            const Light3D* lights = m_drawLists.GetLights();
+            const Color3& ambient = m_drawLists.GetAmbientLight();
+            for (uint32_t vi = 0; vi < litCount; ++vi)
+            {
+                const float* p = mesh.vertices + static_cast<size_t>(vi) * components;
+                const Vector3 worldPos{p[0], p[1], p[2]};
+                const Vector3 worldNormal = mesh.normals ? Vector3{mesh.normals[vi * 3 + 0], mesh.normals[vi * 3 + 1], mesh.normals[vi * 3 + 2]} : Vector3{0.0f, 0.0f, 0.0f};
+                const float* bc = mesh.colors ? mesh.colors + static_cast<size_t>(vi) * 4 : nullptr;
+                const float baseline[4] = {bc ? bc[0] : 1.0f, bc ? bc[1] : 1.0f, bc ? bc[2] : 1.0f, bc ? bc[3] : 1.0f};
+
+                float lit[4];
+                VertexLighting_Compute(worldPos, worldNormal, baseline, lights, GFX_MAX_LIGHTS, ambient, lit);
+
+                // Clamp before this reaches the GS as an 8-bit colour, and
+                // apply the material's flat baseColorFactor tint.
+                float* out = m_litColorScratch + static_cast<size_t>(vi) * 4;
+                for (int c = 0; c < 3; ++c)
+                {
+                    const float tinted = lit[c] * materialTint[c];
+                    out[c] = (tinted < 0.0f) ? 0.0f : ((tinted > 1.0f) ? 1.0f : tinted);
+                }
+                out[3] = lit[3] * materialTint[3];
+            }
+            glEnableClientState(GL_COLOR_ARRAY);
+            glColorPointer(4, GL_FLOAT, 0, m_litColorScratch);
 
             const GLenum mode = (mesh.topology == MESH_TOPOLOGY_STRIP) ? GL_TRIANGLE_STRIP : GL_TRIANGLES;
             glDrawArrays(mode, 0, mesh.vertexCount);
@@ -594,6 +672,10 @@ void Ps2GlRenderer::RenderLevel()
     }
     glEnable(GL_CULL_FACE);
     glDisable(GL_TEXTURE_2D);
+    // Defensive: this is the last draw call of the frame, so a sector mesh
+    // that enabled GL_COLOR_ARRAY above must not leave it enabled into next
+    // frame's RenderSkybox/RenderPrimitives, which never touch it themselves.
+    glDisableClientState(GL_COLOR_ARRAY);
 
     // One-shot diagnostic: how many sectors were renderable / visible / drawn.
     static bool s_LoggedLevelStats = false;
@@ -626,6 +708,10 @@ void Ps2GlRenderer::RenderSkybox(const DrawLists& lists)
     glTranslatef(camera.position.x, camera.position.y, camera.position.z);
     glScalef(500.0f, 500.0f, 500.0f);
 
+    // The sky is never scene-lit, regardless of this frame's dynamic lights
+    // (see ApplyDynamicLights) -- restore afterwards rather than leave
+    // lighting off for the rest of the frame's draws.
+    glDisable(GL_LIGHTING);
     glBegin(GL_TRIANGLES);
     glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
     for (uint32_t i = 0; i < PRIMITIVE_CUBE_VERTEX_COUNT; ++i)
@@ -636,6 +722,8 @@ void Ps2GlRenderer::RenderSkybox(const DrawLists& lists)
         glVertex3f(v[0], v[1], v[2]);
     }
     glEnd();
+    if (m_lightingActive)
+        glEnable(GL_LIGHTING);
 
     glPopMatrix();
     glEnable(GL_DEPTH_TEST);
@@ -684,7 +772,8 @@ void Ps2GlRenderer::RenderPrimitives(DrawLists& lists)
                 continue;
             }
 
-            glColor4f(entry.color.r, entry.color.g, entry.color.b, 1.0f);
+            const float entryTint[4] = {entry.color.r, entry.color.g, entry.color.b, 1.0f};
+            ApplyMaterialTint(entryTint);
 
             glPushMatrix();
             glTranslatef(pos.x, pos.y, pos.z);
@@ -745,7 +834,8 @@ void Ps2GlRenderer::RenderPrimitives(DrawLists& lists)
                 lastTexId = entry.textureId;
             }
 
-            glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+            static const float kWhiteTint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+            ApplyMaterialTint(kWhiteTint);
 
             glPushMatrix();
             glTranslatef(pos.x, pos.y, pos.z);
@@ -831,8 +921,6 @@ void Ps2GlRenderer::RenderModels(const DrawLists& lists)
             glRotatef(rot.z, 0.0f, 0.0f, 1.0f);
         glScalef(scl.x, scl.y, scl.z);
 
-        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-
         for (uint8_t meshIdx = 0; meshIdx < dl->meshCount; ++meshIdx)
         {
             if (dl->handles[meshIdx] == 0)
@@ -842,11 +930,13 @@ void Ps2GlRenderer::RenderModels(const DrawLists& lists)
                 break;
 
             const int matIdx = (model->meshMaterial) ? model->meshMaterial[meshIdx] : 0;
+            float baseColorRgba[4] = {1.0f, 1.0f, 1.0f, 1.0f};
             if (model->materials)
             {
-                // Resolve the diffuse texture from its resource handle at draw
-                // time (model texture deps stream in asynchronously).
-                const int32_t texResId = model->materials[matIdx].maps[MATERIAL_MAP_DIFFUSE].textureResourceId;
+                const int32_t materialHandle = model->materials[matIdx];
+                // Resolve the material's albedo texture from its resource
+                // handle at draw time (material deps stream in asynchronously).
+                const int32_t texResId = Engine_Resource_GetMaterialTexture(materialHandle, MATERIAL_PBR_TEX_ALBEDO);
                 if (texResId != lastTexResId)
                 {
                     const auto* tex = (texResId >= 0) ? static_cast<const Texture2D*>(Engine_Resource_Get(texResId)) : nullptr;
@@ -863,7 +953,14 @@ void Ps2GlRenderer::RenderModels(const DrawLists& lists)
                         lastTexResId = -2;
                     }
                 }
+                Engine_Resource_GetMaterialColor(materialHandle, MATERIAL_PBR_COLOR_BASE, baseColorRgba);
             }
+            // Standalone models never carry baked per-vertex colour (only
+            // level-sector meshes do), so no GL_COLOR_ARRAY here -- the
+            // material's baseColorFactor is the per-mesh tint instead, and
+            // GL_COLOR_ARRAY is guaranteed already off (RenderLevel, the only
+            // thing that ever enables it, always runs last -- see Render()).
+            ApplyMaterialTint(baseColorRgba);
 
             glCallList(dl->handles[meshIdx]);
             ++m_frameDrawCallsUsed;
@@ -995,6 +1092,88 @@ void Ps2GlRenderer::ApplyCameraTransform(const Camera3D& camera) const
     const float viewMatrix[16] = {
         side.x, up.x, -forward.x, 0.0f, side.y, up.y, -forward.y, 0.0f, side.z, up.z, -forward.z, 0.0f, -Dot(side, camera.position), -Dot(up, camera.position), Dot(forward, camera.position), 1.0f};
     glMultMatrixf(viewMatrix);
+}
+
+void Ps2GlRenderer::ApplyDynamicLights() const
+{
+    const Light3D* lights = m_drawLists.GetLights();
+    const Color3& ambient = m_drawLists.GetAmbientLight();
+
+    const float ambientRgba[4] = {ambient.r, ambient.g, ambient.b, 1.0f};
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambientRgba);
+
+    bool anyActive = false;
+    static const GLenum kLightEnum[GFX_MAX_LIGHTS] = {GL_LIGHT0, GL_LIGHT1, GL_LIGHT2, GL_LIGHT3};
+    for (uint32_t i = 0; i < GFX_MAX_LIGHTS; ++i)
+    {
+        const Light3D& light = lights[i];
+        if (light.intensity <= 0.0f)
+        {
+            glDisable(kLightEnum[i]);
+            continue;
+        }
+        anyActive = true;
+        glEnable(kLightEnum[i]);
+
+        // Intensity has no separate GL concept -- fold it into the colour,
+        // matching every other backend's own light * intensity radiance term.
+        const float diffuse[4] = {light.color.r * light.intensity, light.color.g * light.intensity, light.color.b * light.intensity, 1.0f};
+        const float zero[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        glLightfv(kLightEnum[i], GL_DIFFUSE, diffuse);
+        // No per-light ambient: the scene's single ambient term above already
+        // covers it, and double-counting it per light would over-brighten a
+        // multi-light scene.
+        glLightfv(kLightEnum[i], GL_AMBIENT, zero);
+
+        if (light.type == LightType::Directional)
+        {
+            // w=0: GL's fixed-function convention for a directional light,
+            // GL_POSITION taken as the direction TOWARDS the light (i.e. the
+            // negation of the direction it travels).
+            const float dir[4] = {-light.direction.x, -light.direction.y, -light.direction.z, 0.0f};
+            glLightfv(kLightEnum[i], GL_POSITION, dir);
+        }
+        else
+        {
+            const float pos[4] = {light.position.x, light.position.y, light.position.z, 1.0f};
+            glLightfv(kLightEnum[i], GL_POSITION, pos);
+
+            // Fixed-function attenuation is 1/(kc + kl*d + kq*d^2), not the
+            // range-based curve the other backends use -- kq is picked so the
+            // light has fallen to roughly 1% of its strength by `range`,
+            // which is a reasonable visual match, not an exact reproduction.
+            const float range = (light.range > 0.0001f) ? light.range : 0.0001f;
+            glLightf(kLightEnum[i], GL_CONSTANT_ATTENUATION, 1.0f);
+            glLightf(kLightEnum[i], GL_LINEAR_ATTENUATION, 0.0f);
+            glLightf(kLightEnum[i], GL_QUADRATIC_ATTENUATION, 99.0f / (range * range));
+        }
+    }
+
+    m_lightingActive = anyActive || ambient.r > 0.0f || ambient.g > 0.0f || ambient.b > 0.0f;
+    if (m_lightingActive)
+        glEnable(GL_LIGHTING);
+    else
+        // No light and no ambient configured (the common case until game
+        // code actually calls game::SetLight/SetAmbientLight): leave lighting
+        // off entirely rather than let material ambient*0 + no diffuse render
+        // everything black. Matches every other backend's "dynamic geometry
+        // defaults to fully visible until a real light says otherwise."
+        glDisable(GL_LIGHTING);
+}
+
+void Ps2GlRenderer::ApplyMaterialTint(const float rgba[4])
+{
+    // Both calls, not just one: GL_LIGHTING may be off this frame (no light
+    // or ambient configured yet -- see ApplyDynamicLights), in which case GL
+    // falls back to the plain "current colour" (glColor) rather than any
+    // material property at all. Setting both keeps the tint correct whether
+    // lighting ends up enabled or not, without depending on whether this
+    // library's GL_COLOR_MATERIAL tracks a scalar glColor call (only
+    // confirmed here to track a bound GL_COLOR_ARRAY -- see
+    // CImmGeomManager::SyncColorMaterial's pvColorsArePresent parameter).
+    glColor4f(rgba[0], rgba[1], rgba[2], rgba[3]);
+    glMaterialfv(GL_FRONT, GL_AMBIENT, rgba);
+    glMaterialfv(GL_FRONT, GL_DIFFUSE, rgba);
 }
 
 Vector3 Ps2GlRenderer::Normalize(const Vector3& value)
@@ -1144,6 +1323,9 @@ void Ps2GlRenderer::ReleaseTexture(uint32_t handle)
 void Ps2GlRenderer::SetCamera3D(CameraID id, const Camera3D& camera) { m_drawLists.SetCamera3D(id, camera); }
 void Ps2GlRenderer::SetActiveCamera3D(CameraID id) { m_drawLists.SetActiveCamera3D(id); }
 void Ps2GlRenderer::SetActiveCamera2D(const Camera2D& camera) { m_drawLists.SetActiveCamera2D(camera); }
+void Ps2GlRenderer::SetLight3D(LightID id, const Light3D& light) { m_drawLists.SetLight3D(id, light); }
+void Ps2GlRenderer::SetAmbientLight(const Color3& color) { m_drawLists.SetAmbientLight(color); }
+void Ps2GlRenderer::SetShadowCasterLight(LightID id) { m_drawLists.SetShadowCasterLight(id); }
 
 bool Ps2GlRenderer::IsInitialized() const { return m_initialized; }
 

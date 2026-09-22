@@ -40,6 +40,7 @@ production is in [PIPELINE.md](../PIPELINE.md).
 | Sound | — | **Not implemented on any platform** |
 | Font | Glyph metrics; the atlas is a separate texture dependency | Supported |
 | Theme | An interface theme, as a memory image | Supported |
+| Material | Shader-typed PBR parameters; its texture maps are separate dependencies | Supported |
 
 Sound is enumerated but unimplemented engine-wide. A request for it fails
 immediately rather than returning a handle that never becomes ready.
@@ -79,18 +80,28 @@ For the container:
 
 For the model payload (baked geometry):
 
-- The mesh and material tables fit the blob, and the counts they are sized from
-  are bounded before that product is formed.
+- The mesh table fits the blob, and the count it is sized from is bounded
+  before that product is formed.
 - Every mesh has at least one vertex and a position array, and each of its
-  position, normal and texture-coordinate arrays spans `vertexCount` elements
-  inside the blob. Each offset-plus-length sum is computed at a width that
-  cannot wrap a 32-bit `size_t`: both terms come straight from the file, and a
-  count near 2^28 wraps the product long before it exceeds the blob.
+  position, normal, texture-coordinate and (optional) baked-colour arrays
+  spans `vertexCount` elements inside the blob. Each offset-plus-length sum is
+  computed at a width that cannot wrap a 32-bit `size_t`: both terms come
+  straight from the file, and a count near 2^28 wraps the product long before
+  it exceeds the blob.
 - A mesh's vertex count is recorded only after its arrays have been bounded, so
   a refused mesh leaves no count behind for a release path to trust.
-- A material index outside the material table resolves to the first material.
-  It is the one field a reader repairs rather than refuses, because it selects
-  a texture rather than an address.
+- A mesh's `materialIndex` names a slot in the owning asset's own dependency
+  list (each dependency a `RES_MATERIAL` asset — see
+  [MATERIAL_FORMAT.md](MATERIAL_FORMAT.md)), not an embedded table; there is
+  no material data in the model payload itself. An index outside the
+  dependency count resolves to the first material. It is the one field a
+  reader repairs rather than refuses, because it selects a material rather
+  than an address.
+- A mesh's optional baked-colour array (`colorsOffset`) is populated only for
+  level sector meshes, from the level compiler's static lighting bake — see
+  [LEVEL_FORMAT.md](LEVEL_FORMAT.md). A baked model leaves it absent and stays
+  fully dynamically lit, since a placed, reusable model instance has no single
+  correct baked lighting.
 
 The texture payload has its own list in [TIM2_TEXTURE.md](TIM2_TEXTURE.md); the
 font and theme payloads carry theirs in [FONT_FORMAT.md](FONT_FORMAT.md) and

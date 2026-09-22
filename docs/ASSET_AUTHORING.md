@@ -43,11 +43,14 @@ the source at runtime — only the cooked result is shipped.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `type` | string | `TEXTURE`, `MODEL` or `FONT`. `SOUND` is enumerated but unimplemented. `THEME` assets are not authored per file — they are cooked from the title's theme declaration |
+| `type` | string | `TEXTURE`, `MODEL`, `MATERIAL` or `FONT`. `SOUND` is enumerated but unimplemented. `THEME` assets are not authored per file — they are cooked from the title's theme declaration |
 | `source` | string | The raw source file, in the same directory |
 | `deps` | string[] | Other assets this one needs, up to the format maximum |
 | `format` | string | Preferred texture encoding. A platform cook list may override it |
 | `mip_levels` | number | Mip levels to generate |
+
+A `MATERIAL` descriptor is shaped differently — it has no single `source`,
+since its maps are named fields instead. See "Materials" below.
 
 **Declare dependencies.** They are loaded before the asset that names them and
 reference-counted, so a model is never reported ready before its textures, and a
@@ -70,6 +73,31 @@ The consequence for authoring: **budget limits differ per platform**, and an
 asset that fits one may be rejected on another. The constrained platform is the
 one to check against. Its arithmetic is in
 [ps2/TEXTURE_BUDGET.md](ps2/TEXTURE_BUDGET.md).
+
+## Materials
+
+A material lives under `assets/materials/`, mirroring `assets/textures/`
+path-for-path (`assets/textures/props/box.jpg` ↔
+`assets/materials/props/box.json`) — TrenchBroom's own face-texture picker
+already calls itself the "material browser," and this is what makes painting
+a brush with a texture the same act as picking that material, with no editor
+plugin or config change. A texture with no matching material file still gets
+an implicit default material (flat, no normal/ORM maps), so this is additive:
+nothing about an existing `.map` or model needs to change to keep working.
+
+Its descriptor names maps by real field (`albedo`, `normal`, ...), not a
+single `source` — see [formats/MATERIAL_FORMAT.md](formats/MATERIAL_FORMAT.md)
+for the full field list. Occlusion, roughness and metallic are authored as
+**separate** source images (`occlusion`, `roughness`, `metallic`) — the way
+art actually ships — and the cook step packs them into one runtime texture;
+author a single pre-packed `orm` image instead only if that is what you
+already have.
+
+A material's own maps are cooked as ordinary standalone texture dependencies,
+so the same per-platform dimension and budget rules above apply to them; a
+platform's cook list may cap a normal or ORM map more tightly than the
+general texture ceiling, or skip baking either entirely on fixed-function
+hardware that could never sample them.
 
 ## Levels
 

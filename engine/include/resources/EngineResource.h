@@ -16,7 +16,8 @@ typedef enum
     RES_MODEL,
     RES_SOUND,
     RES_FONT,
-    RES_THEME
+    RES_THEME,
+    RES_MATERIAL
 } ResourceType;
 
 // Lifecycle state of a resource entry
@@ -118,3 +119,22 @@ uint32_t Engine_Resource_GetTextureBudgetUsed();
 
 // The active platform's total texture budget, in bytes.
 uint32_t Engine_Resource_GetTextureBudget();
+
+// Resolve one texture slot (MATERIAL_PBR_TEX_* in Types.h) of a RES_MATERIAL
+// resource to a texture resource handle. Returns -1 when the material handle
+// is invalid, not yet ready, does not actually name a RES_MATERIAL entry, or
+// names no texture in that slot. Callers still resolve the returned handle to
+// a live Texture2D themselves (it may still be streaming in), exactly as a
+// model's own texture dependency already is.
+int32_t Engine_Resource_GetMaterialTexture(int32_t materialHandle, int slot);
+
+// Resolve one colour-factor slot (MATERIAL_PBR_COLOR_* in Types.h) of a
+// RES_MATERIAL resource. Used by the vertex-lit backends, which have no
+// texture-sampling fragment stage to apply a material's baseColorFactor in
+// and so fold it into the vertex colour on the processor instead. Writes a
+// neutral 1,1,1,1 (multiplying by it is a no-op) and returns false when the
+// material handle is invalid, not yet ready, does not actually name a
+// RES_MATERIAL entry, or the slot is out of range -- same refusal rule as
+// Engine_Resource_GetMaterialTexture, never reinterpreted from a handle of a
+// different resource type.
+bool Engine_Resource_GetMaterialColor(int32_t materialHandle, int slot, float outRgba[4]);

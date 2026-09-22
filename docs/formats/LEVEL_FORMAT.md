@@ -58,8 +58,12 @@ another (see [subsystems/LEVEL.md](../subsystems/LEVEL.md)).
 `LevelFileHeaderV2` + `LevelChunkEntry[]` then 16-byte-aligned payloads:
 
 - **INFO** — level name, grid origin/size, cell counts, material/entity counts.
-- **MATL** — `LevelMaterialEntry[]`: the canonical archive key of each material's
-  TIM2 (and the far-field atlas as the last entry).
+- **MATL** — `LevelMaterialEntry[]`: the canonical archive key of each
+  material's `RES_MATERIAL` asset (see [MATERIAL_FORMAT.md](MATERIAL_FORMAT.md);
+  the far-field atlas entry is the one exception and still names a raw TIM2
+  directly, since nothing draws the far field yet). The same cooked material a
+  model references can be, and for a shared texture will be, the exact one a
+  level references too.
 - **SGRD** — `LevelGridCell[cellsX*cellsZ]` row-major: per-cell PSEC size (0 =
   empty), world-space AABB, and an entity range (reserved; v1 spawns all entities
   at load).
@@ -76,12 +80,17 @@ another (see [subsystems/LEVEL.md](../subsystems/LEVEL.md)).
 
 ### Sector payload (PSEC)
 
-`SectorHeader` + `BakedMeshEntry[]` (reusing the BKM2 v2 mesh entry;
+`SectorHeader` + `BakedMeshEntry[]` (reusing the BKM2 v3 mesh entry;
 `materialIndex` indexes the level MATL table) + 16-byte-aligned vec4/vec3/vec2
-geometry. The runtime builds `Mesh` views straight into the arena slot — zero
-copy into the existing render path. Meshes are degenerate-stitched triangle
-strips (or lists) built by the same stripifier as baked models
-([ps2lib.mesh.bake_mesh](../../tools/ps2lib/mesh.py)).
+(/vec4 colour) geometry. The runtime builds `Mesh` views straight into the
+arena slot — zero copy into the existing render path. Meshes are
+degenerate-stitched triangle strips (or lists) built by the same stripifier as
+baked models ([ps2lib.mesh.bake_mesh](../../tools/ps2lib/mesh.py)).
+
+A mesh's `colorsOffset` is populated when the map places any static light
+(see "Static lighting" below); it is 0 (absent) for a level with none, and
+the runtime then leaves every vertex at its default white tint, identical to
+the format's behaviour before static baking existed.
 
 ### What a reader must establish before it trusts a chunk
 
@@ -117,8 +126,8 @@ belonging to something else.
   is published so the first consumer inherits a bounded view rather than a
   raw chunk.
 - **A PSEC mesh table fits its blob**, and each entry's `vertsOffset`,
-  `normsOffset` and `uvsOffset` are 16-byte aligned and span `vertexCount`
-  elements inside the blob. A sector declares no more than
+  `normsOffset`, `uvsOffset` and `colorsOffset` are 16-byte aligned and span
+  `vertexCount` elements inside the blob. A sector declares no more than
   `LEVEL_MAX_MESHES_PER_SECTOR` meshes.
 
 Fixed-width key fields — `LevelInfoChunk::name`, `LevelMaterialEntry::assetKey`
@@ -149,20 +158,36 @@ property of what it loaded rather than of what it was given.
    `LEVEL_MAX_MESHES_PER_SECTOR` (32) and `LEVEL_SECTOR_MAX_BYTES` (512KB → one
    arena slot); over-budget is a hard error — shrink `_sector_size` or reduce
    geometry density in the offending cell.
-5. Bake each material to a PAL8 TIM2, each point-entity `.obj` to BKM2. Missing
-   sources warn and fall back (magenta texture / kept raw model reference). A
-   material with a `TEXTURE` descriptor beside it — the same descriptor
-   `tools/cook_assets.py` reads to cook it as a standalone `RASSETS/*.PS2A`
-   resource — is **referenced from the boot archive instead of baked again**,
-   provided it already fits this platform's `level_textures` dimension cap; a
-   level that paints with it does not carry a second copy. A material's
-   dimensions are otherwise (no descriptor, or the shared copy is oversized)
-   first capped to the target platform's own `cooklist.json` `level_textures`
-   policy (a level pins every material for its whole lifetime, so this is
-   stricter than the `assets.TEXTURE` ceiling), then downscaled further if it
-   still would not fit that platform's `IO_READ_BUFFER_SIZE`. This is why a
-   level compiles **per platform** — see [PIPELINE.md](../PIPELINE.md).
-6. Bake far-field impostors and assemble the archive.
+5. Bake each brush material and each point-entity `.obj` to BKM2. Missing
+   sources warn and fall back (magenta texture / kept raw model reference).
+   A brush texture with a material authored under `assets/materials/`,
+   mirroring its own relative path under `assets/textures/` (the same
+   convention that makes TrenchBroom's own material-picker a material-picker
+   — see [MATERIAL_FORMAT.md](MATERIAL_FORMAT.md)), **references that
+   already-cooked `RES_MATERIAL` directly**, exempt from this level's
+   dimension cap exactly like a shared standalone texture already is. A brush
+   texture with no such material gets an engine-default-generated one (flat,
+   no normal/ORM) wrapping its baked TIM2, so every existing `.map` keeps
+   compiling unchanged. The wrapped TIM2 itself follows the same rule
+   standalone textures always have: a texture with a `TEXTURE` descriptor
+   beside it — the same descriptor `tools/cook_assets.py` reads to cook it as
+   a standalone `RASSETS/*.PS2A` resource — is **referenced from the boot
+   archive instead of baked again**, provided it already fits this platform's
+   `level_textures` dimension cap; a level that paints with it does not carry
+   a second copy. A texture's dimensions are otherwise (no descriptor, or the
+   shared copy is oversized) first capped to the target platform's own
+   `cooklist.json` `level_textures` policy (a level pins every material for
+   its whole lifetime, so this is stricter than the `assets.TEXTURE`
+   ceiling), then downscaled further if it still would not fit that
+   platform's `IO_READ_BUFFER_SIZE`. This is why a level compiles **per
+   platform** — see [PIPELINE.md](../PIPELINE.md).
+6. Bake static lighting: for every entity the map places that carries
+   `LightComponent` (discovered generically from `tools/ECS/ECS.json`, never
+   by a hardcoded classname — see "Static lighting" below), evaluate ambient
+   plus that light at every static vertex, including a shadow-ray occlusion
+   test, and bake the sum into that vertex's colour. Skipped entirely (zero
+   cost) when a map places no such entity.
+7. Bake far-field impostors and assemble the archive.
 
 ## Far-field impostors (v1 limitations)
 
@@ -178,6 +203,38 @@ index 0 is transparent. This is deliberately coarse:
 
 The chunked FARF design leaves room for an alternative low-poly-mesh far field
 later without a format break.
+
+## Static lighting
+
+Any entity a mapper composes with **`LightComponent`** (`tools/ECS/ECS.json`)
+becomes a bake light — not a dedicated classname, so a custom entity (a lit
+prop, say) can carry one alongside whatever else it already has. The
+compiler discovers these generically, by checking each placed entity's
+declared component list, the same way `tools/ECS/generate_ecs.py` already
+decides what belongs in the generated FGD and spawn dispatch.
+
+`LightComponent` reads the entity's own `TransformComponent`-adjacent,
+native `.map` keys directly — `origin` for a point light's position,
+`angles` (Quake pitch/yaw/roll) for a directional light's direction — the
+same keys the compiler already reads for every other entity, not the
+generic `TransformComponent.position`/`.angles` runtime convenience
+properties. Its own properties are `light_type` (Directional or Point),
+`color`, `intensity`, and `range` (point lights only).
+
+The bake evaluates ambient plus every light against a cell's own static
+geometry only — a bounded, sector-local approximation that keeps the
+shadow-ray test affordable (measured at under a second for an ~18,000
+triangle test level with two lights) at the cost of not seeing an occluder
+in a neighbouring cell, the same kind of per-cell v1 limitation the
+far-field bake above already accepts. The result is written into the
+affected sector meshes' `colorsOffset` array (see "Sector payload" above).
+
+A light-bearing entity is also spawned through the ordinary entity path
+unchanged (`docs/subsystems/LEVEL.md`), so a game wanting a *live*,
+dynamic counterpart too (a flickering torch, say) calls
+`Renderer::SetLight3D` from its own spawn handler — fully decoupled from
+the bake, which only ever reads the entity's authored properties once,
+offline.
 
 ## Authoring & building
 
@@ -196,7 +253,16 @@ ECS component so TrenchBroom picks up new entity classes.
 one directory level under `assets/textures/`** (a "material collection", e.g.
 `assets/textures/props/box.jpg`) — a loose file directly in `textures/`, or one
 nested two levels deep, is invisible there even though the cook stage and the
-level compiler both still read it. See `assets/README.md`.
+level compiler both still read it. See `assets/README.md`. A richer,
+hand-authored material for one of these textures lives under
+`assets/materials/`, mirroring the same relative path — see
+[MATERIAL_FORMAT.md](MATERIAL_FORMAT.md).
+
+**Placing a static light**: add a `light` entity (or compose `LightComponent`
+onto any other entity class) from the entity browser, once the `.fgd`
+regeneration above has run; set `light_type`, `color`, `intensity` and, for a
+point light, `range` in its properties, and position or orient it as any
+other entity. See "Static lighting" above.
 
 `.map` files saved into `assets/maps/` are compiled once per platform by the
 `compile-levels-<platform>` CMake target into `dist/cooked/<platform>/levels/`
@@ -206,7 +272,8 @@ folded into that platform's master archive by its packaging stage. See
 
 ```
 python3 tools/compile_level.py assets/maps/test.map --out build/levels \
-    --textures assets/textures --models assets/models --platform ps2 \
+    --textures assets/textures --models assets/models \
+    --materials assets/materials --platform ps2 \
     --report --debug-render occ.png
 python3 tools/dump_level.py build/levels/TEST.PS2R
 ```

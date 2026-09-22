@@ -49,6 +49,22 @@ class Ps2GlRenderer final : public Renderer
     // fovy/near/far fed to glFrustum so culling matches what the GS draws.
     FrustumPlanes m_frustum{};
 
+    // Whether ApplyDynamicLights turned GL_LIGHTING on this frame (at least
+    // one active light or nonzero ambient). RenderSkybox forces lighting off
+    // for its own draw regardless (the sky is never scene-lit) and needs this
+    // to know what to restore afterwards.
+    mutable bool m_lightingActive = false;
+
+    // Scratch buffer for RenderLevel's per-vertex lit-colour computation
+    // (VertexLighting_Compute), sized to GFX_GIFTAG_MAX_VERTS -- shared with
+    // the sibling PS2 backend's own per-frame vertex ceiling, since sector
+    // meshes are drawn one at a time regardless of which backend draws them.
+    // Sector meshes are lit this way, on the EE, rather than through real
+    // GL_LIGHTING: see the comment on RenderLevel for why a baked per-vertex
+    // colour cannot safely drive fixed-function GL's own multiplicative
+    // per-vertex material tracking.
+    float* m_litColorScratch = nullptr;
+
     struct ModelDListEntry
     {
         int32_t resourceId = -1;
@@ -83,6 +99,15 @@ class Ps2GlRenderer final : public Renderer
 
     void ApplyProjection(const Camera3D& camera) const;
     void ApplyCameraTransform(const Camera3D& camera) const;
+    /// Push this frame's DrawLists lights/ambient into ps2gl's fixed-function
+    /// GL_LIGHTING state. Must run while the modelview matrix is still the
+    /// view-only transform (no per-object model matrix pushed yet) -- see the
+    /// call site in Render().
+    void ApplyDynamicLights() const;
+    /// Set the current material's ambient/diffuse to `rgba` (a material's
+    /// baseColorFactor, or a primitive's own flat colour) -- the tint used
+    /// wherever GL_COLOR_ARRAY is not also bound for that draw.
+    static void ApplyMaterialTint(const float rgba[4]);
     static Vector3 Normalize(const Vector3& value);
     static Vector3 Subtract(const Vector3& a, const Vector3& b);
     static Vector3 Cross(const Vector3& a, const Vector3& b);
@@ -121,6 +146,10 @@ public:
     void SetCamera3D(CameraID id, const Camera3D& camera) override;
     void SetActiveCamera3D(CameraID id) override;
     void SetActiveCamera2D(const Camera2D& camera) override;
+
+    void SetLight3D(LightID id, const Light3D& light) override;
+    void SetAmbientLight(const Color3& color) override;
+    void SetShadowCasterLight(LightID id) override;
 
     uint32_t UploadTexture(const TextureUpload& upload) override;
     void ReleaseTexture(uint32_t handle) override;

@@ -438,6 +438,38 @@ namespace game
         r->SetActiveCamera3D(static_cast<CameraID>(0));
     }
 
+    // --- Lights -------------------------------------------------------------------
+    void SetLight(int slot, bool directional, float x, float y, float z, int r, int g, int b, float intensity, float range)
+    {
+        Renderer* renderer = Engine_GetRenderer();
+        if (!renderer)
+            return;
+
+        Light3D light;
+        light.type = directional ? LightType::Directional : LightType::Point;
+        light.direction = Vector3{x, y, z};
+        light.position = Vector3{x, y, z};
+        light.color = MakeColor(r, g, b);
+        light.intensity = intensity;
+        light.range = range;
+
+        renderer->SetLight3D(static_cast<LightID>(slot), light);
+    }
+
+    void SetAmbientLight(int r, int g, int b)
+    {
+        Renderer* renderer = Engine_GetRenderer();
+        if (renderer)
+            renderer->SetAmbientLight(MakeColor(r, g, b));
+    }
+
+    void SetShadowCaster(int slot)
+    {
+        Renderer* renderer = Engine_GetRenderer();
+        if (renderer)
+            renderer->SetShadowCasterLight(static_cast<LightID>(slot));
+    }
+
     // --- Frame / background -----------------------------------------------------
     void Clear(int r, int g, int b)
     {

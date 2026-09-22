@@ -46,13 +46,24 @@ reaches a loader is a string rather than a run of bytes. A core that fails any
 of this is refused whole and the level does not load; nothing is clamped into
 range, because a clamped offset still reads bytes that belong to something else.
 
-**Materials are requested and pinned on load.** A level requests its material
-textures and pins the resulting handles as part of loading, marking them as
-content the world cannot lose while it is current. The pixel data itself streams in over
-the following frames and is resolved at draw time, exactly as models are — a
-level can therefore be current before all of its textures are resident.
-Unloading unpins them, optionally retaining pins across a transition when the
-next level shares materials.
+**Materials are requested and pinned on load.** A level requests its
+materials and pins the resulting handles as part of loading, marking them as
+content the world cannot lose while it is current. A material's own texture
+maps stream in over the following frames and are resolved at draw time,
+exactly as a model's are — a level can therefore be current before all of its
+textures are resident. Unloading unpins them, optionally retaining pins
+across a transition when the next level shares materials. See
+[formats/MATERIAL_FORMAT.md](../formats/MATERIAL_FORMAT.md) — the same
+material asset a model references can be, and for a shared texture will be,
+the exact one a level references too.
+
+**Static geometry's lighting is baked, not resolved at runtime.** The level
+compiler evaluates every placed light against each vertex at compile time,
+including shadowing, and writes the result into that geometry's own baked
+colour — there is nothing for this subsystem to compute, request, or keep
+current about it at load time. A dynamic (runtime) light submitted through
+the renderer can still additionally light resident sectors live, on top of
+that baked base.
 
 **Entities are spawned through the game.** The engine reads entity records and
 hands them to a spawn handler the game registers. The engine has no entity model

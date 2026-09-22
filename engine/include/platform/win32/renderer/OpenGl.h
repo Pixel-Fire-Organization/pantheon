@@ -44,6 +44,11 @@ public:
     void SetActiveCamera3D(CameraID id) override;
     void SetActiveCamera2D(const Camera2D& camera) override;
 
+    void SetLight3D(LightID id, const Light3D& light) override;
+    void SetAmbientLight(const Color3& color) override;
+    void SetShadowCasterLight(LightID id) override;
+    bool SupportsPbrShading() const override { return true; }
+
     uint32_t UploadTexture(const TextureUpload& upload) override;
     void ReleaseTexture(uint32_t handle) override;
 
@@ -59,11 +64,16 @@ protected:
     void RenderSkybox(const DrawLists& lists) override;
     void RenderPrimitives(DrawLists& lists) override;
     void RenderModels(const DrawLists& lists) override;
+    void RenderShadowMap(const DrawLists& lists) override;
 
 private:
     bool CreateContext();
     bool CreateProgram();
+    bool CreatePbrProgram();
+    bool CreateShadowProgram();
     bool CreateWhiteTexture();
+    bool CreateDefaultMaterialTextures();
+    bool EnsureShadowMap();
     void SetupVertexAttributes();
     void UploadAndDraw();
 
@@ -77,9 +87,50 @@ private:
     int m_versionMajor;
     int m_versionMinor;
 
+    // Flat/unlit program: the 2D pass and RenderToImage3D's preview target.
+    // Thumbnails deliberately stay on this cheap shader rather than the PBR
+    // one below, so a preview's lighting never depends on the scene's own
+    // dynamic lights/shadow caster. See docs/subsystems/RENDERER.md.
     GLuint m_program;
     GLint m_uniformViewProj;
     GLint m_uniformTexture;
+
+    // PBR program: the main scene.
+    GLuint m_programPbr;
+    GLint m_pbrUniformViewProj;
+    GLint m_pbrUniformCameraPos;
+    GLint m_pbrUniformAmbient;
+    GLint m_pbrUniformLightPosOrDir; // vec4[GFX_MAX_LIGHTS]
+    GLint m_pbrUniformLightColorIntensity; // vec4[GFX_MAX_LIGHTS]
+    GLint m_pbrUniformLightRange; // vec4[GFX_MAX_LIGHTS] (x used)
+    GLint m_pbrUniformShadowCaster; // int, -1 = none
+    GLint m_pbrUniformLightViewProj;
+    GLint m_pbrUniformAlbedoTex;
+    GLint m_pbrUniformNormalTex;
+    GLint m_pbrUniformOrmTex;
+    GLint m_pbrUniformShadowMap;
+    GLint m_pbrUniformBaseColor;
+    GLint m_pbrUniformEmissive;
+    GLint m_pbrUniformMrna; // metallic, roughness, normalScale, alphaCutoff
+    GLint m_pbrUniformAlphaMask;
+
+    // Depth-only shadow program: dynamic geometry only.
+    GLuint m_shadowProgram;
+    GLint m_shadowUniformLightViewProj;
+    GLuint m_shadowFbo;
+    GLuint m_shadowDepthTex;
+
+    // PBR defaults for a material with no normal/ORM map of its own: flat
+    // tangent-space normal, and occlusion=1/roughness=1/metallic=0.
+    GLuint m_defaultNormalTex;
+    GLuint m_defaultOrmTex;
+
+    // Result of this frame's RenderShadowMap, consumed by UploadAndDraw right
+    // afterwards.
+    float m_lastLightViewProj[16];
+    bool m_shadowActive;
+    LightID m_shadowCasterIndex;
+
     GLuint m_vao;
     GLuint m_vertexBuffer;
     GLsizei m_vertexBufferCapacity; // in bytes

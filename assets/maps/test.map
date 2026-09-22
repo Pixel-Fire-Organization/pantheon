@@ -21,3 +21,22 @@
 "origin" "-32 -32 32"
 "model" "models/test.obj"
 }
+// entity 2
+{
+"classname" "light"
+"origin" "-150 -150 64"
+"light_type" "1"
+"color" "255 220 180"
+"intensity" "2.0"
+"range" "300"
+}
+// entity 3
+{
+"classname" "light"
+"origin" "0 0 100"
+"angles" "-45 45 0"
+"light_type" "0"
+"color" "180 200 255"
+"intensity" "0.6"
+"range" "512"
+}

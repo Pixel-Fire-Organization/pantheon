@@ -8,12 +8,62 @@ Contract and shared behaviour: [RENDERER.md](../../subsystems/RENDERER.md).
 
 Geometry is staged on the processor into a representation shared with the
 [OpenGL](OPENGL.md) backend, then uploaded once per frame and drawn as runs of
-vertices sharing a texture. Three-dimensional and screen-space geometry stage
+vertices sharing a material. Three-dimensional and screen-space geometry stage
 independently and occupy separate spans of one buffer, so a single upload serves
 both.
 
-Two three-dimensional pipelines and one screen-space pipeline cover the contract;
-textures are bound per run.
+Two shader modules cover the contract. A flat/unlit one serves the screen-space
+pass and `RenderToImage3D`'s preview target, exactly as before materials existed.
+A second, PBR one serves the main scene pass; its pipeline binds three textures
+per run (albedo, normal, packed occlusion/roughness/metallic) instead of one,
+plus a per-run material-factor uniform selected by a dynamic buffer offset
+rather than a fresh bind group per draw call. A third, depth-only shader
+serves the real-time shadow pass. See "Materials & lighting" below.
+
+## Materials & lighting
+
+- **PBR tier.** `SupportsPbrShading()` is `true`. The main pass shades with a
+  metallic-roughness Cook-Torrance BRDF (GGX distribution, Smith geometry,
+  Schlick Fresnel), sampling all three of a material's maps where present and
+  falling back to a flat tangent-space normal and a neutral
+  (occlusion=1/roughness=1/metallic=0) ORM where a slot is empty. Normal
+  mapping reconstructs tangent space from screen-space derivatives (`dpdx`/
+  `dpdy`) rather than a vertex tangent attribute, since the shared vertex
+  format carries none.
+- **Baked and dynamic lighting compose by addition, not replacement.** A
+  vertex's incoming colour — the level compiler's baked result for sector
+  geometry, or flat white for a dynamic model — is added to the dynamic
+  ambient term and multiplied by albedo once; it is never folded into albedo
+  itself, which would let it double up wherever albedo is reused (Fresnel F0,
+  the diffuse BRDF term). Up to `GFX_MAX_LIGHTS` dynamic lights (directional or
+  point, point attenuating quadratically to zero at its `range`) are summed on
+  top with the full BRDF, every frame, for every kind of 3D geometry alike —
+  there is no per-geometry-kind shading branch.
+- **One real-time shadow caster, dynamic geometry only.** `SetShadowCasterLight`
+  names one directional light slot (point lights are refused — there is no
+  frustum to build from a point light's "direction"); that light's contribution
+  is attenuated by a `GFX_SHADOW_MAP_SIZE`-square depth map, 3×3 PCF-sampled.
+  The shadow pass renders only the dynamic (model/primitive) span of this
+  frame's staged geometry — everything after `StagedGeometry::DynamicRunStart`
+  — from an orthographic frustum centred on the active camera; static sector
+  geometry is excluded because it already carries baked, shadow-aware lighting
+  from the compiler and would cost a pass for no visual benefit. The shadow
+  pass does not support alpha-mask cutout: every dynamic mesh, regardless of
+  material flags, casts a solid silhouette. If no light is designated, or
+  nothing dynamic is on screen this frame, the pass is skipped outright and the
+  map's stale contents are never sampled — the main shader checks the caster
+  index before ever touching the shadow texture.
+- **A material-group cache, not a bind group per draw call.** The (albedo,
+  normal, orm) triple a run resolves to is looked up in a small fixed-size
+  cache and only creates a new `WGPUBindGroup` the first time that exact
+  combination is seen; releasing a texture purges every cached group naming
+  it, since a destroyed `WGPUTextureView` invalidates the bind group holding
+  it regardless of the group's own reference. This is what keeps the frame
+  path free of GPU-object allocation despite materials varying per run.
+- **`RenderToImage3D`'s preview target deliberately stays on the flat shader.**
+  A UI thumbnail's lighting must not depend on — or go dark relative to — the
+  scene's own dynamic lights or shadow caster, so it never uses the PBR
+  pipeline.
 
 ## Quirks and limits
 

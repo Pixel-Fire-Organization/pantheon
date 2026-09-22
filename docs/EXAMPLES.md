@@ -21,6 +21,7 @@ it; see [nx/PACKAGING.md](nx/PACKAGING.md#examples).
 |---|---|---|
 | `primitives` | Renderer primitive submission, texturing, and the draw-list ceiling | Coloured, Textured, Draw load |
 | `ui_gallery` | Every interface widget, live theme editing, and the interface's quad budget | Gallery, Style, Budget |
+| `material_pbr` | `RES_MATERIAL` (normal/roughness/AO) on baked level geometry, composing with a dynamic point light and a real-time directional shadow caster | Material Lighting (single scene) |
 
 Run one directly — no debug-menu chord, no other example, no game process
 involved. That standalone-ness is the entire point.

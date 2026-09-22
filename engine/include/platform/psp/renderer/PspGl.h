@@ -43,6 +43,10 @@ public:
     void SetActiveCamera3D(CameraID id) override;
     void SetActiveCamera2D(const Camera2D& camera) override;
 
+    void SetLight3D(LightID id, const Light3D& light) override;
+    void SetAmbientLight(const Color3& color) override;
+    void SetShadowCasterLight(LightID id) override;
+
     /// Upload a cooked texture.
     /// @param upload Source texture; expanded to RGBA8, this model having no
     ///        palettised path.
@@ -71,12 +75,28 @@ private:
     void BindVertexArrays(const StagedGeometry::Vertex* base);
     void DrawStagedGeometry();
 
+    /// Compute ambient + dynamic-light Lambertian shading for this frame's
+    /// 3D vertices and write it to m_litColors3D (4 floats/vertex). Real
+    /// hardware GL_LIGHTING is not used here: it would need GL_COLOR_MATERIAL
+    /// to blend a per-vertex baked colour (the level compiler's bake) with a
+    /// flat material, and this pspgl build does not export glColorMaterial
+    /// (declared in its own GL/gl.h, but absent from the built libGL.a --
+    /// confirmed with psp-nm, not assumed). Computed here instead, the same
+    /// way GifTag and Gu do on the two backends with no usable fixed-function
+    /// substrate at all.
+    void ComputeLitColors3D();
+
     void* m_display;
     void* m_surface;
     void* m_context;
 
     uint32_t m_whiteTexture;
     uint32_t m_textures[PSPGL_MAX_RESIDENT_TEXTURES];
+
+    // Scratch buffer for ComputeLitColors3D, sized to the platform's per-
+    // frame 3D vertex ceiling (GFX_PSP_MAX_FRAME_VERTICES) -- a fixed
+    // allocation, not grown per frame.
+    float* m_litColors3D;
 
     StagedGeometry m_geometry;
 

@@ -84,6 +84,12 @@ namespace
         std::memcpy(&b, &f, sizeof(b));
         return b;
     }
+
+    // Clamp before quantizing to an 8-bit GS colour channel, never after --
+    // an unclamped lit vertex colour (ambient + several lights summed) can
+    // exceed 1.0, and casting that straight to uint8_t would wrap rather than
+    // saturate.
+    inline float Clamp01(float v) { return (v < 0.0f) ? 0.0f : ((v > 1.0f) ? 1.0f : v); }
 } // namespace
 
 namespace
@@ -246,9 +252,10 @@ GifTagRenderer::GifTagRenderer(const EngineConfig& config)
     m_xyz = static_cast<xyz_t*>(memalign(16, sizeof(xyz_t) * GFX_GIFTAG_MAX_VERTS));
     m_srcIdx = static_cast<uint32_t*>(memalign(16, sizeof(uint32_t) * GFX_GIFTAG_MAX_VERTS));
     m_q = static_cast<float*>(memalign(16, sizeof(float) * GFX_GIFTAG_MAX_VERTS));
+    m_litColors = static_cast<float*>(memalign(16, sizeof(float) * 4 * GFX_GIFTAG_MAX_VERTS));
     m_clipBatch = memalign(16, sizeof(VECTOR) * GFX_GIFTAG_XFORM_BATCH);
     m_vecBatch = memalign(16, sizeof(VECTOR) * GFX_GIFTAG_XFORM_BATCH);
-    if (!m_xyz || !m_srcIdx || !m_q || !m_clipBatch || !m_vecBatch)
+    if (!m_xyz || !m_srcIdx || !m_q || !m_litColors || !m_clipBatch || !m_vecBatch)
     {
         Engine_Panic("GifTagRenderer: out of memory for transform scratch");
     }
@@ -287,11 +294,13 @@ void GifTagRenderer::Shutdown()
     free(m_xyz);
     free(m_srcIdx);
     free(m_q);
+    free(m_litColors);
     free(m_clipBatch);
     free(m_vecBatch);
     m_xyz = nullptr;
     m_srcIdx = nullptr;
     m_q = nullptr;
+    m_litColors = nullptr;
     m_clipBatch = nullptr;
     m_vecBatch = nullptr;
     m_drawLists.Shutdown();
@@ -556,7 +565,9 @@ void GifTagRenderer::Render()
             float model[16], mvp[16];
             BuildModelMatrix(model, e.transform.GetPosition(), e.transform.GetRotation(), e.transform.GetScale());
             Frustum_Mult4x4(mvp, vp, model);
-            DrawTriangles(mvp, arr.verts, 3, texId ? arr.uvs : nullptr, arr.vertexCount, e.color, texId);
+            const float flatColorRgba[4] = {e.color.r, e.color.g, e.color.b, 1.0f};
+            ComputeLitVertexColors(arr.verts, 3, arr.norms, nullptr, flatColorRgba, model, arr.vertexCount, m_litColors);
+            DrawTriangles(mvp, arr.verts, 3, texId ? arr.uvs : nullptr, m_litColors, arr.vertexCount, e.color, texId);
             ++m_frameStats.primitiveCount;
         };
 
@@ -613,22 +624,29 @@ void GifTagRenderer::RenderLevel(const float vp[16], const FrustumPlanes& frustu
                 continue;
 
             uint32_t texId = 0;
-            const int32_t texResId = sector.meshTexture[m];
+            const int32_t materialHandle = sector.meshMaterial[m];
+            const int32_t texResId = Engine_Resource_GetMaterialTexture(materialHandle, MATERIAL_PBR_TEX_ALBEDO);
             if (texResId >= 0)
             {
                 const auto* tex = static_cast<const Texture2D*>(Engine_Resource_Get(texResId));
                 if (tex)
                     texId = tex->id;
             }
+            float baseColorRgba[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+            Engine_Resource_GetMaterialColor(materialHandle, MATERIAL_PBR_COLOR_BASE, baseColorRgba);
 
             ++drawnMeshes;
 
             const int components = (mesh.vertexComponents == 4) ? 4 : 3;
             const float* uv = texId ? mesh.texcoords : nullptr;
+            // Sector geometry (verts, normals and any baked mesh.colors) is
+            // already world-space, baked that way by the level compiler --
+            // no worldMatrix to apply, unlike a placed model.
+            ComputeLitVertexColors(mesh.vertices, components, mesh.normals, mesh.colors, baseColorRgba, nullptr, static_cast<uint32_t>(mesh.vertexCount), m_litColors);
             if (mesh.topology == MESH_TOPOLOGY_STRIP)
-                DrawStrip(vp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
+                DrawStrip(vp, mesh.vertices, components, uv, m_litColors, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
             else
-                DrawTriangles(vp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
+                DrawTriangles(vp, mesh.vertices, components, uv, m_litColors, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
         }
     }
 
@@ -652,7 +670,138 @@ bool GifTagRenderer::PacketHasSpace(uint32_t qwNeeded) const
 
 uint32_t GifTagRenderer::BindCostQwords(uint32_t textureId) const { return (textureId != 0u && textureId != m_lastBoundTex) ? static_cast<uint32_t>(GFX_GIFTAG_TEXBIND_QW) : 0u; }
 
-void GifTagRenderer::DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId)
+void GifTagRenderer::ComputeLitVertexColors(const float* verts, int components, const float* normals, const float* baseColors, const float flatColorRgba[4], const float* worldMatrix,
+                                             uint32_t vertexCount, float* outColors)
+{
+    const Light3D* lights = m_drawLists.GetLights();
+    const Color3& ambient = m_drawLists.GetAmbientLight();
+
+    for (uint32_t v = 0; v < vertexCount; ++v)
+    {
+        const float* p = verts + static_cast<size_t>(v) * components;
+        float wx = p[0], wy = p[1], wz = p[2];
+        float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+        if (normals)
+        {
+            const float* n = normals + static_cast<size_t>(v) * 3;
+            nx = n[0];
+            ny = n[1];
+            nz = n[2];
+        }
+
+        if (worldMatrix)
+        {
+            const float* m = worldMatrix;
+            wx = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12];
+            wy = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13];
+            wz = m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14];
+            if (normals)
+            {
+                const float onx = nx, ony = ny, onz = nz;
+                nx = m[0] * onx + m[4] * ony + m[8] * onz;
+                ny = m[1] * onx + m[5] * ony + m[9] * onz;
+                nz = m[2] * onx + m[6] * ony + m[10] * onz;
+            }
+        }
+
+        // The vertex's "already lit" baseline -- baked static lighting for
+        // sector geometry, or full white for dynamic models/primitives
+        // (nothing is baked for those; see docs/formats/MATERIAL_FORMAT.md,
+        // "Static vs. dynamic lighting"). Ambient and every active light are
+        // added on TOP of this baseline, exactly like every PBR-tier
+        // backend's own vertex-colour handling -- never multiplied into a sum
+        // that starts at zero, which would erase the compile-time bake (or,
+        // for dynamic geometry with no lights configured yet, render
+        // everything black instead of the old flat-unlit look).
+        float vbR = 1.0f, vbG = 1.0f, vbB = 1.0f, vbA = 1.0f;
+        if (baseColors)
+        {
+            const float* bc = baseColors + static_cast<size_t>(v) * 4;
+            vbR = bc[0];
+            vbG = bc[1];
+            vbB = bc[2];
+            vbA = bc[3];
+        }
+
+        float litR, litG, litB;
+        const float nLenSq = nx * nx + ny * ny + nz * nz;
+        if (nLenSq <= 0.0001f)
+        {
+            // No normal: no light contribution to compute, so the result is
+            // just the baseline (baked colour, or white) -- not forced to
+            // full white regardless of tint, which would erase a baked
+            // colour on the rare mesh with vertex colours but no normals.
+            litR = vbR;
+            litG = vbG;
+            litB = vbB;
+        }
+        else
+        {
+            const float invLen = 1.0f / sqrtf(nLenSq);
+            const float Nx = nx * invLen, Ny = ny * invLen, Nz = nz * invLen;
+
+            litR = vbR + ambient.r;
+            litG = vbG + ambient.g;
+            litB = vbB + ambient.b;
+
+            for (uint32_t i = 0; i < GFX_MAX_LIGHTS; ++i)
+            {
+                const Light3D& light = lights[i];
+                if (light.intensity <= 0.0f)
+                    continue;
+
+                float Lx, Ly, Lz, attenuation = 1.0f;
+                if (light.type == LightType::Directional)
+                {
+                    const float dx = light.direction.x, dy = light.direction.y, dz = light.direction.z;
+                    const float dLenSq = dx * dx + dy * dy + dz * dz;
+                    const float dInv = (dLenSq > 0.0001f) ? (1.0f / sqrtf(dLenSq)) : 0.0f;
+                    Lx = -dx * dInv;
+                    Ly = -dy * dInv;
+                    Lz = -dz * dInv;
+                }
+                else
+                {
+                    const float tx = light.position.x - wx, ty = light.position.y - wy, tz = light.position.z - wz;
+                    const float dist = sqrtf(tx * tx + ty * ty + tz * tz);
+                    const float dInv = (dist > 0.0001f) ? (1.0f / dist) : 0.0f;
+                    Lx = tx * dInv;
+                    Ly = ty * dInv;
+                    Lz = tz * dInv;
+
+                    const float range = (light.range > 0.0001f) ? light.range : 0.0001f;
+                    float att = 1.0f - (dist / range);
+                    att = (att < 0.0f) ? 0.0f : ((att > 1.0f) ? 1.0f : att);
+                    attenuation = att * att;
+                }
+
+                const float NdotL = Nx * Lx + Ny * Ly + Nz * Lz;
+                if (NdotL <= 0.0f)
+                    continue;
+
+                const float scale = NdotL * light.intensity * attenuation;
+                litR += light.color.r * scale;
+                litG += light.color.g * scale;
+                litB += light.color.b * scale;
+            }
+        }
+
+        // Refuse to let an over-bright vertex wrap when DrawTriangles/
+        // DrawStrip later quantizes this to an 8-bit GS colour -- clamp
+        // before that conversion, never after.
+        litR = (litR < 0.0f) ? 0.0f : ((litR > 1.0f) ? 1.0f : litR);
+        litG = (litG < 0.0f) ? 0.0f : ((litG > 1.0f) ? 1.0f : litG);
+        litB = (litB < 0.0f) ? 0.0f : ((litB > 1.0f) ? 1.0f : litB);
+
+        float* out = outColors + static_cast<size_t>(v) * 4;
+        out[0] = flatColorRgba[0] * litR;
+        out[1] = flatColorRgba[1] * litG;
+        out[2] = flatColorRgba[2] * litB;
+        out[3] = flatColorRgba[3] * vbA;
+    }
+}
+
+void GifTagRenderer::DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, const float* colors, uint32_t vertexCount, Color3 color, uint32_t textureId)
 {
     if (!verts || vertexCount < 3)
         return;
@@ -731,10 +880,10 @@ void GifTagRenderer::DrawTriangles(const float mvp[16], const float* verts, int 
         BindTexture(textureId);
 
     const float colorScale = textured ? 128.0f : 255.0f;
-    const uint8_t r = static_cast<uint8_t>(color.r * colorScale);
-    const uint8_t g = static_cast<uint8_t>(color.g * colorScale);
-    const uint8_t b = static_cast<uint8_t>(color.b * colorScale);
-    const uint64_t rgbaLo = static_cast<uint64_t>(r) | (static_cast<uint64_t>(g) << 8) | (static_cast<uint64_t>(b) << 16) | (static_cast<uint64_t>(0x80) << 24);
+    const uint8_t flatR = static_cast<uint8_t>(Clamp01(color.r) * colorScale);
+    const uint8_t flatG = static_cast<uint8_t>(Clamp01(color.g) * colorScale);
+    const uint8_t flatB = static_cast<uint8_t>(Clamp01(color.b) * colorScale);
+    const uint64_t flatRgbaLo = static_cast<uint64_t>(flatR) | (static_cast<uint64_t>(flatG) << 8) | (static_cast<uint64_t>(flatB) << 16) | (static_cast<uint64_t>(0x80) << 24);
 
     const uint32_t prim = PRIM_TRIANGLE | PRIM_BIT_IIP | (textured ? PRIM_BIT_TME : 0u);
     const uint32_t nreg = textured ? 3u : 2u;
@@ -751,6 +900,15 @@ void GifTagRenderer::DrawTriangles(const float mvp[16], const float* verts, int 
         {
             const float* uv = uvs + m_srcIdx[k] * 2;
             packet2_add_u64(m_geom, FloatBits(uv[0] * q) | (FloatBits(uv[1] * q) << 32));
+        }
+        uint64_t rgbaLo = flatRgbaLo;
+        if (colors)
+        {
+            const float* c = colors + static_cast<size_t>(m_srcIdx[k]) * 4;
+            const uint8_t r = static_cast<uint8_t>(Clamp01(c[0]) * colorScale);
+            const uint8_t g = static_cast<uint8_t>(Clamp01(c[1]) * colorScale);
+            const uint8_t b = static_cast<uint8_t>(Clamp01(c[2]) * colorScale);
+            rgbaLo = static_cast<uint64_t>(r) | (static_cast<uint64_t>(g) << 8) | (static_cast<uint64_t>(b) << 16) | (static_cast<uint64_t>(0x80) << 24);
         }
         packet2_add_u64(m_geom, rgbaLo | (FloatBits(q) << 32));
         uint64_t xyzWord;
@@ -904,7 +1062,7 @@ void GifTagRenderer::TransformStrip(const float mvp[16], const float* verts, int
     }
 }
 
-void GifTagRenderer::DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, uint32_t vertexCount, Color3 color, uint32_t textureId)
+void GifTagRenderer::DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, const float* colors, uint32_t vertexCount, Color3 color, uint32_t textureId)
 {
     if (!verts || vertexCount < 3)
         return;
@@ -925,10 +1083,10 @@ void GifTagRenderer::DrawStrip(const float mvp[16], const float* verts, int comp
         BindTexture(textureId);
 
     const float colorScale = textured ? 128.0f : 255.0f;
-    const uint8_t r = static_cast<uint8_t>(color.r * colorScale);
-    const uint8_t g = static_cast<uint8_t>(color.g * colorScale);
-    const uint8_t b = static_cast<uint8_t>(color.b * colorScale);
-    const uint64_t rgbaLo = static_cast<uint64_t>(r) | (static_cast<uint64_t>(g) << 8) | (static_cast<uint64_t>(b) << 16) | (static_cast<uint64_t>(0x80) << 24);
+    const uint8_t flatR = static_cast<uint8_t>(Clamp01(color.r) * colorScale);
+    const uint8_t flatG = static_cast<uint8_t>(Clamp01(color.g) * colorScale);
+    const uint8_t flatB = static_cast<uint8_t>(Clamp01(color.b) * colorScale);
+    const uint64_t flatRgbaLo = static_cast<uint64_t>(flatR) | (static_cast<uint64_t>(flatG) << 8) | (static_cast<uint64_t>(flatB) << 16) | (static_cast<uint64_t>(0x80) << 24);
 
     const uint32_t prim = PRIM_TRIANGLE_STRIP | PRIM_BIT_IIP | (textured ? PRIM_BIT_TME : 0u);
     const uint32_t nreg = textured ? 3u : 2u;
@@ -964,6 +1122,15 @@ void GifTagRenderer::DrawStrip(const float mvp[16], const float* verts, int comp
             {
                 const float* uv = uvs + k * 2;
                 packet2_add_u64(m_geom, FloatBits(uv[0] * q) | (FloatBits(uv[1] * q) << 32));
+            }
+            uint64_t rgbaLo = flatRgbaLo;
+            if (colors)
+            {
+                const float* c = colors + static_cast<size_t>(k) * 4;
+                const uint8_t r = static_cast<uint8_t>(Clamp01(c[0]) * colorScale);
+                const uint8_t g = static_cast<uint8_t>(Clamp01(c[1]) * colorScale);
+                const uint8_t b = static_cast<uint8_t>(Clamp01(c[2]) * colorScale);
+                rgbaLo = static_cast<uint64_t>(r) | (static_cast<uint64_t>(g) << 8) | (static_cast<uint64_t>(b) << 16) | (static_cast<uint64_t>(0x80) << 24);
             }
             packet2_add_u64(m_geom, rgbaLo | (FloatBits(q) << 32));
             uint64_t xyzWord;
@@ -1079,7 +1246,7 @@ void GifTagRenderer::RenderSkybox(const DrawLists& lists)
     const bool savedCull = m_backfaceCull;
     m_backfaceCull = false;
     const PrimitiveArrays cube = lists.GetPrimitiveArrays(Primitive3D::Cube);
-    DrawTriangles(mvp, cube.verts, 3, cube.uvs, cube.vertexCount, Color3{1.0f, 1.0f, 1.0f}, tex->id);
+    DrawTriangles(mvp, cube.verts, 3, cube.uvs, nullptr, cube.vertexCount, Color3{1.0f, 1.0f, 1.0f}, tex->id);
     m_backfaceCull = savedCull;
 }
 
@@ -1127,23 +1294,30 @@ void GifTagRenderer::RenderModels(const DrawLists& lists)
 
             uint32_t texId = 0;
             const int matIdx = (model->meshMaterial) ? model->meshMaterial[meshIdx] : 0;
+            float baseColorRgba[4] = {1.0f, 1.0f, 1.0f, 1.0f};
             if (model->materials)
             {
-                const int32_t texResId = model->materials[matIdx].maps[MATERIAL_MAP_DIFFUSE].textureResourceId;
+                const int32_t materialHandle = model->materials[matIdx];
+                const int32_t texResId = Engine_Resource_GetMaterialTexture(materialHandle, MATERIAL_PBR_TEX_ALBEDO);
                 if (texResId >= 0)
                 {
                     const auto* t = static_cast<const Texture2D*>(Engine_Resource_Get(texResId));
                     if (t)
                         texId = t->id;
                 }
+                Engine_Resource_GetMaterialColor(materialHandle, MATERIAL_PBR_COLOR_BASE, baseColorRgba);
             }
 
             const int components = (mesh.vertexComponents == 4) ? 4 : 3;
             const float* uv = texId ? mesh.texcoords : nullptr;
+            // Standalone models never carry baked per-vertex colour (only
+            // level-sector meshes do -- see docs/formats/MATERIAL_FORMAT.md);
+            // the material's baseColorFactor is the per-mesh tint instead.
+            ComputeLitVertexColors(mesh.vertices, components, mesh.normals, nullptr, baseColorRgba, mm, static_cast<uint32_t>(mesh.vertexCount), m_litColors);
             if (mesh.topology == MESH_TOPOLOGY_STRIP)
-                DrawStrip(mvp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
+                DrawStrip(mvp, mesh.vertices, components, uv, m_litColors, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
             else
-                DrawTriangles(mvp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
+                DrawTriangles(mvp, mesh.vertices, components, uv, m_litColors, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
             ++meshDraws;
         }
     }
@@ -1262,7 +1436,7 @@ uint32_t GifTagRenderer::RenderToImage3D(const Renderable3D& what, const Camera3
             const int matIdx = model->meshMaterial ? model->meshMaterial[meshIdx] : 0;
             if (model->materials && matIdx < model->materialCount)
             {
-                const int32_t texResId = model->materials[matIdx].maps[MATERIAL_MAP_DIFFUSE].textureResourceId;
+                const int32_t texResId = Engine_Resource_GetMaterialTexture(model->materials[matIdx], MATERIAL_PBR_TEX_ALBEDO);
                 if (texResId >= 0)
                 {
                     const auto* t = static_cast<const Texture2D*>(Engine_Resource_Get(texResId));
@@ -1273,10 +1447,13 @@ uint32_t GifTagRenderer::RenderToImage3D(const Renderable3D& what, const Camera3
 
             const int components = (mesh.vertexComponents == 4) ? 4 : 3;
             const float* uv = texId ? mesh.texcoords : nullptr;
+            // RenderToImage3D's preview target deliberately stays on flat,
+            // scene-light-independent shading (colors=nullptr) -- see the
+            // same design decision in the Win32 backends.
             if (mesh.topology == MESH_TOPOLOGY_STRIP)
-                DrawStrip(mvp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
+                DrawStrip(mvp, mesh.vertices, components, uv, nullptr, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
             else
-                DrawTriangles(mvp, mesh.vertices, components, uv, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
+                DrawTriangles(mvp, mesh.vertices, components, uv, nullptr, static_cast<uint32_t>(mesh.vertexCount), Color3{1.0f, 1.0f, 1.0f}, texId);
         }
     }
     else
@@ -1291,7 +1468,7 @@ uint32_t GifTagRenderer::RenderToImage3D(const Renderable3D& what, const Camera3
                 if (t)
                     texId = t->id;
             }
-            DrawTriangles(mvp, geo.verts, 3, texId ? geo.uvs : nullptr, geo.vertexCount, what.color, texId);
+            DrawTriangles(mvp, geo.verts, 3, texId ? geo.uvs : nullptr, nullptr, geo.vertexCount, what.color, texId);
         }
     }
 
@@ -1530,6 +1707,9 @@ void GifTagRenderer::ReleaseTexture(uint32_t handle)
 void GifTagRenderer::SetCamera3D(CameraID id, const Camera3D& camera) { m_drawLists.SetCamera3D(id, camera); }
 void GifTagRenderer::SetActiveCamera3D(CameraID id) { m_drawLists.SetActiveCamera3D(id); }
 void GifTagRenderer::SetActiveCamera2D(const Camera2D& camera) { m_drawLists.SetActiveCamera2D(camera); }
+void GifTagRenderer::SetLight3D(LightID id, const Light3D& light) { m_drawLists.SetLight3D(id, light); }
+void GifTagRenderer::SetAmbientLight(const Color3& color) { m_drawLists.SetAmbientLight(color); }
+void GifTagRenderer::SetShadowCasterLight(LightID id) { m_drawLists.SetShadowCasterLight(id); }
 
 uint32_t GifTagRenderer::GetTextureBudgetBytes() const { return m_texHeapWords * 4u; }
 

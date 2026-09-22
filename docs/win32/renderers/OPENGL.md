@@ -38,12 +38,59 @@ rather than needing a third graphics port.
 Geometry is staged into the same representation the [WebGPU](WEBGPU.md) backend
 uses, so both produce identical frames. Three-dimensional and screen-space
 geometry occupy separate spans of one buffer and are drawn as runs sharing a
-texture.
+material.
 
 Entry points are resolved at startup through a small hand-written loader rather
 than a generated one. Resolution falls back to the system library for the older
 entry points, because the driver query is not required to answer for them and
 returns various non-null failure values on some drivers.
+
+Two programs exist, one per dialect, mirroring the two paths above: a flat/
+unlit one for the screen-space pass and `RenderToImage3D`'s preview target, and
+a PBR one for the main scene pass, each compiled from whichever of the core or
+legacy shader dialect the chosen path uses. A third, depth-only program serves
+the real-time shadow pass. See "Materials & lighting" below.
+
+## Materials & lighting
+
+- **PBR tier, both paths.** `SupportsPbrShading()` is `true` regardless of
+  which of the two GLSL dialects was chosen; the PBR shader is written and
+  verified in both. The main pass shades with a metallic-roughness
+  Cook-Torrance BRDF (GGX distribution, Smith geometry, Schlick Fresnel),
+  sampling all three of a material's maps where present and falling back to a
+  flat tangent-space normal and a neutral (occlusion=1/roughness=1/metallic=0)
+  ORM where a slot is empty. Normal mapping reconstructs tangent space from
+  screen-space derivatives (`dFdx`/`dFdy`, core in desktop GLSL since 1.10 —
+  no extension pragma needed on either dialect) rather than a vertex tangent
+  attribute.
+- **The platform's `GFX_MAX_LIGHTS`/`GFX_SHADOW_MAP_SIZE` constants are
+  spliced into the shader source at compile time**, as an extra
+  `glShaderSource` array entry containing `#define`s generated from the real
+  `PlatformConstants.h` values, rather than duplicated as literals in the raw
+  shader text where they could silently drift from it.
+- **Baked and dynamic lighting compose by addition, not replacement** — see
+  [WEBGPU.md](WEBGPU.md)'s Materials & lighting section; the formula and the
+  reason vertex colour is added once rather than folded into albedo are
+  identical here, since both backends share the same design.
+- **One real-time shadow caster, dynamic geometry only.** Same shape as
+  WebGPU: one directional-light-only shadow map (`GFX_SHADOW_MAP_SIZE`
+  square), rendering only the dynamic span of this frame's staged geometry
+  (`StagedGeometry::DynamicVertexStart` onward) from a camera-centred
+  orthographic frustum, into a dedicated depth-texture FBO created once at
+  startup — **construction now fails outright if FBO entry points are
+  unavailable**, unlike `RenderToImage3D`'s own FBO use, which still degrades
+  to "unsupported" gracefully; a context claiming PBR support has to be able
+  to shadow it. PCF-sampled with hardware comparison
+  (`GL_TEXTURE_COMPARE_MODE`/`sampler2DShadow`). No alpha-mask cutout support
+  in the shadow pass. Skipped outright, leaving the map's stale contents
+  unsampled, when no caster is designated or nothing dynamic is on screen.
+- **No bind-group cache needed here, unlike WebGPU.** This API binds textures
+  and sets uniforms directly per draw call (`glActiveTexture`/`glBindTexture`
+  three times plus a handful of `glUniform*` calls per run) — there is no
+  descriptor/bind-group object to cache in the first place, so the run loop is
+  simpler than the WebGPU backend's despite doing the same work.
+- **`RenderToImage3D`'s preview target deliberately stays on the flat
+  program** — see the same reasoning in [WEBGPU.md](WEBGPU.md).
 
 ## Quirks and limits
 

@@ -165,3 +165,112 @@ def test_shipped_cooklists_match_the_schema():
         assert set(data["assets"]) <= allowed_classes
         fmt = data["assets"]["TEXTURE"].get("format")
         assert fmt in schema["properties"]["assets"]["properties"]["TEXTURE"]["properties"]["format"]["enum"]
+
+
+# --- material map baking must respect the platform's IO read buffer ---------
+# A cooked material map (albedo/normal/ORM) is read back through EngineIO's
+# single fixed-size shared read buffer at runtime, exactly like a level's own
+# baked-in materials (see tools/tests/test_compile_level.py's matching
+# LEVEL_TEXTURE_MAX_BYTES_BY_PLATFORM tests) -- an asset bigger than that is
+# rejected at load, silently as far as cook/validate_cooked are concerned
+# (see EX-0018 in docs/fixed_issues/issues.json).
+
+_PLATFORM_HEADERS_FOR_IO_BUFFER = {
+    "ps2": ROOT / "engine" / "include" / "platform" / "ps2" / "PlatformConstantsPs2.h",
+    "vita": ROOT / "engine" / "include" / "platform" / "vita" / "PlatformConstantsVita.h",
+    "win32": ROOT / "engine" / "include" / "platform" / "win32" / "PlatformConstants.h",
+    "psp": ROOT / "engine" / "include" / "platform" / "psp" / "PlatformConstants.h",
+    "nx": ROOT / "engine" / "include" / "platform" / "nx" / "PlatformConstants.h",
+}
+
+
+def _product_of_io_buffer_literals(expression, source):
+    """Same narrow "product of integer literals" parse
+    test_compile_level.py's own _product_of_literals uses, kept as its own
+    copy here rather than a cross-test-file import."""
+    import re
+    product = 1
+    for token in expression.replace(" ", "").split("*"):
+        assert token.isdigit(), f"{source}: IO_READ_BUFFER_SIZE is not a product of integer literals ({expression!r})"
+        product *= int(token)
+    return product
+
+
+def test_io_read_buffer_size_by_platform_matches_every_platform_header():
+    """cook_assets.IO_READ_BUFFER_SIZE_BY_PLATFORM must not exceed each
+    platform's own IO_READ_BUFFER_SIZE, the same invariant
+    test_compile_level.py's test_level_texture_max_bytes_matches_every_
+    platform_header already holds compile_level.py's own copy to."""
+    import re
+    for platform, header_path in _PLATFORM_HEADERS_FOR_IO_BUFFER.items():
+        header = header_path.read_text(encoding="utf-8")
+        m = re.search(r"#define\s+IO_READ_BUFFER_SIZE\s+\(([^)]+)\)", header)
+        assert m, f"IO_READ_BUFFER_SIZE not found in {header_path}"
+        buffer_size = _product_of_io_buffer_literals(m.group(1), header_path)
+        assert cook_assets.IO_READ_BUFFER_SIZE_BY_PLATFORM[platform] <= buffer_size
+
+
+def test_cook_assets_io_read_buffer_sizes_match_compile_level():
+    """The two tools keep independent copies of the same per-platform
+    ceiling (cook_assets.py bakes standalone material maps, compile_level.py
+    bakes a level's own materials) -- they must agree, or a level and a
+    standalone material asset for the same platform would silently disagree
+    about what that platform's IO read buffer actually holds."""
+    compile_level = _load("compile_level", "compile_level.py")
+    assert cook_assets.IO_READ_BUFFER_SIZE_BY_PLATFORM == compile_level.LEVEL_TEXTURE_MAX_BYTES_BY_PLATFORM
+
+
+def test_bake_material_map_respects_the_io_read_buffer_size(tmp_path):
+    """A material map with no dimension cap tight enough to matter on its
+    own (or none at all, like albedo) must still be downscaled until its
+    cooked .ps2a fits max_bytes -- the same safety net
+    compile_level.py's own _bake_material already has for a level's baked-in
+    materials (test_compile_level.py's
+    test_bake_material_respects_the_level_texture_dimension_cap)."""
+    PILImage = pytest.importorskip("PIL.Image")
+
+    big = PILImage.new("RGB", (1024, 1024), (32, 64, 128))
+    src = tmp_path / "HUGE.png"
+    big.save(src)
+
+    texture_policy = {"format": "rgba32", "max_width": 4096, "max_height": 4096}
+    dst_dir = tmp_path / "out"
+    dst_dir.mkdir()
+    small_budget = 64 * 1024
+
+    cook_assets._bake_material_map(str(src), "HUGE_ALBEDO", texture_policy, str(dst_dir), max_bytes=small_budget)
+
+    out_path = dst_dir / "HUGE_ALBEDO.PS2A"
+    assert out_path.is_file()
+    assert out_path.stat().st_size <= small_budget
+
+
+def test_bake_material_payload_applies_the_current_platforms_io_buffer_cap(tmp_path):
+    """End to end through _bake_material_payload (the entry point
+    cook_assets.py's MATERIAL cook path actually calls): every one of a
+    material's maps must come out no bigger than the requesting platform's
+    own IO_READ_BUFFER_SIZE_BY_PLATFORM entry, with no dimension cap
+    declared in the cook list at all -- reproducing the exact shape of
+    EX-0018 (a real material authored against 4096x4096 source art)."""
+    PILImage = pytest.importorskip("PIL.Image")
+
+    big = PILImage.new("RGB", (4096, 4096), (200, 120, 40))
+    big.save(tmp_path / "ALBEDO.png")
+
+    meta = {"type": "MATERIAL", "shaderType": "pbr_standard", "albedo": "ALBEDO.png"}
+    cooklist = {
+        "platform": "win32",
+        "assets": {"TEXTURE": {"format": "rgba32", "max_width": 4096, "max_height": 4096},
+                   "MATERIAL": {"enabled": True, "bake_normal": True, "bake_orm": True}},
+    }
+    dst_dir = tmp_path / "out"
+    dst_dir.mkdir()
+
+    result = cook_assets._bake_material_payload(meta, str(tmp_path / "MAT.json"), str(tmp_path), str(dst_dir), cooklist)
+    assert result is not None
+
+    budget = cook_assets.IO_READ_BUFFER_SIZE_BY_PLATFORM["win32"]
+    baked = list(dst_dir.glob("*.PS2A"))
+    assert baked, "expected at least the albedo map to be baked"
+    for f in baked:
+        assert f.stat().st_size <= budget, f"{f.name} is {f.stat().st_size} bytes, over win32's {budget}-byte IO buffer"

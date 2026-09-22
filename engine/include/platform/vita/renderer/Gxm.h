@@ -46,6 +46,11 @@ public:
     void SetActiveCamera3D(CameraID id) override;
     void SetActiveCamera2D(const Camera2D& camera) override;
 
+    void SetLight3D(LightID id, const Light3D& light) override;
+    void SetAmbientLight(const Color3& color) override;
+    void SetShadowCasterLight(LightID id) override;
+    bool SupportsPbrShading() const override { return true; }
+
     /// Upload a cooked texture into graphics memory.
     /// @param upload Source texture; expanded to RGBA8.
     /// @return A handle, or 0 on failure.
@@ -64,6 +69,7 @@ protected:
     void RenderSkybox(const DrawLists& lists) override;
     void RenderPrimitives(DrawLists& lists) override;
     void RenderModels(const DrawLists& lists) override;
+    void RenderShadowMap(const DrawLists& lists) override;
 
 private:
     struct DisplayBuffer
@@ -86,6 +92,10 @@ private:
     bool InitGraphics();
     bool InitRenderTarget();
     bool InitShaders();
+    bool InitPbrShaders();
+    bool InitShadowShaders();
+    bool InitDefaultMaterialTextures();
+    bool InitShadowTarget();
     bool InitBuffers();
     void DestroyGraphics();
 
@@ -121,11 +131,68 @@ private:
     SceUID m_patcherVertexUsseUid;
     SceUID m_patcherFragmentUsseUid;
 
+    // Flat/unlit pipeline: the 2D pass and RenderToImage3D's preview target
+    // (deliberately -- see the member comment on the equivalent Win32
+    // pipeline in WebGpu.h: a preview's lighting must never depend on the
+    // scene's own dynamic lights/shadow caster).
     SceGxmShaderPatcherId m_vertexProgramId;
     SceGxmShaderPatcherId m_fragmentProgramId;
     SceGxmVertexProgram* m_vertexProgram;
     SceGxmFragmentProgram* m_fragmentProgram;
     const SceGxmProgramParameter* m_viewProjParam;
+
+    // PBR pipeline: the main scene pass.
+    SceGxmShaderPatcherId m_pbrVertexProgramId;
+    SceGxmShaderPatcherId m_pbrFragmentProgramId;
+    SceGxmVertexProgram* m_pbrVertexProgram;
+    SceGxmFragmentProgram* m_pbrFragmentProgram;
+    const SceGxmProgramParameter* m_pbrViewProjParam;
+    const SceGxmProgramParameter* m_pbrCameraPosParam;
+    const SceGxmProgramParameter* m_pbrAmbientParam;
+    const SceGxmProgramParameter* m_pbrLightPosOrDirParam;
+    const SceGxmProgramParameter* m_pbrLightColorIntensityParam;
+    const SceGxmProgramParameter* m_pbrLightRangeParam;
+    const SceGxmProgramParameter* m_pbrShadowCasterParam;
+    const SceGxmProgramParameter* m_pbrLightViewProjParam;
+    const SceGxmProgramParameter* m_pbrBaseColorParam;
+    const SceGxmProgramParameter* m_pbrEmissiveParam;
+    const SceGxmProgramParameter* m_pbrMrnaParam;
+    const SceGxmProgramParameter* m_pbrAlphaMaskParam;
+
+    // Depth-only shadow pipeline: dynamic geometry only.
+    SceGxmShaderPatcherId m_shadowVertexProgramId;
+    SceGxmShaderPatcherId m_shadowFragmentProgramId;
+    SceGxmVertexProgram* m_shadowVertexProgram;
+    SceGxmFragmentProgram* m_shadowFragmentProgram;
+    const SceGxmProgramParameter* m_shadowLightViewProjParam;
+
+    // Shadow map: a fixed GFX_SHADOW_MAP_SIZE-square colour surface (depth
+    // written into the R channel by scene_shadow_f.cg -- there is no
+    // confirmed readable-depth-texture path on this profile, see the shader's
+    // own comment), reserved once at construction like the main display
+    // buffers, never resized. Registered into the ordinary m_textures[] table
+    // (see the pattern EnsureImageTarget already establishes for the preview
+    // target) so the main pass samples it exactly like any uploaded texture.
+    SceGxmRenderTarget* m_shadowRenderTarget;
+    void* m_shadowColorData;
+    SceUID m_shadowColorUid;
+    SceGxmColorSurface m_shadowColorSurface;
+    void* m_shadowDepthData;
+    SceUID m_shadowDepthUid;
+    SceGxmDepthStencilSurface m_shadowDepthSurface;
+    int m_shadowTextureSlot; // index into m_textures[], or -1 before first use
+
+    // Defaults for a material with no normal/ORM map of its own: flat
+    // tangent-space normal, and occlusion=1/roughness=1/metallic=0. Indices
+    // into m_textures[] (0 = none, matching every other handle in this class).
+    uint32_t m_defaultNormalTexture;
+    uint32_t m_defaultOrmTexture;
+
+    // Result of this frame's RenderShadowMap, consumed by DrawStagedGeometry
+    // right afterwards.
+    float m_lastLightViewProj[16];
+    bool m_shadowActive;
+    LightID m_shadowCasterIndex;
 
     void* m_vertexBuffer;
     void* m_indexBuffer;

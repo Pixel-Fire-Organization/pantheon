@@ -201,6 +201,10 @@
 
 // Fixed 3D camera slots. Exactly one is the active render camera per frame.
 #define GFX_MAX_CAMERAS_3D 4
+// PS2 has no real-time shadow pass (fixed-function, see RENDERER.md); this
+// exists only for uniformity with the other four platforms and is unused.
+#define GFX_MAX_LIGHTS 4
+#define GFX_SHADOW_MAP_SIZE 512
 
 // RenderToImage3D's scratch offscreen target (Ui_Image3D), shared by both PS2
 // backends: one square colour+depth surface, reserved once at construction

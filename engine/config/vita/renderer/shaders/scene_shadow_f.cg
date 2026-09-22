@@ -1,0 +1,6 @@
+// Depth-only shadow-pass fragment shader -- writes NDC depth into an
+// ordinary colour target's R channel (see scene_shadow_v.cg).
+float4 main(float vDepth : TEXCOORD0) : COLOR
+{
+    return float4(vDepth, vDepth, vDepth, 1.0f);
+}

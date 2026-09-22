@@ -11,6 +11,10 @@
 #include "platform/Platform.h"
 #include "scene_frag_glsl.h"
 #include "scene_vert_glsl.h"
+#include "scene_pbr_frag_glsl.h"
+#include "scene_pbr_vert_glsl.h"
+#include "scene_shadow_frag_glsl.h"
+#include "scene_shadow_vert_glsl.h"
 
 #include <switch.h>
 
@@ -20,6 +24,43 @@ namespace
     const EGLint NXGL_CONTEXT_MINOR = 3;
     const GLsizeiptr NXGL_UNIFORM_BYTES = 16 * sizeof(float);
     const GLuint NXGL_UNIFORM_BINDING = 0;
+
+    // Mirrors scene_pbr.vert.glsl/scene_pbr.frag.glsl's FrameUniforms block
+    // field-for-field, in the same order -- std140 layout, every member
+    // already a multiple of 16 bytes, so there is no compiler padding to
+    // reason about. sizeof(FrameUniformsCpu) is the single source of truth
+    // for this buffer's size, used both where it is allocated and where it
+    // is written, so the two can never drift out of sync the way two
+    // independently-computed byte counts could.
+    struct FrameUniformsCpu
+    {
+        float viewProj[16];
+        float lightViewProj[16];
+        float cameraPos[4];
+        float ambient[4];
+        float lightPosOrDir[4 * 4];
+        float lightColorIntensity[4 * 4];
+        float lightRange[4 * 4];
+        float shadowCaster[4];
+    };
+    const GLuint NXGL_PBR_FRAME_BINDING = 0;
+
+    // Mirrors MaterialUniform likewise.
+    struct MaterialUniformCpu
+    {
+        float baseColor[4];
+        float emissive[4];
+        float mrna[4];
+        float matFlags[4];
+    };
+    // MaterialUniform std140 layout: vec4 * 4 = 64 bytes, strided to the
+    // conservative 256-byte alignment every desktop/Vulkan-class driver
+    // guarantees for glBindBufferRange (the same value WebGpu.cpp's dynamic-
+    // offset material buffer uses, for the same reason).
+    const GLuint NXGL_PBR_MATERIAL_STRIDE = 256;
+    const GLuint NXGL_PBR_MATERIAL_BINDING = 1;
+    const GLsizeiptr NXGL_SHADOW_UNIFORM_BYTES = 16 * sizeof(float);
+    const GLuint NXGL_SHADOW_BINDING = 0;
 
     GLuint CompileShader(GLenum type, const char* source)
     {
@@ -46,12 +87,14 @@ namespace
 } // namespace
 
 OpenGlRenderer::OpenGlRenderer(const EngineConfig& config) :
-    m_display(EGL_NO_DISPLAY), m_context(EGL_NO_CONTEXT), m_surface(EGL_NO_SURFACE), m_program(0), m_vao(0), m_vertexBuffer(0), m_vertexBufferCapacity(0), m_uniformBuffer(0), m_whiteTexture(0),
-    m_clearColor{0.0f, 0.0f, 0.0f}, m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_cropWidth(0), m_cropHeight(0), m_frameStats{}, m_initialized(false), m_imageFbo(0), m_imageColorTex(0),
-    m_imageDepthRb(0), m_imageWidth(0), m_imageHeight(0)
+    m_display(EGL_NO_DISPLAY), m_context(EGL_NO_CONTEXT), m_surface(EGL_NO_SURFACE), m_program(0), m_vao(0), m_vertexBuffer(0), m_vertexBufferCapacity(0), m_uniformBuffer(0), m_pbrProgram(0),
+    m_pbrFrameUniformBuffer(0), m_pbrMaterialUniformBuffer(0), m_shadowProgram(0), m_shadowUniformBuffer(0), m_shadowFbo(0), m_shadowColorTex(0), m_shadowDepthRb(0), m_defaultNormalTexture(0),
+    m_defaultOrmTexture(0), m_shadowActive(false), m_shadowCasterIndex(-1), m_frame3DVerticesUploaded(0), m_whiteTexture(0), m_clearColor{0.0f, 0.0f, 0.0f}, m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_cropWidth(0),
+    m_cropHeight(0), m_frameStats{}, m_initialized(false), m_imageFbo(0), m_imageColorTex(0), m_imageDepthRb(0), m_imageWidth(0), m_imageHeight(0)
 {
     UNUSED_VAR(config);
     memset(m_textures, 0, sizeof(m_textures));
+    memset(m_lastLightViewProj, 0, sizeof(m_lastLightViewProj));
 
     Engine_GetPlatform()->GetFramebufferSize(&m_width, &m_height);
     Engine_LogInfo("OpenGlRenderer: initializing (%ux%u)", m_width, m_height);
@@ -64,7 +107,7 @@ OpenGlRenderer::OpenGlRenderer(const EngineConfig& config) :
     }
     m_drawLists.Init(arena);
 
-    if (!CreateContext() || !CreateProgram() || !CreateWhiteTexture())
+    if (!CreateContext() || !CreateProgram() || !CreateWhiteTexture() || !CreateDefaultMaterialTextures() || !EnsureShadowMap() || !CreatePbrProgram() || !CreateShadowProgram())
     {
         DestroyContext();
         return;
@@ -77,6 +120,26 @@ OpenGlRenderer::OpenGlRenderer(const EngineConfig& config) :
     glGenBuffers(1, &m_uniformBuffer);
     glBindBuffer(GL_UNIFORM_BUFFER, m_uniformBuffer);
     glBufferData(GL_UNIFORM_BUFFER, NXGL_UNIFORM_BYTES, nullptr, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, NXGL_UNIFORM_BINDING, m_uniformBuffer);
+
+    glGenBuffers(1, &m_pbrFrameUniformBuffer);
+    glBindBuffer(GL_UNIFORM_BUFFER, m_pbrFrameUniformBuffer);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(FrameUniformsCpu), nullptr, GL_DYNAMIC_DRAW);
+
+    glGenBuffers(1, &m_pbrMaterialUniformBuffer);
+    glBindBuffer(GL_UNIFORM_BUFFER, m_pbrMaterialUniformBuffer);
+    glBufferData(GL_UNIFORM_BUFFER, static_cast<GLsizeiptr>(NXGL_PBR_MATERIAL_STRIDE) * GFX_MAX_DRAW_RUNS, nullptr, GL_DYNAMIC_DRAW);
+
+    glGenBuffers(1, &m_shadowUniformBuffer);
+    glBindBuffer(GL_UNIFORM_BUFFER, m_shadowUniformBuffer);
+    glBufferData(GL_UNIFORM_BUFFER, NXGL_SHADOW_UNIFORM_BYTES, nullptr, GL_DYNAMIC_DRAW);
+
+    // Restore binding point 0 to the flat program's own UBO -- the two
+    // buffers just created above were each bound to point 0 momentarily by
+    // glBufferData's own driver-visible state, and this backend's frame loop
+    // assumes point 0 already holds the right buffer for whichever program
+    // draws next (see UploadAndDraw/RenderShadowMap, which never re-bind
+    // point 0 for m_program themselves).
     glBindBufferBase(GL_UNIFORM_BUFFER, NXGL_UNIFORM_BINDING, m_uniformBuffer);
 
     glEnable(GL_DEPTH_TEST);
@@ -185,6 +248,79 @@ bool OpenGlRenderer::CreateProgram()
     return true;
 }
 
+bool OpenGlRenderer::CreatePbrProgram()
+{
+    GLuint vs = CompileShader(GL_VERTEX_SHADER, g_ScenePbrVertexGlsl);
+    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, g_ScenePbrFragmentGlsl);
+    if (!vs || !fs)
+    {
+        if (vs)
+            glDeleteShader(vs);
+        if (fs)
+            glDeleteShader(fs);
+        return false;
+    }
+
+    m_pbrProgram = glCreateProgram();
+    glAttachShader(m_pbrProgram, vs);
+    glAttachShader(m_pbrProgram, fs);
+    glLinkProgram(m_pbrProgram);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    // No glGetUniformLocation/glUniformBlockBinding calls needed: every
+    // uniform block and sampler declares its own layout(binding=N) in the
+    // shader source (core since GL 4.2), the same convention deko3d's NVN
+    // shaders are compiled against, so both backends bind by the same fixed
+    // numbers rather than a name looked up per backend.
+    GLint status = 0;
+    glGetProgramiv(m_pbrProgram, GL_LINK_STATUS, &status);
+    if (!status)
+    {
+        char log[1024];
+        GLsizei length = 0;
+        glGetProgramInfoLog(m_pbrProgram, sizeof(log), &length, log);
+        log[sizeof(log) - 1] = '\0';
+        Engine_LogError("OpenGl: PBR program link failed: %s", log);
+        return false;
+    }
+    return true;
+}
+
+bool OpenGlRenderer::CreateShadowProgram()
+{
+    GLuint vs = CompileShader(GL_VERTEX_SHADER, g_SceneShadowVertexGlsl);
+    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, g_SceneShadowFragmentGlsl);
+    if (!vs || !fs)
+    {
+        if (vs)
+            glDeleteShader(vs);
+        if (fs)
+            glDeleteShader(fs);
+        return false;
+    }
+
+    m_shadowProgram = glCreateProgram();
+    glAttachShader(m_shadowProgram, vs);
+    glAttachShader(m_shadowProgram, fs);
+    glLinkProgram(m_shadowProgram);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLint status = 0;
+    glGetProgramiv(m_shadowProgram, GL_LINK_STATUS, &status);
+    if (!status)
+    {
+        char log[1024];
+        GLsizei length = 0;
+        glGetProgramInfoLog(m_shadowProgram, sizeof(log), &length, log);
+        log[sizeof(log) - 1] = '\0';
+        Engine_LogError("OpenGl: shadow program link failed: %s", log);
+        return false;
+    }
+    return true;
+}
+
 bool OpenGlRenderer::CreateWhiteTexture()
 {
     const uint32_t white = 0xFFFFFFFFu;
@@ -196,6 +332,69 @@ bool OpenGlRenderer::CreateWhiteTexture()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, &white);
+    return true;
+}
+
+bool OpenGlRenderer::CreateDefaultMaterialTextures()
+{
+    // Flat tangent-space normal (encoded 128,128,255) and a neutral ORM
+    // (occlusion=1, roughness=1, metallic=0) -- what a material with no
+    // normal/ORM map of its own samples.
+    const uint8_t flatNormal[4] = {128, 128, 255, 255};
+    glGenTextures(1, &m_defaultNormalTexture);
+    if (!m_defaultNormalTexture)
+        return false;
+    glBindTexture(GL_TEXTURE_2D, m_defaultNormalTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, flatNormal);
+
+    const uint8_t neutralOrm[4] = {255, 255, 0, 255};
+    glGenTextures(1, &m_defaultOrmTexture);
+    if (!m_defaultOrmTexture)
+        return false;
+    glBindTexture(GL_TEXTURE_2D, m_defaultOrmTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, neutralOrm);
+
+    return true;
+}
+
+bool OpenGlRenderer::EnsureShadowMap()
+{
+    if (m_shadowFbo)
+        return true;
+
+    // An ordinary colour texture (depth in the R channel), not a depth
+    // texture -- see scene_shadow.frag.glsl's own comment: this must behave
+    // identically under the offline NVN compiler and this driver, and a
+    // depth-texture sampling path is not confirmed to exist the same way on
+    // both.
+    glGenTextures(1, &m_shadowColorTex);
+    glBindTexture(GL_TEXTURE_2D, m_shadowColorTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, GFX_SHADOW_MAP_SIZE, GFX_SHADOW_MAP_SIZE, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    glGenRenderbuffers(1, &m_shadowDepthRb);
+    glBindRenderbuffer(GL_RENDERBUFFER, m_shadowDepthRb);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, GFX_SHADOW_MAP_SIZE, GFX_SHADOW_MAP_SIZE);
+
+    glGenFramebuffers(1, &m_shadowFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_shadowFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_shadowColorTex, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_shadowDepthRb);
+    const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    if (!complete)
+    {
+        Engine_LogError("OpenGl: shadow map framebuffer is incomplete");
+        return false;
+    }
     return true;
 }
 
@@ -357,6 +556,69 @@ void OpenGlRenderer::Render()
     m_frameStats.geometryBuildMs = static_cast<float>((Now() - start) * 1000.0);
 }
 
+void OpenGlRenderer::RenderShadowMap(const DrawLists& lists)
+{
+    m_shadowActive = false;
+
+    const LightID casterId = lists.GetShadowCasterLight();
+    if (casterId < 0 || casterId >= GFX_MAX_LIGHTS)
+        return; // no caster designated this frame
+    const Light3D& caster = lists.GetLights()[casterId];
+    // Only a directional light can cast the shadow map -- see the member
+    // comment on SetShadowCasterLight in Renderer.h and BuildLightViewProjection
+    // in StagedGeometry.h.
+    if (caster.intensity <= 0.0f || caster.type != LightType::Directional)
+        return;
+
+    const uint32_t dynStart = m_geometry.DynamicVertexStart();
+    if (dynStart >= m_frame3DVerticesUploaded)
+        return; // nothing dynamic uploaded this frame; leave the map unsampled (see scene_pbr.frag.glsl)
+    uint32_t dynCount = m_frame3DVerticesUploaded - dynStart;
+    dynCount -= dynCount % 3u; // defensive: an overflow clamp could have cut mid-triangle
+    if (dynCount == 0)
+        return;
+
+    // A frustum centred on the camera, not the whole level: this pass only
+    // ever covers dynamic (model/primitive) geometry, which clusters near
+    // wherever the camera is looking, not the static world.
+    const float kShadowHalfExtent = 24.0f;
+    const float kShadowDepthExtent = 120.0f;
+    StagedGeometry::BuildLightViewProjection(caster.direction, lists.GetCamera3D().position, kShadowHalfExtent, kShadowDepthExtent, true, m_lastLightViewProj);
+
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    GLint prevViewport[4];
+    glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_shadowFbo);
+    glViewport(0, 0, GFX_SHADOW_MAP_SIZE, GFX_SHADOW_MAP_SIZE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    // Cleared to far (1.0, encoded into every channel -- see
+    // scene_shadow.frag.glsl), not whatever glClearColor last held (the
+    // scene's own background, set moments ago in EndFrame): an uncovered
+    // shadow-map texel must read back as "nothing occludes here."
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glBindVertexArray(m_vao);
+    glUseProgram(m_shadowProgram);
+    glBindBuffer(GL_UNIFORM_BUFFER, m_shadowUniformBuffer);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, NXGL_SHADOW_UNIFORM_BYTES, m_lastLightViewProj);
+    glBindBufferBase(GL_UNIFORM_BUFFER, NXGL_SHADOW_BINDING, m_shadowUniformBuffer);
+
+    // One draw over every dynamic vertex: no per-material texture binding to
+    // change between runs (no alpha-mask cutout support yet -- see
+    // scene_shadow.frag.glsl), so there is nothing run boundaries buy it.
+    glDrawArrays(GL_TRIANGLES, static_cast<GLint>(dynStart), static_cast<GLsizei>(dynCount));
+
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
+    glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+
+    m_shadowActive = true;
+    m_shadowCasterIndex = casterId;
+}
+
 void OpenGlRenderer::UploadAndDraw()
 {
     uint32_t count2D = m_geometry.Count2D();
@@ -386,26 +648,105 @@ void OpenGlRenderer::UploadAndDraw()
         glBufferSubData(GL_ARRAY_BUFFER, static_cast<GLintptr>(count3D) * stride, static_cast<GLsizeiptr>(count2D) * stride, m_geometry.Vertices2D());
 
     SetupVertexAttributes();
-    glUseProgram(m_program);
-    glActiveTexture(GL_TEXTURE0);
 
     float matrix[16];
+
+    m_frame3DVerticesUploaded = count3D;
+    RenderShadowMap(m_drawLists);
 
     if (count3D > 0)
     {
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
+        glUseProgram(m_pbrProgram);
+
         StagedGeometry::BuildViewProjection(m_drawLists.GetCamera3D(), m_width, m_height, false, matrix);
-        SetViewProjection(matrix);
+
+        // Frame-constant uniforms (camera, ambient, lights, shadow caster),
+        // assembled into one std140-laid-out buffer and uploaded once here
+        // rather than per run.
+        FrameUniformsCpu frame;
+        memcpy(frame.viewProj, matrix, sizeof(frame.viewProj));
+        memcpy(frame.lightViewProj, m_lastLightViewProj, sizeof(frame.lightViewProj));
+
+        const Camera3D& camera = m_drawLists.GetCamera3D();
+        frame.cameraPos[0] = camera.position.x;
+        frame.cameraPos[1] = camera.position.y;
+        frame.cameraPos[2] = camera.position.z;
+        frame.cameraPos[3] = 0.0f;
+
+        const Color3& ambient = m_drawLists.GetAmbientLight();
+        frame.ambient[0] = ambient.r;
+        frame.ambient[1] = ambient.g;
+        frame.ambient[2] = ambient.b;
+        frame.ambient[3] = 0.0f;
+
+        const Light3D* lights = m_drawLists.GetLights();
+        for (uint32_t i = 0; i < GFX_MAX_LIGHTS; ++i)
+        {
+            const Light3D& l = lights[i];
+            const bool directional = (l.type == LightType::Directional);
+            frame.lightPosOrDir[i * 4 + 0] = directional ? l.direction.x : l.position.x;
+            frame.lightPosOrDir[i * 4 + 1] = directional ? l.direction.y : l.position.y;
+            frame.lightPosOrDir[i * 4 + 2] = directional ? l.direction.z : l.position.z;
+            frame.lightPosOrDir[i * 4 + 3] = directional ? 0.0f : 1.0f;
+            frame.lightColorIntensity[i * 4 + 0] = l.color.r;
+            frame.lightColorIntensity[i * 4 + 1] = l.color.g;
+            frame.lightColorIntensity[i * 4 + 2] = l.color.b;
+            frame.lightColorIntensity[i * 4 + 3] = l.intensity; // <= 0 means "off"; the shader skips it
+            frame.lightRange[i * 4 + 0] = l.range;
+            frame.lightRange[i * 4 + 1] = 0.0f;
+            frame.lightRange[i * 4 + 2] = 0.0f;
+            frame.lightRange[i * 4 + 3] = 0.0f;
+        }
+        frame.shadowCaster[0] = m_shadowActive ? static_cast<float>(m_shadowCasterIndex) : -1.0f;
+        frame.shadowCaster[1] = frame.shadowCaster[2] = frame.shadowCaster[3] = 0.0f;
+
+        glBindBuffer(GL_UNIFORM_BUFFER, m_pbrFrameUniformBuffer);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(frame), &frame);
+        glBindBufferBase(GL_UNIFORM_BUFFER, NXGL_PBR_FRAME_BINDING, m_pbrFrameUniformBuffer);
+
+        glActiveTexture(GL_TEXTURE0 + 3);
+        glBindTexture(GL_TEXTURE_2D, m_shadowColorTex);
 
         const StagedGeometry::DrawRun* runs = m_geometry.Runs();
-        for (uint32_t i = 0; i < m_geometry.RunCount(); ++i)
+        const uint32_t runCount = (m_geometry.RunCount() < GFX_MAX_DRAW_RUNS) ? m_geometry.RunCount() : GFX_MAX_DRAW_RUNS;
+        for (uint32_t i = 0; i < runCount; ++i)
         {
             if (runs[i].first >= count3D)
                 continue;
             const uint32_t count = (runs[i].first + runs[i].count > count3D) ? count3D - runs[i].first : runs[i].count;
+            const uint32_t clampedCount = count - count % 3u;
+            if (clampedCount == 0)
+                continue;
+
+            const StagedGeometry::RunMaterial& mat = runs[i].material;
+            MaterialUniformCpu material;
+            memcpy(material.baseColor, mat.baseColor, sizeof(material.baseColor));
+            material.emissive[0] = mat.emissive[0];
+            material.emissive[1] = mat.emissive[1];
+            material.emissive[2] = mat.emissive[2];
+            material.emissive[3] = 0.0f;
+            material.mrna[0] = mat.metallic;
+            material.mrna[1] = mat.roughness;
+            material.mrna[2] = mat.normalScale;
+            material.mrna[3] = mat.alphaCutoff;
+            material.matFlags[0] = (mat.flags & MATERIAL_FLAG_ALPHA_MASK) ? 1.0f : 0.0f;
+            material.matFlags[1] = material.matFlags[2] = material.matFlags[3] = 0.0f;
+
+            const GLintptr offset = static_cast<GLintptr>(i) * NXGL_PBR_MATERIAL_STRIDE;
+            glBindBuffer(GL_UNIFORM_BUFFER, m_pbrMaterialUniformBuffer);
+            glBufferSubData(GL_UNIFORM_BUFFER, offset, sizeof(material), &material);
+            glBindBufferRange(GL_UNIFORM_BUFFER, NXGL_PBR_MATERIAL_BINDING, m_pbrMaterialUniformBuffer, offset, sizeof(material));
+
+            glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, runs[i].texture ? runs[i].texture : m_whiteTexture);
-            glDrawArrays(GL_TRIANGLES, static_cast<GLint>(runs[i].first), static_cast<GLsizei>(count - count % 3u));
+            glActiveTexture(GL_TEXTURE0 + 1);
+            glBindTexture(GL_TEXTURE_2D, mat.normalTexture ? mat.normalTexture : m_defaultNormalTexture);
+            glActiveTexture(GL_TEXTURE0 + 2);
+            glBindTexture(GL_TEXTURE_2D, mat.ormTexture ? mat.ormTexture : m_defaultOrmTexture);
+
+            glDrawArrays(GL_TRIANGLES, static_cast<GLint>(runs[i].first), static_cast<GLsizei>(clampedCount));
             ++m_frameStats.texBinds;
         }
     }
@@ -416,6 +757,12 @@ void OpenGlRenderer::UploadAndDraw()
         glDepthMask(GL_FALSE);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glUseProgram(m_program);
+        glActiveTexture(GL_TEXTURE0);
+        // The PBR pass above may have repointed binding point 0 at its own
+        // frame-uniforms buffer; this program's SceneTransform block also
+        // declares binding=0, so it must be restored before this draws.
+        glBindBufferBase(GL_UNIFORM_BUFFER, NXGL_UNIFORM_BINDING, m_uniformBuffer);
         StagedGeometry::BuildOrtho2D(m_width, m_height, false, matrix);
         SetViewProjection(matrix);
 
@@ -566,6 +913,9 @@ uint32_t OpenGlRenderer::RenderToImage3D(const Renderable3D& what, const Camera3
 void OpenGlRenderer::SetCamera3D(CameraID id, const Camera3D& camera) { m_drawLists.SetCamera3D(id, camera); }
 void OpenGlRenderer::SetActiveCamera3D(CameraID id) { m_drawLists.SetActiveCamera3D(id); }
 void OpenGlRenderer::SetActiveCamera2D(const Camera2D& camera) { m_drawLists.SetActiveCamera2D(camera); }
+void OpenGlRenderer::SetLight3D(LightID id, const Light3D& light) { m_drawLists.SetLight3D(id, light); }
+void OpenGlRenderer::SetAmbientLight(const Color3& color) { m_drawLists.SetAmbientLight(color); }
+void OpenGlRenderer::SetShadowCasterLight(LightID id) { m_drawLists.SetShadowCasterLight(id); }
 
 bool OpenGlRenderer::IsInitialized() const { return m_initialized; }
 
@@ -598,14 +948,34 @@ void OpenGlRenderer::Shutdown()
     }
     if (m_whiteTexture)
         glDeleteTextures(1, &m_whiteTexture);
+    if (m_defaultNormalTexture)
+        glDeleteTextures(1, &m_defaultNormalTexture);
+    if (m_defaultOrmTexture)
+        glDeleteTextures(1, &m_defaultOrmTexture);
     if (m_vertexBuffer)
         glDeleteBuffers(1, &m_vertexBuffer);
     if (m_uniformBuffer)
         glDeleteBuffers(1, &m_uniformBuffer);
+    if (m_pbrFrameUniformBuffer)
+        glDeleteBuffers(1, &m_pbrFrameUniformBuffer);
+    if (m_pbrMaterialUniformBuffer)
+        glDeleteBuffers(1, &m_pbrMaterialUniformBuffer);
+    if (m_shadowUniformBuffer)
+        glDeleteBuffers(1, &m_shadowUniformBuffer);
     if (m_vao)
         glDeleteVertexArrays(1, &m_vao);
     if (m_program)
         glDeleteProgram(m_program);
+    if (m_pbrProgram)
+        glDeleteProgram(m_pbrProgram);
+    if (m_shadowProgram)
+        glDeleteProgram(m_shadowProgram);
+    if (m_shadowColorTex)
+        glDeleteTextures(1, &m_shadowColorTex);
+    if (m_shadowDepthRb)
+        glDeleteRenderbuffers(1, &m_shadowDepthRb);
+    if (m_shadowFbo)
+        glDeleteFramebuffers(1, &m_shadowFbo);
     if (m_imageColorTex)
         glDeleteTextures(1, &m_imageColorTex);
     if (m_imageDepthRb)

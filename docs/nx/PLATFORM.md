@@ -370,6 +370,20 @@ and that the accounting is sane — not that content fits (rule 15). Not yet
 taken: the snapshot's split, the backend's buffer fill, handheld mode, the
 reference backend, and any figure on hardware.
 
+**Material system, 2026-09-22 — not yet measured.** Both renderers gained a
+second shader pair (PBR, three textures per run) and a third (depth-only, the
+real-time shadow pass), on top of the flat pair the baseline above already
+exercised. On the default renderer, the shadow pass is its own one-off scene
+recorded through the transfer command buffer and blocks on the queue before
+the main frame's command list even begins recording (see
+[DEKO3D.md](renderers/DEKO3D.md)'s Materials & lighting section) — a real,
+currently-unmeasured serialisation cost distinct from the main frame's own
+doubled-buffer overlap described above. The reference renderer's shadow pass
+instead shares the same frame's GL context, so it does not add a comparable
+block. Neither cost has been captured against the baseline above; retake it
+with a scene carrying materials, dynamic lights and a shadow caster before
+trusting either renderer's docked headroom.
+
 **Left on the table**, in the order to attack it: moving the transform of static
 world geometry onto the graphics processor, which this platform can afford and
 the others cannot; a compressed texture vocabulary in the cook list, which the

@@ -1,6 +1,7 @@
 ﻿#include <cstring>
 #include "Engine.h"
 #include "graphics/FontFormat.h"
+#include "graphics/MaterialFormat.h"
 #include "graphics/ModelFormat.h"
 #include "graphics/Renderer.h"
 #include "graphics/Types.h"
@@ -44,6 +45,7 @@ typedef struct
         Model model;
         Font font;
         UiTheme theme;
+        Material material;
     } handle;
 } ResourceEntry;
 
@@ -155,6 +157,7 @@ static void Internal_UnloadHandle(ResourceEntry* entry)
         break;
     case RES_THEME:
     case RES_SOUND:
+    case RES_MATERIAL:
         break; // nothing was allocated
     }
 }
@@ -205,16 +208,19 @@ static void Internal_UnloadEntry(int32_t index)
     entry->generation = nextGeneration;
 }
 
-// Resolve a baked model's diffuse texture reference (an index into the owning
-// asset's dependency list) to a resource handle. Passed to Model_LoadBaked; the
-// returned handle is stored in the material and resolved to a live Texture2D at
-// draw time (the texture dependency may still be streaming in).
-static int32_t Internal_ResolveModelTexture(uint32_t diffuseTexRef, void* user)
+// Resolve a dependency slot (an index into the owning asset's own dependency
+// list) to a resource handle. Passed to both Model_LoadBaked (a model's
+// materialIndex names one of its own material dependencies) and
+// Material_LoadBaked (a texture reference names one of its own texture
+// dependencies) -- both are "index into this asset's deps[]", so one function
+// serves both decode paths. The returned handle is resolved to a live object
+// at draw time; the dependency may still be streaming in.
+static int32_t Internal_ResolveDepHandle(uint32_t depIndex, void* user)
 {
     const ResourceEntry* entry = static_cast<const ResourceEntry*>(user);
-    if (!entry || diffuseTexRef >= entry->depCount)
+    if (!entry || depIndex >= entry->depCount)
         return -1;
-    return entry->deps[diffuseTexRef].index; // resource handle, or -1 if unbound
+    return entry->deps[depIndex].index; // resource handle, or -1 if unbound
 }
 
 // Callback context for async IO loads. The generation is the slot's value when
@@ -285,7 +291,7 @@ static void Internal_OnAsyncLoadComplete(const void* data, size_t size, void* us
 
     // Validate header.type is within the supported ResourceType enum range.
     // A corrupt asset or out-of-date packer can produce invalid type values.
-    if (header.type > RES_THEME) // RES_TEXTURE=0, RES_MODEL=1, RES_SOUND=2, RES_FONT=3, RES_THEME=4
+    if (header.type > RES_MATERIAL) // RES_TEXTURE=0, RES_MODEL=1, RES_SOUND=2, RES_FONT=3, RES_THEME=4, RES_MATERIAL=5
     {
         Engine_LogError("Resource: invalid type %u in .ps2a header for slot %d (%s)", header.type, idx, entry->key);
         Internal_UnloadEntry(idx);
@@ -378,13 +384,29 @@ static void Internal_OnAsyncLoadComplete(const void* data, size_t size, void* us
         break;
     case RES_MODEL:
         {
-            // Models are baked to separated, unindexed vertex arrays. Their texture
-            // dependencies were queued by Internal_ParseHeaderAndLoadDeps above;
-            // materials store the dep resource handles and are resolved to live
-            // textures at draw time.
-            if (!Model_LoadBaked(payload, static_cast<size_t>(payloadSize), &entry->handle.model, Internal_ResolveModelTexture, entry))
+            // Models are baked to separated, unindexed vertex arrays. Their
+            // material dependencies were queued by Internal_ParseHeaderAndLoadDeps
+            // above; every dependency of a model names a RES_MATERIAL asset, and
+            // materialCount is the entry's own authoritative dependency count --
+            // never the payload's, which is never trusted for indexing.
+            if (!Model_LoadBaked(payload, static_cast<size_t>(payloadSize), entry->depCount, &entry->handle.model, Internal_ResolveDepHandle, entry))
             {
                 Engine_LogError("Resource: baked model load failed for slot %d (%s)", idx, entry->key);
+                Internal_UnloadEntry(idx);
+                Engine_PoolFreeMain(ctx);
+                return;
+            }
+            entry->state = RES_STATE_READY;
+        }
+        break;
+    case RES_MATERIAL:
+        {
+            // A material's texture dependencies were queued above; each texture
+            // slot names one of them and is resolved to a resource handle here,
+            // exactly like a model's material slots are.
+            if (!Material_LoadBaked(payload, static_cast<size_t>(payloadSize), &entry->handle.material, Internal_ResolveDepHandle, entry))
+            {
+                Engine_LogError("Resource: baked material load failed for slot %d (%s)", idx, entry->key);
                 Internal_UnloadEntry(idx);
                 Engine_PoolFreeMain(ctx);
                 return;
@@ -704,10 +726,52 @@ void* Engine_Resource_Get(int32_t handle)
         return &entry->handle.font;
     case RES_THEME:
         return &entry->handle.theme;
+    case RES_MATERIAL:
+        return &entry->handle.material;
     case RES_SOUND:
         return nullptr; // not implemented on any platform
     }
     return nullptr;
+}
+
+int32_t Engine_Resource_GetMaterialTexture(int32_t materialHandle, int slot)
+{
+    if (materialHandle < 0 || materialHandle >= RES_MAX_ENTRIES)
+        return -1;
+    // Engine_Resource_Get already dispatches on the entry's own authoritative
+    // type, but a caller here specifically wants a Material -- a handle that
+    // actually names a texture, model or theme must be refused rather than
+    // reinterpreted as one.
+    if (s_Entries[materialHandle].type != RES_MATERIAL)
+        return -1;
+    if (slot < 0 || slot >= MATERIAL_MAX_TEXTURE_SLOTS)
+        return -1;
+
+    const Material* material = static_cast<const Material*>(Engine_Resource_Get(materialHandle));
+    if (!material)
+        return -1;
+    return material->textureRefs[slot];
+}
+
+bool Engine_Resource_GetMaterialColor(int32_t materialHandle, int slot, float outRgba[4])
+{
+    outRgba[0] = outRgba[1] = outRgba[2] = outRgba[3] = 1.0f;
+
+    if (materialHandle < 0 || materialHandle >= RES_MAX_ENTRIES)
+        return false;
+    if (s_Entries[materialHandle].type != RES_MATERIAL)
+        return false;
+    if (slot < 0 || slot >= MATERIAL_MAX_COLOR_PARAMS)
+        return false;
+
+    const Material* material = static_cast<const Material*>(Engine_Resource_Get(materialHandle));
+    if (!material)
+        return false;
+    outRgba[0] = material->colorParams[slot][0];
+    outRgba[1] = material->colorParams[slot][1];
+    outRgba[2] = material->colorParams[slot][2];
+    outRgba[3] = material->colorParams[slot][3];
+    return true;
 }
 
 bool Engine_Resource_IsReady(int32_t handle)

@@ -11,7 +11,7 @@ exactly one stripifier.
 import struct
 
 BAKED_MODEL_MAGIC = 0x324D4B42  # "BKM2"
-BAKED_MODEL_VERSION = 2
+BAKED_MODEL_VERSION = 3
 
 BAKED_TOPOLOGY_LIST = 0
 BAKED_TOPOLOGY_STRIP = 1
@@ -53,12 +53,15 @@ def aabb(positions):
     return (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))
 
 
-def dedup_corners(out_v, out_n, out_t):
+def dedup_corners(out_v, out_n, out_t, out_c=None):
     """Collapse identical (pos, normal, uv) triangle corners to unique vertices.
-    Returns (unique_v, unique_n, unique_t, triangles) with triangles as index
-    triples into the unique arrays."""
+    Returns (unique_v, unique_n, unique_t, unique_c, triangles) with triangles
+    as index triples into the unique arrays. `unique_c` is None when `out_c`
+    is not given; a corner's colour is a pure function of its position and
+    normal, so it never affects the dedup key."""
     unique = {}
     uv, un, ut = [], [], []
+    uc = [] if out_c is not None else None
     indices = []
     for i in range(len(out_v)):
         key = (out_v[i], out_n[i], out_t[i])
@@ -69,9 +72,11 @@ def dedup_corners(out_v, out_n, out_t):
             uv.append(out_v[i])
             un.append(out_n[i])
             ut.append(out_t[i])
+            if out_c is not None:
+                uc.append(out_c[i])
         indices.append(idx)
     triangles = [(indices[k], indices[k + 1], indices[k + 2]) for k in range(0, len(indices), 3)]
-    return uv, un, ut, triangles
+    return uv, un, ut, uc, triangles
 
 
 def stripify(triangles):
@@ -212,19 +217,25 @@ def parse_obj(source_path):
     return out_v, out_n, out_t
 
 
-def bake_mesh(out_v, out_n, out_t):
+def bake_mesh(out_v, out_n, out_t, out_c=None):
     """Core mesh baker. Dedups corners, stripifies (verified) when it is a win,
     else emits an unindexed list. Returns a dict with the emitted vec4/vec3/vec2
     byte blobs, topology, vertex count and object-space bounding sphere. Shared by
-    bake_obj_model and the level compiler's sector meshing."""
+    bake_obj_model and the level compiler's sector meshing.
+
+    `out_c`, when given, is a baked per-corner RGBA colour list (the level
+    compiler's static lighting bake -- see docs/formats/MATERIAL_FORMAT.md)
+    carried through the same dedup/stripify remapping as position/normal/uv;
+    the result then carries a "cbytes" entry alongside vbytes/nbytes/tbytes."""
     count = len(out_v)
     if count == 0 or count % 3 != 0:
         raise ValueError(f"bake_mesh: not a triangle soup ({count} corners)")
     tri_count = count // 3
 
-    uv, un, ut, triangles = dedup_corners(out_v, out_n, out_t)
+    uv, un, ut, uc, triangles = dedup_corners(out_v, out_n, out_t, out_c)
     topology = BAKED_TOPOLOGY_LIST
     emit_v, emit_n, emit_t = out_v, out_n, out_t  # list fallback (per-corner)
+    emit_c = out_c
     strip_runs = 0
 
     try:
@@ -236,6 +247,8 @@ def bake_mesh(out_v, out_n, out_t):
             emit_v = [uv[i] for i in combined]
             emit_n = [un[i] for i in combined]
             emit_t = [ut[i] for i in combined]
+            if out_c is not None:
+                emit_c = [uc[i] for i in combined]
             strip_runs = len(strips)
     except Exception:  # noqa: BLE001 — any strip failure falls back to a list
         pass
@@ -245,7 +258,7 @@ def bake_mesh(out_v, out_n, out_t):
     nbytes = b"".join(struct.pack("<fff", *n) for n in emit_n)
     tbytes = b"".join(struct.pack("<ff", *t) for t in emit_t)
 
-    return {
+    result = {
         "topology": topology,
         "vert_count": len(emit_v),
         "tri_count": tri_count,
@@ -256,12 +269,17 @@ def bake_mesh(out_v, out_n, out_t):
         "center": (cx, cy, cz),
         "radius": radius,
     }
+    if out_c is not None:
+        result["cbytes"] = b"".join(struct.pack("<ffff", *c) for c in emit_c)
+    return result
 
 
-def bake_obj_model(source_path, has_texture):
-    """Parse a .obj and bake it as BKM2 v2. Positions are vec4 (x,y,z,1). One
-    mesh, one material (materialIndex 0) when has_texture. Byte-compatible with
-    the historical cooker output (golden-tested)."""
+def bake_obj_model(source_path):
+    """Parse a .obj and bake it as BKM2 v3. Positions are vec4 (x,y,z,1). One
+    mesh; materialIndex 0 selects slot 0 of the model's own dependency list
+    (a RES_MATERIAL asset), which the runtime resolver leaves unbound if the
+    model was cooked with no dependency there. Materials are no longer
+    embedded in the model payload -- see docs/formats/MATERIAL_FORMAT.md."""
     out_v, out_n, out_t = parse_obj(source_path)
     m = bake_mesh(out_v, out_n, out_t)
 
@@ -273,21 +291,18 @@ def bake_obj_model(source_path, has_texture):
 
     vbytes, nbytes, tbytes = m["vbytes"], m["nbytes"], m["tbytes"]
     cx, cy, cz = m["center"]
-    mat_count = 1 if has_texture else 0
-    header_size, mesh_size, mat_size = 16, 48, 8 * mat_count
-    verts_off = align16(header_size + mesh_size + mat_size)
+    header_size, mesh_size = 16, 48
+    verts_off = align16(header_size + mesh_size)
     norms_off = align16(verts_off + len(vbytes))
     uvs_off = align16(norms_off + len(nbytes))
     total = uvs_off + len(tbytes)
 
     buf = bytearray(total)
-    struct.pack_into("<IIII", buf, 0, BAKED_MODEL_MAGIC, BAKED_MODEL_VERSION, 1, mat_count)
-    struct.pack_into("<IIIII", buf, 16, m["vert_count"], 0, verts_off, norms_off, uvs_off)
-    struct.pack_into("<I", buf, 36, m["topology"])
-    struct.pack_into("<ffff", buf, 40, cx, cy, cz, m["radius"])
-    struct.pack_into("<II", buf, 56, 0, 0)  # reserved[2]
-    if mat_count:
-        struct.pack_into("<II", buf, 64, 0, 0)  # diffuseTexRef = dependency 0
+    struct.pack_into("<IIII", buf, 0, BAKED_MODEL_MAGIC, BAKED_MODEL_VERSION, 1, 0)  # reserved=0
+    struct.pack_into("<IIIIII", buf, 16, m["vert_count"], 0, verts_off, norms_off, uvs_off, 0)  # colorsOffset=0
+    struct.pack_into("<I", buf, 40, m["topology"])
+    struct.pack_into("<ffff", buf, 44, cx, cy, cz, m["radius"])
+    struct.pack_into("<I", buf, 60, 0)  # reserved[0]
     buf[verts_off:verts_off + len(vbytes)] = vbytes
     buf[norms_off:norms_off + len(nbytes)] = nbytes
     buf[uvs_off:uvs_off + len(tbytes)] = tbytes

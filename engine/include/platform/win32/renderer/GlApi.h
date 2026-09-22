@@ -31,6 +31,9 @@ typedef char GLchar_;
 #define GL_DEPTH_COMPONENT24 0x81A6
 #define GL_FRAMEBUFFER_COMPLETE 0x8CD5
 #define GL_FRAMEBUFFER_BINDING 0x8CA6
+#define GL_TEXTURE_COMPARE_MODE 0x884C
+#define GL_TEXTURE_COMPARE_FUNC 0x884D
+#define GL_COMPARE_REF_TO_TEXTURE 0x884E
 
 // --- WGL context creation ---------------------------------------------------
 #define WGL_CONTEXT_MAJOR_VERSION_ARB 0x2091
@@ -131,6 +134,9 @@ extern PFN_glBindAttribLocation gl_BindAttribLocation;
 typedef GLint(APIENTRY* PFN_glGetUniformLocation)(GLuint, const GLchar_*);
 typedef void(APIENTRY* PFN_glUniformMatrix4fv)(GLint, GLsizei, GLboolean, const GLfloat*);
 typedef void(APIENTRY* PFN_glUniform1i)(GLint, GLint);
+typedef void(APIENTRY* PFN_glUniform1f)(GLint, GLfloat);
+typedef void(APIENTRY* PFN_glUniform3fv)(GLint, GLsizei, const GLfloat*);
+typedef void(APIENTRY* PFN_glUniform4fv)(GLint, GLsizei, const GLfloat*);
 typedef void(APIENTRY* PFN_glEnableVertexAttribArray)(GLuint);
 typedef void(APIENTRY* PFN_glDisableVertexAttribArray)(GLuint);
 typedef void(APIENTRY* PFN_glVertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
@@ -139,6 +145,9 @@ typedef void(APIENTRY* PFN_glActiveTexture)(GLenum);
 extern PFN_glGetUniformLocation gl_GetUniformLocation;
 extern PFN_glUniformMatrix4fv gl_UniformMatrix4fv;
 extern PFN_glUniform1i gl_Uniform1i;
+extern PFN_glUniform1f gl_Uniform1f;
+extern PFN_glUniform3fv gl_Uniform3fv;
+extern PFN_glUniform4fv gl_Uniform4fv;
 extern PFN_glEnableVertexAttribArray gl_EnableVertexAttribArray;
 extern PFN_glDisableVertexAttribArray gl_DisableVertexAttribArray;
 extern PFN_glVertexAttribPointer gl_VertexAttribPointer;

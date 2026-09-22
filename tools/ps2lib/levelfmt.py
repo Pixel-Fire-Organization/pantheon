@@ -23,7 +23,7 @@ CHUNK_NAMES = {
 }
 
 SECTOR_MAGIC = 0x43455350  # "PSEC"
-SECTOR_VERSION = 1
+SECTOR_VERSION = 2
 
 # Mirrors LEVEL_CHUNK_ALIGN / LEVEL_MAX_MATERIALS / LEVEL_MAX_MESHES_PER_SECTOR
 # / LEVEL_FARFIELD_MAX_ATLASES in engine/include/level/EngineLevelFormat.h. The
@@ -43,7 +43,7 @@ _GRIDCELL = "<IffffffHH"          # LevelGridCell (32)
 _ENTREC = "<IfffHH"               # LevelEntityRecord (20)
 _ENTPROP = "<II"                 # LevelEntityProp (8)
 _SECHDR = "<IIIIffffffII"         # SectorHeader (48)
-_MESHENTRY = "<IIIIIIffffII"      # BakedMeshEntry (48)
+_MESHENTRY = "<IIIIIIIffffI"      # BakedMeshEntry v3 (48) -- adds colorsOffset
 _FARFHDR = "<IIIIIIII"            # FarfieldHeader (32)
 _FARFCLUSTER = "<fffffHH"         # FarfieldCluster (24)
 _FARFFRAME = "<ffff"             # FarfieldFrame (16)
@@ -75,6 +75,14 @@ def pack_info(name, origin_x, origin_z, cell_size, cells_x, cells_z, material_co
 def pack_materials(keys):
     if len(keys) > MAX_MATERIALS:
         raise ValueError(f"level declares {len(keys)} materials, the engine table holds {MAX_MATERIALS}")
+    # Refuse rather than silently truncate: a key cut short by _cstr would
+    # resolve to a different (or no) asset at runtime, which is exactly the
+    # class of content error this cook stage exists to catch instead of the
+    # target. A real, long, nested texture path did this before this check
+    # existed (env/GroundGrass_01/GroundGrass_01_basecolor's wrapping key).
+    for k in keys:
+        if len(k.encode("utf-8")) > 63:
+            raise ValueError(f"material key '{k}' is {len(k.encode('utf-8'))} bytes, LevelMaterialEntry.assetKey holds 63 (+ terminator)")
     return b"".join(struct.pack(_MATERIAL, _cstr(k, 64)) for k in keys)
 
 
@@ -154,8 +162,12 @@ def build_ps2l(chunks):
 
 def pack_sector(meshes):
     """meshes: list of {material_index, topology, vert_count, vbytes, nbytes,
-    tbytes, center(3), radius}. Returns the PSEC blob. Sector AABB is derived
-    from the union of mesh bounding spheres."""
+    tbytes, center(3), radius, cbytes (optional)}. `cbytes`, when present, is
+    a baked per-vertex RGBA colour array from the level compiler's static
+    lighting bake (see docs/formats/MATERIAL_FORMAT.md) -- absent means no
+    bake ran and the mesh keeps the runtime's default white tint. Returns the
+    PSEC blob. Sector AABB is derived from the union of mesh bounding
+    spheres."""
     if len(meshes) > MAX_MESHES_PER_SECTOR:
         raise ValueError(f"sector holds {len(meshes)} meshes, the resident ring holds {MAX_MESHES_PER_SECTOR}")
     header_size = struct.calcsize(_SECHDR)
@@ -175,7 +187,12 @@ def pack_sector(meshes):
         uvs_off = geom_start + len(geom) if m["tbytes"] else 0
         geom += m["tbytes"]
         geom += b"\x00" * ((-len(geom)) % 16)
-        entries.append((m, verts_off, norms_off, uvs_off))
+        cbytes = m.get("cbytes")
+        colors_off = geom_start + len(geom) if cbytes else 0
+        if cbytes:
+            geom += cbytes
+            geom += b"\x00" * ((-len(geom)) % 16)
+        entries.append((m, verts_off, norms_off, uvs_off, colors_off))
 
     # Sector AABB from mesh bounding spheres.
     mn = [1e30, 1e30, 1e30]
@@ -195,11 +212,11 @@ def pack_sector(meshes):
     struct.pack_into(_SECHDR, buf, 0, SECTOR_MAGIC, SECTOR_VERSION, len(meshes), 0,
                      mn[0], mn[1], mn[2], mx[0], mx[1], mx[2], 0, 0)
     pos = header_size
-    for (m, verts_off, norms_off, uvs_off) in entries:
+    for (m, verts_off, norms_off, uvs_off, colors_off) in entries:
         c = m["center"]
         struct.pack_into(_MESHENTRY, buf, pos,
                          m["vert_count"], m["material_index"], verts_off, norms_off, uvs_off,
-                         m["topology"], c[0], c[1], c[2], m["radius"], 0, 0)
+                         colors_off, m["topology"], c[0], c[1], c[2], m["radius"], 0)
         pos += entry_size
     buf[geom_start:geom_start + len(geom)] = geom
     return bytes(buf), (tuple(mn), tuple(mx))

@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Material descriptor",
+  "description": "Authoring source for a RES_MATERIAL asset, cooked by tools/cook_assets.py. Lives under assets/materials/, mirroring assets/textures/ path-for-path so a texture picked in TrenchBroom's material browser resolves to the material of the same relative path. See docs/formats/MATERIAL_FORMAT.md.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "const": "MATERIAL"
+    },
+    "shaderType": {
+      "type": "string",
+      "enum": ["pbr_standard"],
+      "default": "pbr_standard",
+      "description": "Which fixed slot mapping this material's parameters use. A future shader type (e.g. 'water') adds its own field set here without touching pbr_standard's."
+    },
+    "albedo": {
+      "type": "string",
+      "description": "Source image, relative to this file. Optional -- a flat-colour material needs none."
+    },
+    "normal": {
+      "type": "string",
+      "description": "Tangent-space normal map source image, relative to this file. Optional."
+    },
+    "orm": {
+      "type": "string",
+      "description": "Pre-packed occlusion(R)/roughness(G)/metallic(B) source image, relative to this file. Mutually exclusive with occlusion/roughness/metallic."
+    },
+    "occlusion": {
+      "type": "string",
+      "description": "Separate ambient-occlusion source image (the common case art ships in). Packed with roughness/metallic into one ORM texture at cook time."
+    },
+    "roughness": {
+      "type": "string",
+      "description": "Separate roughness source image. Packed with occlusion/metallic into one ORM texture at cook time."
+    },
+    "metallic": {
+      "type": "string",
+      "description": "Separate metallic source image. Packed with occlusion/roughness into one ORM texture at cook time."
+    },
+    "baseColorFactor": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4,
+      "default": [1.0, 1.0, 1.0, 1.0],
+      "description": "RGBA, multiplied with the albedo map (or used alone when there is none)."
+    },
+    "metallicFactor": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 1.0
+    },
+    "roughnessFactor": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 1.0
+    },
+    "emissiveFactor": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3,
+      "default": [0.0, 0.0, 0.0]
+    },
+    "normalScale": {
+      "type": "number",
+      "default": 1.0
+    },
+    "alphaMode": {
+      "type": "string",
+      "enum": ["opaque", "mask", "blend"],
+      "default": "opaque"
+    },
+    "alphaCutoff": {
+      "type": "number",
+      "default": 0.5,
+      "description": "Only meaningful when alphaMode is 'mask'."
+    },
+    "doubleSided": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "additionalProperties": false
+}

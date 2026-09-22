@@ -35,6 +35,10 @@ public:
     void SetActiveCamera3D(CameraID id) override;
     void SetActiveCamera2D(const Camera2D& camera) override;
 
+    void SetLight3D(LightID id, const Light3D& light) override;
+    void SetAmbientLight(const Color3& color) override;
+    void SetShadowCasterLight(LightID id) override;
+
     uint32_t UploadTexture(const TextureUpload& upload) override;
     void ReleaseTexture(uint32_t handle) override;
 

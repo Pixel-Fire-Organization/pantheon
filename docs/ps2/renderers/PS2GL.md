@@ -21,6 +21,44 @@ and drives the hardware through vector microcode. The engine does not write
 display packets itself here. The limit is consequently **draw calls**, not packet
 bytes.
 
+## Materials & lighting
+
+- **Vertex-lit fallback tier.** `SupportsPbrShading()` is the base class's
+  `false` default. A material's albedo texture and `baseColorFactor` tint are
+  sampled; normal and ORM maps never are.
+- **Two different lighting paths, split by whether the geometry already
+  carries a baked colour.** Real `GL_LIGHTING` is multiplicative
+  (`material × light × NdotL`), which cannot correctly combine with a
+  vertex colour the level compiler already baked — multiplying a shadowed
+  bake by a bright new light would still read as shadowed, and multiplying
+  an unlit bake by zero lights would go black. So:
+  - **Sectors** (which always carry a baked colour, real or the compiler's
+    flat-white default) are drawn with `GL_LIGHTING` explicitly disabled and
+    dynamic lighting computed on the EE instead, via the engine-shared
+    `VertexLighting_Compute` helper (also used by [Gu](../../psp/renderers/GU.md),
+    [PspGl](../../psp/renderers/PSPGL.md) and
+    [VitaGl](../../vita/renderers/VITAGL.md)): the same additive
+    `baseline + ambient + Σlights` formula documented on [GIFTAG](GIFTAG.md),
+    clamped and written through a per-vertex colour array bound via
+    `glColorPointer`.
+  - **Primitives and models** (which have no baked colour to conflict with)
+    use this library's real, VU1-accelerated `GL_LIGHTING`/`glLight*`/
+    `glMaterial*` directly — confirmed by reading `external/ps2gl`'s own
+    source that `GL_COLOR_MATERIAL` only tracks `GL_DIFFUSE`
+    (`GL_AMBIENT_AND_DIFFUSE`/`GL_AMBIENT`/`GL_SPECULAR`/`GL_EMISSION` are all
+    unimplemented in this vendored library), so the backend sets both
+    `glColor4f` and `glMaterialfv(GL_AMBIENT)`/`glMaterialfv(GL_DIFFUSE)`
+    rather than relying on colour tracking picking up the second one.
+- **Light state is set once per frame, while the modelview matrix is
+  view-only.** `glLightfv(GL_POSITION, ...)` bakes a light's position into
+  whatever the *current* modelview matrix is at the moment it is called —
+  real GL 1.x semantics this library implements faithfully — so light setup
+  runs immediately after the camera transform and strictly before any
+  per-object model matrix is pushed; calling it later would bake each
+  object's own transform into every light's position.
+- **No real-time shadow caster.** This tier never gets one — every shadow
+  here is the level compiler's static bake.
+
 ## Budgets
 
 | | |

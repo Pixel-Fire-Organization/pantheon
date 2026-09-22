@@ -78,6 +78,12 @@ foreach(PLATFORM ${ENGINE_ACTIVE_PLATFORMS})
     # of the shipping path. See examples/CMakeLists.txt.
     foreach(_EXAMPLE ${EXAMPLE_NAMES})
         example_add_cook_target(${_EXAMPLE} ${PLATFORM})
+        # Only an example that names assets/maps/*.map it loads (see
+        # examples/CMakeLists.txt) gets a compile-levels-example-* target;
+        # most examples load no level.
+        if(DEFINED EXAMPLE_${_EXAMPLE}_LEVEL_MAPS)
+            example_add_level_compile_target(${_EXAMPLE} ${PLATFORM})
+        endif()
         example_add_executable(${_EXAMPLE} ${PLATFORM} ${_engineTarget} _exampleTarget _exampleDistDir)
         if(DEFINED PLATFORM_${PLATFORM}_LINK_DEPS)
             add_dependencies(${_exampleTarget} ${PLATFORM_${PLATFORM}_LINK_DEPS})

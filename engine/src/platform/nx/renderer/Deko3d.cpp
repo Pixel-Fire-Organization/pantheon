@@ -11,6 +11,10 @@
 #include "platform/Platform.h"
 #include "scene_frag_dksh.h"
 #include "scene_vert_dksh.h"
+#include "scene_pbr_frag_dksh.h"
+#include "scene_pbr_vert_dksh.h"
+#include "scene_shadow_frag_dksh.h"
+#include "scene_shadow_vert_dksh.h"
 
 namespace
 {
@@ -33,6 +37,44 @@ namespace
 
     uint32_t AlignUp(uint32_t value, uint32_t alignment) { return (value + alignment - 1u) & ~(alignment - 1u); }
 
+    // Mirrors scene_pbr.vert.glsl/scene_pbr.frag.glsl's FrameUniforms block
+    // field-for-field, in the same order -- std140 layout, every member
+    // already a multiple of 16 bytes. sizeof(FrameUniformsCpu) is the single
+    // source of truth for this buffer's size, used both where it is
+    // allocated (CreateBuffers) and where it is written (EndFrame). Byte-for-
+    // byte identical to OpenGl.cpp (nx)'s own copy of this struct, since both
+    // backends compile the same GLSL source (see tools/nx_shader.py) and must
+    // agree on the uniform block it declares.
+    struct FrameUniformsCpu
+    {
+        float viewProj[16];
+        float lightViewProj[16];
+        float cameraPos[4];
+        float ambient[4];
+        float lightPosOrDir[4 * 4];
+        float lightColorIntensity[4 * 4];
+        float lightRange[4 * 4];
+        float shadowCaster[4];
+    };
+
+    // Mirrors MaterialUniform likewise.
+    struct MaterialUniformCpu
+    {
+        float baseColor[4];
+        float emissive[4];
+        float mrna[4];
+        float matFlags[4];
+    };
+
+    const uint32_t DEKO3D_PBR_FRAME_BINDING = 0;
+    const uint32_t DEKO3D_PBR_MATERIAL_BINDING = 1;
+    const uint32_t DEKO3D_SHADOW_BINDING = 0;
+
+    // MaterialUniform std140 layout: vec4 * 4 = 64 bytes, strided to deko3d's
+    // own uniform-buffer alignment (the same 256 bytes WebGpu.cpp/OpenGl.cpp
+    // (nx)'s dynamic-offset material buffers use, for the same reason).
+    const uint32_t DEKO3D_PBR_MATERIAL_STRIDE = AlignUp(static_cast<uint32_t>(sizeof(MaterialUniformCpu)), DK_UNIFORM_BUF_ALIGNMENT);
+
     void DebugCallback(void* userData, const char* context, DkResult result, const char* message)
     {
         UNUSED_VAR(userData);
@@ -46,7 +88,10 @@ namespace
 
 Deko3dRenderer::Deko3dRenderer(const EngineConfig& config) :
     m_device(nullptr), m_queue(nullptr), m_frameCmdbuf(nullptr), m_transferCmdbuf(nullptr), m_frameCommandMemory(nullptr), m_transferCommandMemory(nullptr), m_frameSlice(0), m_depthMemory(nullptr),
-    m_swapchain(nullptr), m_cropWidth(0), m_cropHeight(0), m_shaderMemory(nullptr), m_uniformMemory(nullptr), m_descriptorMemory(nullptr), m_whiteTexture(0), m_clearColor{0.0f, 0.0f, 0.0f},
+    m_swapchain(nullptr), m_cropWidth(0), m_cropHeight(0), m_shaderMemory(nullptr),
+    m_pbrFrameUniformMemory(nullptr), m_pbrMaterialUniformMemory(nullptr), m_shadowUniformMemory(nullptr), m_shadowColorMemory(nullptr), m_shadowDepthMemory(nullptr), m_shadowTextureSlot(-1),
+    m_defaultNormalTexture(0), m_defaultOrmTexture(0), m_shadowActive(false), m_shadowCasterIndex(-1),
+    m_uniformMemory(nullptr), m_descriptorMemory(nullptr), m_whiteTexture(0), m_clearColor{0.0f, 0.0f, 0.0f},
     m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_frame3DVertices(0), m_frame2DVertices(0), m_reportedOverflow(0), m_frameStats{}, m_initialized(false), m_imageColorMemory(nullptr),
     m_imageDepthMemory(nullptr), m_imageWidth(0), m_imageHeight(0), m_imageTextureSlot(-1)
 {
@@ -57,10 +102,20 @@ Deko3dRenderer::Deko3dRenderer(const EngineConfig& config) :
     memset(&m_depthImage, 0, sizeof(m_depthImage));
     memset(&m_vertexShader, 0, sizeof(m_vertexShader));
     memset(&m_fragmentShader, 0, sizeof(m_fragmentShader));
+    memset(&m_pbrVertexShader, 0, sizeof(m_pbrVertexShader));
+    memset(&m_pbrFragmentShader, 0, sizeof(m_pbrFragmentShader));
+    memset(&m_shadowVertexShader, 0, sizeof(m_shadowVertexShader));
+    memset(&m_shadowFragmentShader, 0, sizeof(m_shadowFragmentShader));
+    memset(&m_shadowColorImage, 0, sizeof(m_shadowColorImage));
+    memset(&m_shadowDepthImage, 0, sizeof(m_shadowDepthImage));
+    memset(m_lastLightViewProj, 0, sizeof(m_lastLightViewProj));
     memset(m_vertexMemory, 0, sizeof(m_vertexMemory));
     memset(m_textures, 0, sizeof(m_textures));
     memset(&m_imageColor, 0, sizeof(m_imageColor));
     memset(&m_imageDepth, 0, sizeof(m_imageDepth));
+
+    static_assert(GFX_MAX_LIGHTS == 4, "scene_pbr.frag.glsl hardcodes a 4-light loop");
+    static_assert(GFX_SHADOW_MAP_SIZE == 1024, "scene_pbr.frag.glsl hardcodes texel = 1.0/1024.0 for shadow PCF");
 
     Engine_GetPlatform()->GetFramebufferSize(&m_width, &m_height);
     Engine_LogInfo("Deko3dRenderer: initializing (%ux%u)", m_width, m_height);
@@ -73,7 +128,7 @@ Deko3dRenderer::Deko3dRenderer(const EngineConfig& config) :
     }
     m_drawLists.Init(arena);
 
-    if (!CreateDevice() || !CreateDisplay() || !CreateShaders() || !CreateBuffers() || !CreateSamplers() || !CreateWhiteTexture())
+    if (!CreateDevice() || !CreateDisplay() || !CreateShaders() || !CreateBuffers() || !CreateSamplers() || !CreateWhiteTexture() || !CreateDefaultMaterialTextures() || !CreateShadowTarget())
     {
         Destroy();
         return;
@@ -202,22 +257,36 @@ bool Deko3dRenderer::LoadShader(const uint8_t* blob, uint32_t blobSize, uint32_t
 
 bool Deko3dRenderer::CreateShaders()
 {
-    DkshHeader vertexHeader;
-    DkshHeader fragmentHeader;
-    memcpy(&vertexHeader, g_SceneVertexDksh, sizeof(vertexHeader));
-    memcpy(&fragmentHeader, g_SceneFragmentDksh, sizeof(fragmentHeader));
+    // All three shader pairs (flat, PBR, depth-only shadow) share one code
+    // block, laid out back to back -- the same "compute each one's aligned
+    // offset, allocate once" shape the original flat-only version of this
+    // function used for its own two shaders, just generalised to six.
+    const uint8_t* blobs[6] = {g_SceneVertexDksh, g_SceneFragmentDksh, g_ScenePbrVertexDksh, g_ScenePbrFragmentDksh, g_SceneShadowVertexDksh, g_SceneShadowFragmentDksh};
+    const uint32_t sizes[6] = {g_SceneVertexDksh_size, g_SceneFragmentDksh_size, g_ScenePbrVertexDksh_size, g_ScenePbrFragmentDksh_size, g_SceneShadowVertexDksh_size, g_SceneShadowFragmentDksh_size};
+    DkShader* const outs[6] = {&m_vertexShader, &m_fragmentShader, &m_pbrVertexShader, &m_pbrFragmentShader, &m_shadowVertexShader, &m_shadowFragmentShader};
 
-    const uint32_t fragmentOffset = AlignUp(vertexHeader.codeSize, DK_SHADER_CODE_ALIGNMENT);
-    const uint32_t codeBytes = fragmentOffset + AlignUp(fragmentHeader.codeSize, DK_SHADER_CODE_ALIGNMENT) + DK_SHADER_CODE_UNUSABLE_SIZE;
+    uint32_t offsets[6];
+    uint32_t cursor = 0;
+    for (int i = 0; i < 6; ++i)
+    {
+        DkshHeader header;
+        memcpy(&header, blobs[i], sizeof(header));
+        offsets[i] = cursor;
+        cursor = AlignUp(cursor + header.codeSize, DK_SHADER_CODE_ALIGNMENT);
+    }
+    const uint32_t codeBytes = cursor + DK_SHADER_CODE_UNUSABLE_SIZE;
 
     m_shaderMemory = CreateBlock(codeBytes, DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached | DkMemBlockFlags_Code);
     if (!m_shaderMemory)
         return false;
 
-    if (!LoadShader(g_SceneVertexDksh, g_SceneVertexDksh_size, 0, &m_vertexShader) || !LoadShader(g_SceneFragmentDksh, g_SceneFragmentDksh_size, fragmentOffset, &m_fragmentShader))
+    for (int i = 0; i < 6; ++i)
     {
-        Engine_LogError("Deko3dRenderer: shader initialisation failed");
-        return false;
+        if (!LoadShader(blobs[i], sizes[i], offsets[i], outs[i]))
+        {
+            Engine_LogError("Deko3dRenderer: shader initialisation failed (index %d)", i);
+            return false;
+        }
     }
     return true;
 }
@@ -234,7 +303,12 @@ bool Deko3dRenderer::CreateBuffers()
 
     m_uniformMemory = CreateBlock(AlignUp(DEKO3D_UNIFORM_BYTES, DK_UNIFORM_BUF_ALIGNMENT), DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached);
     m_descriptorMemory = CreateBlock((DEKO3D_MAX_RESIDENT_TEXTURES + DEKO3D_SAMPLER_COUNT) * DK_IMAGE_DESCRIPTOR_ALIGNMENT, DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached);
-    return m_uniformMemory && m_descriptorMemory;
+
+    m_pbrFrameUniformMemory = CreateBlock(AlignUp(static_cast<uint32_t>(sizeof(FrameUniformsCpu)), DK_UNIFORM_BUF_ALIGNMENT), DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached);
+    m_pbrMaterialUniformMemory = CreateBlock(DEKO3D_PBR_MATERIAL_STRIDE * GFX_MAX_DRAW_RUNS, DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached);
+    m_shadowUniformMemory = CreateBlock(AlignUp(DEKO3D_UNIFORM_BYTES, DK_UNIFORM_BUF_ALIGNMENT), DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached);
+
+    return m_uniformMemory && m_descriptorMemory && m_pbrFrameUniformMemory && m_pbrMaterialUniformMemory && m_shadowUniformMemory;
 }
 
 void Deko3dRenderer::BeginTransfer()
@@ -295,6 +369,79 @@ bool Deko3dRenderer::CreateWhiteTexture()
 
     m_whiteTexture = UploadTexture(upload);
     return m_whiteTexture != 0;
+}
+
+bool Deko3dRenderer::CreateDefaultMaterialTextures()
+{
+    static uint8_t flatNormal[4] __attribute__((aligned(16))) = {128, 128, 255, 255};
+    TextureUpload normalUpload;
+    memset(&normalUpload, 0, sizeof(normalUpload));
+    normalUpload.width = 1;
+    normalUpload.height = 1;
+    normalUpload.format = PixelFormat::RGBA32;
+    normalUpload.filter = TextureFilter::Linear;
+    normalUpload.levelPtr[0] = flatNormal;
+    normalUpload.mipCount = 1;
+    m_defaultNormalTexture = UploadTexture(normalUpload);
+
+    static uint8_t neutralOrm[4] __attribute__((aligned(16))) = {255, 255, 0, 255};
+    TextureUpload ormUpload;
+    memset(&ormUpload, 0, sizeof(ormUpload));
+    ormUpload.width = 1;
+    ormUpload.height = 1;
+    ormUpload.format = PixelFormat::RGBA32;
+    ormUpload.filter = TextureFilter::Linear;
+    ormUpload.levelPtr[0] = neutralOrm;
+    ormUpload.mipCount = 1;
+    m_defaultOrmTexture = UploadTexture(ormUpload);
+
+    return m_defaultNormalTexture != 0 && m_defaultOrmTexture != 0;
+}
+
+bool Deko3dRenderer::CreateShadowTarget()
+{
+    DkImageLayoutMaker colorMaker;
+    dkImageLayoutMakerDefaults(&colorMaker, m_device);
+    colorMaker.flags = DkImageFlags_UsageRender;
+    colorMaker.format = DkImageFormat_RGBA8_Unorm;
+    colorMaker.dimensions[0] = GFX_SHADOW_MAP_SIZE;
+    colorMaker.dimensions[1] = GFX_SHADOW_MAP_SIZE;
+    DkImageLayout colorLayout;
+    dkImageLayoutInitialize(&colorLayout, &colorMaker);
+
+    DkImageLayoutMaker depthMaker;
+    dkImageLayoutMakerDefaults(&depthMaker, m_device);
+    depthMaker.flags = DkImageFlags_UsageRender;
+    depthMaker.format = DkImageFormat_Z24S8;
+    depthMaker.dimensions[0] = GFX_SHADOW_MAP_SIZE;
+    depthMaker.dimensions[1] = GFX_SHADOW_MAP_SIZE;
+    DkImageLayout depthLayout;
+    dkImageLayoutInitialize(&depthLayout, &depthMaker);
+
+    m_shadowColorMemory =
+        CreateBlock(AlignUp(static_cast<uint32_t>(dkImageLayoutGetSize(&colorLayout)), dkImageLayoutGetAlignment(&colorLayout)), DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image);
+    m_shadowDepthMemory =
+        CreateBlock(AlignUp(static_cast<uint32_t>(dkImageLayoutGetSize(&depthLayout)), dkImageLayoutGetAlignment(&depthLayout)), DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image);
+    if (!m_shadowColorMemory || !m_shadowDepthMemory)
+        return false;
+
+    dkImageInitialize(&m_shadowColorImage, &colorLayout, m_shadowColorMemory, 0);
+    dkImageInitialize(&m_shadowDepthImage, &depthLayout, m_shadowDepthMemory, 0);
+
+    m_shadowTextureSlot = FindFreeTextureSlot();
+    if (m_shadowTextureSlot < 0)
+        return false;
+
+    BeginTransfer();
+    WriteImageDescriptor(m_transferCmdbuf, static_cast<uint32_t>(m_shadowTextureSlot), m_shadowColorImage);
+    FinishTransfer();
+
+    Texture& texture = m_textures[m_shadowTextureSlot];
+    texture.image = m_shadowColorImage;
+    texture.memory = nullptr; // owned by m_shadowColorMemory, released directly in Destroy()
+    texture.sampler = DEKO3D_SAMPLER_NEAREST;
+    texture.used = true;
+    return true;
 }
 
 int Deko3dRenderer::FindFreeTextureSlot() const
@@ -388,7 +535,7 @@ void Deko3dRenderer::ReleaseTexture(uint32_t handle)
         return;
 
     Texture& texture = m_textures[handle - 1u];
-    if (!texture.used || static_cast<int>(handle - 1u) == m_imageTextureSlot)
+    if (!texture.used || static_cast<int>(handle - 1u) == m_imageTextureSlot || static_cast<int>(handle - 1u) == m_shadowTextureSlot)
         return;
 
     dkQueueWaitIdle(m_queue);
@@ -496,6 +643,71 @@ void Deko3dRenderer::UploadVertices(uint32_t slice)
     m_frame2DVertices = take2D;
 }
 
+void Deko3dRenderer::RenderShadowMap(const DrawLists& lists)
+{
+    m_shadowActive = false;
+
+    const LightID casterId = lists.GetShadowCasterLight();
+    if (casterId < 0 || casterId >= GFX_MAX_LIGHTS)
+        return; // no caster designated this frame
+
+    const Light3D& caster = lists.GetLights()[casterId];
+    // Only a directional light can cast the shadow map -- see the member
+    // comment on SetShadowCasterLight in Renderer.h and BuildLightViewProjection
+    // in StagedGeometry.h.
+    if (caster.intensity <= 0.0f || caster.type != LightType::Directional)
+        return;
+
+    const uint32_t dynStart = m_geometry.DynamicVertexStart();
+    if (dynStart >= m_frame3DVertices)
+        return; // nothing dynamic uploaded this frame; leave the map unsampled (see scene_pbr.frag.glsl)
+    uint32_t dynCount = m_frame3DVertices - dynStart;
+    dynCount -= dynCount % 3u; // defensive: an overflow clamp could have cut mid-triangle
+    if (dynCount == 0)
+        return;
+
+    // A frustum centred on the camera, not the whole level: this pass only
+    // ever covers dynamic (model/primitive) geometry, which clusters near
+    // wherever the camera is looking, not the static world.
+    const float kShadowHalfExtent = 24.0f;
+    const float kShadowDepthExtent = 120.0f;
+    StagedGeometry::BuildLightViewProjection(caster.direction, lists.GetCamera3D().position, kShadowHalfExtent, kShadowDepthExtent, true, m_lastLightViewProj);
+
+    DkImageView colorView;
+    dkImageViewDefaults(&colorView, &m_shadowColorImage);
+    DkImageView depthView;
+    dkImageViewDefaults(&depthView, &m_shadowDepthImage);
+
+    // A dedicated scene into the shadow target via the transfer command
+    // buffer, exactly like RenderToImage3D's own one-off render: deko3d
+    // forbids a nested scene, and this keeps the shadow pass fully
+    // independent of whatever BeginPass/BindPassState state the main frame's
+    // own command buffer ends up in afterwards.
+    BeginTransfer();
+    // Cleared to far (1.0, encoded into every channel -- see
+    // scene_shadow.frag.glsl) rather than the scene's own background colour:
+    // an uncovered shadow-map texel must read back as "nothing occludes
+    // here", not whatever the sky happens to be this frame.
+    BeginPass(m_transferCmdbuf, colorView, depthView, GFX_SHADOW_MAP_SIZE, GFX_SHADOW_MAP_SIZE, Color3{1.0f, 1.0f, 1.0f}, m_frameSlice);
+
+    DkShader const* shadowShaders[] = {&m_shadowVertexShader, &m_shadowFragmentShader};
+    dkCmdBufBindShaders(m_transferCmdbuf, DkStageFlag_GraphicsMask, shadowShaders, 2);
+    ApplyDepthBlendState(m_transferCmdbuf, PassKind::World);
+
+    const DkGpuAddr shadowAddr = dkMemBlockGetGpuAddr(m_shadowUniformMemory);
+    dkCmdBufPushConstants(m_transferCmdbuf, shadowAddr, DEKO3D_UNIFORM_BYTES, 0, DEKO3D_UNIFORM_BYTES, m_lastLightViewProj);
+    dkCmdBufBindUniformBuffer(m_transferCmdbuf, DkStage_Vertex, DEKO3D_SHADOW_BINDING, shadowAddr, DEKO3D_UNIFORM_BYTES);
+
+    // One draw over every dynamic vertex: no per-material texture binding to
+    // change between runs (no alpha-mask cutout support yet -- see
+    // scene_shadow.frag.glsl), so there is nothing run boundaries buy it.
+    dkCmdBufDraw(m_transferCmdbuf, DkPrimitive_Triangles, dynCount, 1, dynStart, 0);
+    FinishTransfer();
+
+    m_shadowActive = true;
+    m_shadowCasterIndex = casterId;
+}
+
 void Deko3dRenderer::BeginPass(DkCmdBuf cmdbuf, const DkImageView& color, const DkImageView& depth, uint32_t width, uint32_t height, const Color3& clearColor, uint32_t slice)
 {
     dkCmdBufBindRenderTarget(cmdbuf, &color, &depth);
@@ -564,7 +776,7 @@ void Deko3dRenderer::BeginPass(DkCmdBuf cmdbuf, const DkImageView& color, const 
     dkCmdBufBindUniformBuffer(cmdbuf, DkStage_Vertex, 0, dkMemBlockGetGpuAddr(m_uniformMemory), DEKO3D_UNIFORM_BYTES);
 }
 
-void Deko3dRenderer::BindPassState(DkCmdBuf cmdbuf, PassKind kind, const float matrix[16])
+void Deko3dRenderer::ApplyDepthBlendState(DkCmdBuf cmdbuf, PassKind kind)
 {
     DkColorState color;
     dkColorStateDefaults(&color);
@@ -577,7 +789,11 @@ void Deko3dRenderer::BindPassState(DkCmdBuf cmdbuf, PassKind kind, const float m
     depth.depthWriteEnable = (kind == PassKind::World) ? 1u : 0u;
     depth.depthCompareOp = DkCompareOp_Lequal;
     dkCmdBufBindDepthStencilState(cmdbuf, &depth);
+}
 
+void Deko3dRenderer::BindPassState(DkCmdBuf cmdbuf, PassKind kind, const float matrix[16])
+{
+    ApplyDepthBlendState(cmdbuf, kind);
     dkCmdBufPushConstants(cmdbuf, dkMemBlockGetGpuAddr(m_uniformMemory), DEKO3D_UNIFORM_BYTES, 0, DEKO3D_UNIFORM_BYTES, matrix);
 }
 
@@ -603,6 +819,55 @@ void Deko3dRenderer::DrawRuns(DkCmdBuf cmdbuf, const StagedGeometry::DrawRun* ru
     }
 }
 
+void Deko3dRenderer::DrawPbrRuns(DkCmdBuf cmdbuf, const StagedGeometry::DrawRun* runs, uint32_t runCount, uint32_t uploaded)
+{
+    const DkGpuAddr materialBase = dkMemBlockGetGpuAddr(m_pbrMaterialUniformMemory);
+    for (uint32_t i = 0; i < runCount; ++i)
+    {
+        const uint32_t first = runs[i].first;
+        if (first >= uploaded)
+            continue;
+        uint32_t count = runs[i].count;
+        if (first + count > uploaded)
+            count = uploaded - first;
+        count -= count % 3u;
+        if (!count)
+            continue;
+
+        const StagedGeometry::RunMaterial& mat = runs[i].material;
+        MaterialUniformCpu material;
+        memcpy(material.baseColor, mat.baseColor, sizeof(material.baseColor));
+        material.emissive[0] = mat.emissive[0];
+        material.emissive[1] = mat.emissive[1];
+        material.emissive[2] = mat.emissive[2];
+        material.emissive[3] = 0.0f;
+        material.mrna[0] = mat.metallic;
+        material.mrna[1] = mat.roughness;
+        material.mrna[2] = mat.normalScale;
+        material.mrna[3] = mat.alphaCutoff;
+        material.matFlags[0] = (mat.flags & MATERIAL_FLAG_ALPHA_MASK) ? 1.0f : 0.0f;
+        material.matFlags[1] = material.matFlags[2] = material.matFlags[3] = 0.0f;
+
+        const DkGpuAddr materialAddr = materialBase + i * DEKO3D_PBR_MATERIAL_STRIDE;
+        dkCmdBufPushConstants(cmdbuf, materialAddr, sizeof(MaterialUniformCpu), 0, sizeof(MaterialUniformCpu), &material);
+        dkCmdBufBindUniformBuffer(cmdbuf, DkStage_Fragment, DEKO3D_PBR_MATERIAL_BINDING, materialAddr, sizeof(MaterialUniformCpu));
+
+        const uint32_t albedoHandle = runs[i].texture ? runs[i].texture : m_whiteTexture;
+        const uint32_t albedoSlot = (albedoHandle && albedoHandle <= DEKO3D_MAX_RESIDENT_TEXTURES && m_textures[albedoHandle - 1u].used) ? albedoHandle - 1u : m_whiteTexture - 1u;
+        const uint32_t normalHandle = mat.normalTexture ? mat.normalTexture : m_defaultNormalTexture;
+        const uint32_t normalSlot = (normalHandle && normalHandle <= DEKO3D_MAX_RESIDENT_TEXTURES && m_textures[normalHandle - 1u].used) ? normalHandle - 1u : m_defaultNormalTexture - 1u;
+        const uint32_t ormHandle = mat.ormTexture ? mat.ormTexture : m_defaultOrmTexture;
+        const uint32_t ormSlot = (ormHandle && ormHandle <= DEKO3D_MAX_RESIDENT_TEXTURES && m_textures[ormHandle - 1u].used) ? ormHandle - 1u : m_defaultOrmTexture - 1u;
+
+        dkCmdBufBindTexture(cmdbuf, DkStage_Fragment, 0, dkMakeTextureHandle(albedoSlot, m_textures[albedoSlot].sampler));
+        dkCmdBufBindTexture(cmdbuf, DkStage_Fragment, 1, dkMakeTextureHandle(normalSlot, m_textures[normalSlot].sampler));
+        dkCmdBufBindTexture(cmdbuf, DkStage_Fragment, 2, dkMakeTextureHandle(ormSlot, m_textures[ormSlot].sampler));
+
+        dkCmdBufDraw(cmdbuf, DkPrimitive_Triangles, count, 1, first, 0);
+        ++m_frameStats.texBinds;
+    }
+}
+
 void Deko3dRenderer::EndFrame()
 {
     if (!m_initialized)
@@ -619,6 +884,8 @@ void Deko3dRenderer::EndFrame()
     UploadVertices(slice);
     m_frameStats.geometryUploadMs = MillisecondsSince(uploadStart);
 
+    RenderShadowMap(m_drawLists);
+
     dkCmdBufClear(m_frameCmdbuf);
     dkCmdBufAddMemory(m_frameCmdbuf, m_frameCommandMemory, slice * GFX_NX_COMMAND_BYTES, GFX_NX_COMMAND_BYTES);
 
@@ -632,12 +899,75 @@ void Deko3dRenderer::EndFrame()
     if (m_frame3DVertices > 0)
     {
         StagedGeometry::BuildViewProjection(m_drawLists.GetCamera3D(), m_width, m_height, false, matrix);
-        BindPassState(m_frameCmdbuf, PassKind::World, matrix);
-        DrawRuns(m_frameCmdbuf, m_geometry.Runs(), m_geometry.RunCount(), 0, m_frame3DVertices);
+
+        DkShader const* pbrShaders[] = {&m_pbrVertexShader, &m_pbrFragmentShader};
+        dkCmdBufBindShaders(m_frameCmdbuf, DkStageFlag_GraphicsMask, pbrShaders, 2);
+        ApplyDepthBlendState(m_frameCmdbuf, PassKind::World);
+
+        // Frame-constant uniforms (camera, ambient, lights, shadow caster),
+        // assembled into one std140-laid-out buffer and uploaded once here
+        // rather than per run.
+        FrameUniformsCpu frame;
+        memcpy(frame.viewProj, matrix, sizeof(frame.viewProj));
+        memcpy(frame.lightViewProj, m_lastLightViewProj, sizeof(frame.lightViewProj));
+
+        const Camera3D& camera = m_drawLists.GetCamera3D();
+        frame.cameraPos[0] = camera.position.x;
+        frame.cameraPos[1] = camera.position.y;
+        frame.cameraPos[2] = camera.position.z;
+        frame.cameraPos[3] = 0.0f;
+
+        const Color3& ambient = m_drawLists.GetAmbientLight();
+        frame.ambient[0] = ambient.r;
+        frame.ambient[1] = ambient.g;
+        frame.ambient[2] = ambient.b;
+        frame.ambient[3] = 0.0f;
+
+        const Light3D* lights = m_drawLists.GetLights();
+        for (uint32_t i = 0; i < GFX_MAX_LIGHTS; ++i)
+        {
+            const Light3D& l = lights[i];
+            const bool directional = (l.type == LightType::Directional);
+            frame.lightPosOrDir[i * 4 + 0] = directional ? l.direction.x : l.position.x;
+            frame.lightPosOrDir[i * 4 + 1] = directional ? l.direction.y : l.position.y;
+            frame.lightPosOrDir[i * 4 + 2] = directional ? l.direction.z : l.position.z;
+            frame.lightPosOrDir[i * 4 + 3] = directional ? 0.0f : 1.0f;
+            frame.lightColorIntensity[i * 4 + 0] = l.color.r;
+            frame.lightColorIntensity[i * 4 + 1] = l.color.g;
+            frame.lightColorIntensity[i * 4 + 2] = l.color.b;
+            frame.lightColorIntensity[i * 4 + 3] = l.intensity; // <= 0 means "off"; the shader skips it
+            frame.lightRange[i * 4 + 0] = l.range;
+            frame.lightRange[i * 4 + 1] = 0.0f;
+            frame.lightRange[i * 4 + 2] = 0.0f;
+            frame.lightRange[i * 4 + 3] = 0.0f;
+        }
+        frame.shadowCaster[0] = m_shadowActive ? static_cast<float>(m_shadowCasterIndex) : -1.0f;
+        frame.shadowCaster[1] = frame.shadowCaster[2] = frame.shadowCaster[3] = 0.0f;
+
+        const DkGpuAddr frameAddr = dkMemBlockGetGpuAddr(m_pbrFrameUniformMemory);
+        dkCmdBufPushConstants(m_frameCmdbuf, frameAddr, sizeof(FrameUniformsCpu), 0, sizeof(FrameUniformsCpu), &frame);
+        dkCmdBufBindUniformBuffer(m_frameCmdbuf, DkStage_Vertex, DEKO3D_PBR_FRAME_BINDING, frameAddr, sizeof(FrameUniformsCpu));
+        dkCmdBufBindUniformBuffer(m_frameCmdbuf, DkStage_Fragment, DEKO3D_PBR_FRAME_BINDING, frameAddr, sizeof(FrameUniformsCpu));
+
+        const uint32_t shadowSlot = (m_shadowTextureSlot >= 0) ? static_cast<uint32_t>(m_shadowTextureSlot) : (m_whiteTexture - 1u);
+        dkCmdBufBindTexture(m_frameCmdbuf, DkStage_Fragment, 3, dkMakeTextureHandle(shadowSlot, m_textures[shadowSlot].sampler));
+
+        const StagedGeometry::DrawRun* runs = m_geometry.Runs();
+        const uint32_t runCount = (m_geometry.RunCount() < GFX_MAX_DRAW_RUNS) ? m_geometry.RunCount() : GFX_MAX_DRAW_RUNS;
+        DrawPbrRuns(m_frameCmdbuf, runs, runCount, m_frame3DVertices);
     }
     if (m_frame2DVertices > 0)
     {
         StagedGeometry::BuildOrtho2D(m_width, m_height, false, matrix);
+
+        DkShader const* flatShaders[] = {&m_vertexShader, &m_fragmentShader};
+        dkCmdBufBindShaders(m_frameCmdbuf, DkStageFlag_GraphicsMask, flatShaders, 2);
+        // The PBR pass above may have repointed vertex-stage binding 0 at its
+        // own frame-uniforms buffer; the flat vertex shader's SceneTransform
+        // block also declares binding=0, so it must be pointed back at the
+        // flat uniform buffer before this draws (mirrors OpenGl.cpp (nx)'s
+        // identical restore for the same reason).
+        dkCmdBufBindUniformBuffer(m_frameCmdbuf, DkStage_Vertex, 0, dkMemBlockGetGpuAddr(m_uniformMemory), DEKO3D_UNIFORM_BYTES);
         BindPassState(m_frameCmdbuf, PassKind::Screen, matrix);
         DrawRuns(m_frameCmdbuf, m_geometry.Runs2D(), m_geometry.RunCount2D(), m_frame3DVertices, m_frame2DVertices);
     }
@@ -769,6 +1099,9 @@ uint32_t Deko3dRenderer::RenderToImage3D(const Renderable3D& what, const Camera3
 void Deko3dRenderer::SetCamera3D(CameraID id, const Camera3D& camera) { m_drawLists.SetCamera3D(id, camera); }
 void Deko3dRenderer::SetActiveCamera3D(CameraID id) { m_drawLists.SetActiveCamera3D(id); }
 void Deko3dRenderer::SetActiveCamera2D(const Camera2D& camera) { m_drawLists.SetActiveCamera2D(camera); }
+void Deko3dRenderer::SetLight3D(LightID id, const Light3D& light) { m_drawLists.SetLight3D(id, light); }
+void Deko3dRenderer::SetAmbientLight(const Color3& color) { m_drawLists.SetAmbientLight(color); }
+void Deko3dRenderer::SetShadowCasterLight(LightID id) { m_drawLists.SetShadowCasterLight(id); }
 
 bool Deko3dRenderer::IsInitialized() const { return m_initialized; }
 
@@ -782,6 +1115,14 @@ void Deko3dRenderer::Destroy()
     m_swapchain = nullptr;
 
     DestroyImageTarget();
+
+    if (m_shadowColorMemory)
+        dkMemBlockDestroy(m_shadowColorMemory);
+    if (m_shadowDepthMemory)
+        dkMemBlockDestroy(m_shadowDepthMemory);
+    m_shadowColorMemory = nullptr;
+    m_shadowDepthMemory = nullptr;
+
     for (int i = 0; i < DEKO3D_MAX_RESIDENT_TEXTURES; ++i)
     {
         if (m_textures[i].used && m_textures[i].memory)
@@ -789,7 +1130,10 @@ void Deko3dRenderer::Destroy()
     }
     memset(m_textures, 0, sizeof(m_textures));
     m_imageTextureSlot = -1;
+    m_shadowTextureSlot = -1;
     m_whiteTexture = 0;
+    m_defaultNormalTexture = 0;
+    m_defaultOrmTexture = 0;
 
     for (uint32_t i = 0; i < GFX_NX_DISPLAY_BUFFERS; ++i)
     {
@@ -808,13 +1152,17 @@ void Deko3dRenderer::Destroy()
         m_vertexMemory[i] = nullptr;
     }
 
-    const DkMemBlock* blocks[] = {&m_uniformMemory, &m_descriptorMemory, &m_shaderMemory, &m_frameCommandMemory, &m_transferCommandMemory};
+    const DkMemBlock* blocks[] = {
+        &m_uniformMemory, &m_pbrFrameUniformMemory, &m_pbrMaterialUniformMemory, &m_shadowUniformMemory, &m_descriptorMemory, &m_shaderMemory, &m_frameCommandMemory, &m_transferCommandMemory};
     for (size_t i = 0; i < sizeof(blocks) / sizeof(blocks[0]); ++i)
     {
         if (*blocks[i])
             dkMemBlockDestroy(*blocks[i]);
     }
     m_uniformMemory = nullptr;
+    m_pbrFrameUniformMemory = nullptr;
+    m_pbrMaterialUniformMemory = nullptr;
+    m_shadowUniformMemory = nullptr;
     m_descriptorMemory = nullptr;
     m_shaderMemory = nullptr;
     m_frameCommandMemory = nullptr;

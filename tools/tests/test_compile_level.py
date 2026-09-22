@@ -88,29 +88,36 @@ def test_bake_material_respects_the_level_texture_dimension_cap(tmp_path):
     """A platform's 'level_textures' cap (e.g. PS2's 64x64) is enforced up
     front, not just as a byte-budget fallback - but the UV space
     (mat.width/mat.height) must stay at the size TrenchBroom authored
-    against, or the material's tiling frequency would drift."""
+    against, or the material's tiling frequency would drift. mat.payload is
+    now the small, fixed-size wrapping RES_MATERIAL; the budget applies to
+    the underlying albedo texture it wraps (mat.texture_payload)."""
     big = PILImage.new("RGB", (1024, 1024), (128, 64, 32))
     big.save(tmp_path / "HUGE.png")
 
     mat = compile_level._bake_material("TESTLEVEL", "HUGE", str(tmp_path), max_width=64, max_height=64)
 
-    assert len(mat.payload) <= compile_level.LEVEL_TEXTURE_MAX_BYTES_BY_PLATFORM["ps2"]
+    assert len(mat.texture_payload) <= compile_level.LEVEL_TEXTURE_MAX_BYTES_BY_PLATFORM["ps2"]
+    assert mat.payload is not None  # the default-generated wrapping material
     assert (mat.width, mat.height) == (1024, 1024)
 
 
 def test_bake_material_references_a_shared_rasset_instead_of_duplicating_it(tmp_path):
     """A texture with a TEXTURE descriptor beside it (the same convention
     cook_assets.py reads) already ships as a standalone RASSETS/*.PS2A - the
-    level should reference that key and skip baking its own copy, so the
-    same texture used by many levels is not duplicated into each archive."""
+    level should reference that key and skip baking its own copy of the
+    texture, so the same texture used by many levels is not duplicated into
+    each archive. A level-local default RES_MATERIAL is still generated,
+    wrapping that shared texture, since MATL now always names a material."""
     img = PILImage.new("RGB", (64, 64), (10, 20, 30))
     img.save(tmp_path / "WOOD.png")
     (tmp_path / "WOOD.json").write_text('{"type": "TEXTURE", "source": "WOOD.png", "deps": []}')
 
     mat = compile_level._bake_material("TESTLEVEL", "WOOD", str(tmp_path), max_width=64, max_height=64)
 
-    assert mat.key == "RASSETS/WOOD.PS2A"
-    assert mat.payload is None
+    assert mat.key == "TESTLEVEL/WOOD.PS2A"
+    assert mat.payload is not None  # the default-generated wrapping material
+    assert mat.texture_key is None
+    assert mat.texture_payload is None  # the shared texture itself is not duplicated
     assert (mat.width, mat.height) == (64, 64)  # UV space still comes from the source image
 
 
@@ -126,8 +133,9 @@ def test_bake_material_falls_back_to_a_level_local_copy_when_the_shared_rasset_i
     mat = compile_level._bake_material("TESTLEVEL", "WOOD", str(tmp_path), max_width=64, max_height=64)
 
     assert mat.key == "TESTLEVEL/WOOD.PS2A"
-    assert mat.payload is not None
-    assert len(mat.payload) <= compile_level.LEVEL_TEXTURE_MAX_BYTES_BY_PLATFORM["ps2"]
+    assert mat.texture_key == "TESTLEVEL/WOOD_TEX.PS2A"
+    assert mat.texture_payload is not None
+    assert len(mat.texture_payload) <= compile_level.LEVEL_TEXTURE_MAX_BYTES_BY_PLATFORM["ps2"]
 
 
 def test_bake_material_falls_back_to_the_byte_budget_with_no_dimension_cap(tmp_path):
@@ -139,8 +147,26 @@ def test_bake_material_falls_back_to_the_byte_budget_with_no_dimension_cap(tmp_p
 
     mat = compile_level._bake_material("TESTLEVEL", "HUGE", str(tmp_path), max_bytes=64 * 1024)
 
-    assert len(mat.payload) <= 64 * 1024
+    assert len(mat.texture_payload) <= 64 * 1024
     assert (mat.width, mat.height) == (1024, 1024)
+
+
+def test_bake_material_uses_an_authored_material_json_when_present(tmp_path):
+    """A material.json sitting where assets/materials/ mirrors this brush
+    texture's own path is picked up directly - no default wrapper is
+    generated, and the level references its already-cooked RES_MATERIAL."""
+    img = PILImage.new("RGB", (32, 32), (5, 5, 5))
+    img.save(tmp_path / "STONE_ALBEDO.png")
+    (tmp_path / "STONE.json").write_text(
+        '{"type": "MATERIAL", "albedo": "STONE_ALBEDO.png", "roughnessFactor": 0.4}'
+    )
+
+    mat = compile_level._bake_material("TESTLEVEL", "STONE", str(tmp_path), materials_dir=str(tmp_path))
+
+    assert mat.key == "RASSETS/STONE.PS2A"
+    assert mat.payload is None
+    assert mat.texture_payload is None
+    assert (mat.width, mat.height) == (32, 32)
 
 
 # --- map parser -------------------------------------------------------------
@@ -174,7 +200,7 @@ def test_bake_mesh_strip_roundtrips():
     assert baked["vert_count"] > 0
     # If it chose a strip, the strip must decode back to the source triangles.
     if baked["topology"] == meshlib.BAKED_TOPOLOGY_STRIP:
-        _uv, _un, _ut, tris = meshlib.dedup_corners(verts, norms, uvs)
+        _uv, _un, _ut, _uc, tris = meshlib.dedup_corners(verts, norms, uvs)
         # (bake_mesh already verifies internally; just assert it produced verts)
         assert baked["vert_count"] >= len(tris)
 
@@ -295,7 +321,8 @@ def test_entities_present(compiled):
     lv = levelfmt.parse_ps2l(core)
     ents_chunk = next(c for c in lv["chunks"] if c["name"] == "ENTS")
     count, strings_offset, strings_size = struct.unpack_from("<III", core, ents_chunk["offset"])
-    assert count == 1  # prop_model
+    assert count == 3  # prop_model + 2 light entities
     strings = core[ents_chunk["offset"] + strings_offset:
                    ents_chunk["offset"] + strings_offset + strings_size]
     assert b"prop_model" in strings
+    assert b"light" in strings

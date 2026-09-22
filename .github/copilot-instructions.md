@@ -227,6 +227,33 @@ cooked console pixel formats to RGBA8 on upload, and it was duplicated per backe
 accepts every call, records draw-list counts so the perf snapshot still works, and draws nothing. It is what lets a
 new platform boot and be validated before any graphics code exists.
 
+## Materials and Lighting
+
+`RES_MATERIAL` (`engine/include/graphics/MaterialFormat.h`) is a first-class asset type, shader-typed with generic
+fixed parameter slots (`MaterialShaderType::PbrStandard` today) rather than one fixed PBR struct, so a future shader
+type (e.g. water) adds its own slot mapping without a format change. It replaced the old one-diffuse-texture
+`Material`/`MaterialMap` (`MAX_MATERIAL_MAPS` was 1); a model's `materialIndex` now names a dependency slot (a
+`RES_MATERIAL` asset), never an embedded table, and a level's `MATL` entries name the same kind of asset — one
+material asset is genuinely shared between a placed model and a brush wall painted with the same texture. See
+`docs/formats/MATERIAL_FORMAT.md`.
+
+Backend shading is split into two tiers, queried via `Renderer::SupportsPbrShading()` (false by default, mirroring
+`GetTextureBudgetBytes`'s "override only where it differs" shape): PBR-capable backends (webgpu, opengl-win32,
+deko3d, opengl-nx, gxm) shade per pixel with real material maps; the fixed-function backends (giftag, ps2gl, gu,
+pspgl, vitagl) stay per-vertex flat/Lambertian. Dynamic lights are fixed renderer slots mirroring cameras
+(`Renderer::SetLight3D`/`SetAmbientLight`, `engine/include/graphics/Primitives.h`'s `Light3D`/`LightID`) — several
+active simultaneously, unlike a camera. A single real-time shadow map from one designated slot
+(`SetShadowCasterLight`) covers dynamic geometry only, on `SupportsPbrShading()` backends; `Renderer::RenderShadowMap`
+is the no-op-by-default hook every backend's `Render()` calls unconditionally, the same "one hardcoded extra step,
+not a render graph" shape `RenderToImage3D` already established.
+
+Static level geometry is lit differently: `tools/compile_level.py` bakes ambient plus every placed light (any entity
+composed with the ECS `LightComponent`, `tools/ECS/ECS.json` — discovered generically, never by a hardcoded
+classname) into each vertex's colour at compile time, including a shadow-ray occlusion test scoped to that vertex's
+own sector cell only (not the whole level — a bounded, cheap approximation). This is a new optional field
+(`BakedMeshEntry.colorsOffset`) only PSEC (sector) meshes populate; a placed, reusable model has no single correct
+baked lighting and stays fully dynamic. See `docs/formats/LEVEL_FORMAT.md`'s "Static lighting" section.
+
 ## Toolchain & Environment
 
 - **Environment Variables**: `PS2DEV` must be set to the root of the PS2 toolchain (e.g. `/usr/local/ps2dev`),

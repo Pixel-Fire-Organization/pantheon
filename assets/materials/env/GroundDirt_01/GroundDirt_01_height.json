@@ -1,0 +1,9 @@
+{
+    "type": "MATERIAL",
+    "shaderType": "pbr_standard",
+    "albedo": "../../../textures/env/GroundDirt_01/GroundDirt_01_basecolor.jpg",
+    "normal": "../../../textures/env/GroundDirt_01/GroundDirt_01_normalOGL.jpg",
+    "occlusion": "../../../textures/env/GroundDirt_01/GroundDirt_01_ambientOcclusion.jpg",
+    "roughness": "../../../textures/env/GroundDirt_01/GroundDirt_01_roughness.jpg",
+    "metallicFactor": 0.0
+}

@@ -35,6 +35,16 @@
     args(string) : "Space separated arguments that will be passed to the scene." : ""
 ]
 
+@BaseClass = LightComponent [
+    light_type(choices) : 1 = [
+        0 : "Directional"
+        1 : "Point"
+    ]
+    color(color255) : "Light colour, RGB 0-255." : 255 255 255
+    intensity(string) : "Brightness multiplier." : 1.0
+    range(string) : "Point lights only: world-unit distance at which attenuation reaches zero. Ignored for directional lights." : 512.0
+]
+
 @BaseClass = DoorComponent [
     door_weight(string) : "The door's weight. The heavier the door, the more force it will need to open it." : 1.0
     is_locked(choices) : 0 = [
@@ -52,4 +62,6 @@
 @SolidClass base(LevelComponent) = func_changeLevel : "A trigger that will change the level on player interaction" []
 
 @SolidClass base(CollisionComponent) = func_door : "Door that can be interacted by a player, NPCs or other physics objecs" []
+
+@PointClass base(TransformComponent, LightComponent) size(-16 -16 -16, 16 16 16) = light : "A static light the level compiler bakes into nearby geometry. Its TransformComponent position places a point light, or its angles orient a directional one." []
 

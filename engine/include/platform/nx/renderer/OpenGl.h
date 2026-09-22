@@ -47,6 +47,11 @@ public:
     void SetActiveCamera3D(CameraID id) override;
     void SetActiveCamera2D(const Camera2D& camera) override;
 
+    void SetLight3D(LightID id, const Light3D& light) override;
+    void SetAmbientLight(const Color3& color) override;
+    void SetShadowCasterLight(LightID id) override;
+    bool SupportsPbrShading() const override { return true; }
+
     uint32_t UploadTexture(const TextureUpload& upload) override;
     void ReleaseTexture(uint32_t handle) override;
 
@@ -63,11 +68,16 @@ protected:
     void RenderSkybox(const DrawLists& lists) override;
     void RenderPrimitives(DrawLists& lists) override;
     void RenderModels(const DrawLists& lists) override;
+    void RenderShadowMap(const DrawLists& lists) override;
 
 private:
     bool CreateContext();
     bool CreateProgram();
+    bool CreatePbrProgram();
+    bool CreateShadowProgram();
     bool CreateWhiteTexture();
+    bool CreateDefaultMaterialTextures();
+    bool EnsureShadowMap();
     void SetupVertexAttributes();
     void SetViewProjection(const float matrix[16]);
     void UploadAndDraw();
@@ -81,11 +91,45 @@ private:
     EGLContext m_context;
     EGLSurface m_surface;
 
+    // Flat/unlit program: the 2D pass and RenderToImage3D's preview target
+    // (deliberately -- see the member comment on the equivalent Win32
+    // pipeline in WebGpu.h: a preview's lighting must never depend on the
+    // scene's own dynamic lights/shadow caster).
     GLuint m_program;
     GLuint m_vao;
     GLuint m_vertexBuffer;
     GLsizeiptr m_vertexBufferCapacity;
-    GLuint m_uniformBuffer;
+    GLuint m_uniformBuffer; // binding 0, bound only while m_program is in use
+
+    // PBR program: the main scene pass. uFrame/uMat mirror the WGSL/GLSL
+    // FrameUniforms/MaterialUniform blocks in WebGpu.cpp/OpenGl.cpp (Win32).
+    GLuint m_pbrProgram;
+    GLuint m_pbrFrameUniformBuffer; // binding 0, bound only while m_pbrProgram is in use
+    GLuint m_pbrMaterialUniformBuffer; // binding 1, one 256-byte-strided slot per draw run this frame
+
+    // Depth-only shadow program: dynamic geometry only.
+    GLuint m_shadowProgram;
+    GLuint m_shadowUniformBuffer; // binding 0, bound only while m_shadowProgram is in use
+    GLuint m_shadowFbo;
+    GLuint m_shadowColorTex; // depth written into the R channel -- see scene_shadow.frag.glsl
+    GLuint m_shadowDepthRb; // the shadow pass's own depth test; never sampled
+
+    // PBR defaults for a material with no normal/ORM map of its own: flat
+    // tangent-space normal, and occlusion=1/roughness=1/metallic=0.
+    GLuint m_defaultNormalTexture;
+    GLuint m_defaultOrmTexture;
+
+    // Result of this frame's RenderShadowMap, consumed by UploadAndDraw right
+    // afterwards.
+    float m_lastLightViewProj[16];
+    bool m_shadowActive;
+    LightID m_shadowCasterIndex;
+
+    // This frame's already-uploaded (and possibly overflow-clamped) 3D
+    // vertex count -- set by UploadAndDraw before it calls RenderShadowMap,
+    // which has no other way to know how much of m_vertexBuffer is actually
+    // valid 3D data this frame.
+    uint32_t m_frame3DVerticesUploaded;
 
     GLuint m_whiteTexture;
     GLuint m_textures[NXGL_MAX_RESIDENT_TEXTURES];

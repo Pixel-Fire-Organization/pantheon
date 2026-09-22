@@ -83,6 +83,14 @@ void NullRenderer::SetActiveCamera3D(CameraID id) { m_drawLists.SetActiveCamera3
 
 void NullRenderer::SetActiveCamera2D(const Camera2D& camera) { m_drawLists.SetActiveCamera2D(camera); }
 
+// --- Dynamic lights -----------------------------------------------------------
+
+void NullRenderer::SetLight3D(LightID id, const Light3D& light) { m_drawLists.SetLight3D(id, light); }
+
+void NullRenderer::SetAmbientLight(const Color3& color) { m_drawLists.SetAmbientLight(color); }
+
+void NullRenderer::SetShadowCasterLight(LightID id) { m_drawLists.SetShadowCasterLight(id); }
+
 // --- Textures ---------------------------------------------------------------
 
 uint32_t NullRenderer::UploadTexture(const TextureUpload& upload)

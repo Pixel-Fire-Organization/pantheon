@@ -2,6 +2,7 @@
 
 #include "platform/vita/CommonDialog.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -10,6 +11,7 @@
 #include "core/EngineDebug.h"
 #include "core/EngineMemory.h"
 #include "graphics/TextureExpand.h"
+#include "graphics/VertexLighting.h"
 #include "platform/Platform.h"
 
 extern "C" {
@@ -17,8 +19,8 @@ extern "C" {
 }
 
 VitaGlRenderer::VitaGlRenderer(const EngineConfig& config) :
-    m_whiteTexture(0), m_geometry(), m_clearColor(Color3{0.0f, 0.0f, 0.0f}), m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_frameStats(), m_initialized(false), m_imageFbo(0),
-    m_imageColorTex(0), m_imageDepthRb(0), m_imageWidth(0), m_imageHeight(0)
+    m_whiteTexture(0), m_litColors3D(nullptr), m_litColors3DCapacity(0), m_geometry(), m_clearColor(Color3{0.0f, 0.0f, 0.0f}), m_width(GFX_SCREEN_WIDTH), m_height(GFX_SCREEN_HEIGHT), m_frameStats(),
+    m_initialized(false), m_imageFbo(0), m_imageColorTex(0), m_imageDepthRb(0), m_imageWidth(0), m_imageHeight(0)
 {
     UNUSED_VAR(config);
     memset(m_textures, 0, sizeof(m_textures));
@@ -214,6 +216,46 @@ void VitaGlRenderer::BindVertexArrays(const StagedGeometry::Vertex* base)
     glColorPointer(4, GL_FLOAT, stride, &base->r);
 }
 
+void VitaGlRenderer::ComputeLitColors3D()
+{
+    const uint32_t count = m_geometry.Count3D();
+    if (count == 0)
+        return;
+
+    if (count > m_litColors3DCapacity)
+    {
+        free(m_litColors3D);
+        m_litColors3D = static_cast<float*>(malloc(sizeof(float) * 4 * count));
+        m_litColors3DCapacity = m_litColors3D ? count : 0;
+        if (!m_litColors3D)
+        {
+            Engine_LogError("VitaGlRenderer: out of memory growing the lit-colour scratch buffer to %u vertices", count);
+            return;
+        }
+    }
+
+    const StagedGeometry::Vertex* src = m_geometry.Vertices3D();
+    const Light3D* lights = m_drawLists.GetLights();
+    const Color3& ambient = m_drawLists.GetAmbientLight();
+
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        const StagedGeometry::Vertex& v = src[i];
+        const float baseline[4] = {v.r, v.g, v.b, v.a};
+        float lit[4];
+        VertexLighting_Compute(Vector3{v.x, v.y, v.z}, Vector3{v.nx, v.ny, v.nz}, baseline, lights, GFX_MAX_LIGHTS, ambient, lit);
+
+        // Clamp before handing this to glColorPointer -- no confirmed
+        // guarantee this GL implementation saturates a float vertex colour
+        // above 1.0 rather than wrapping it when it quantizes for the GPU.
+        float* out = m_litColors3D + static_cast<size_t>(i) * 4;
+        out[0] = (lit[0] < 0.0f) ? 0.0f : ((lit[0] > 1.0f) ? 1.0f : lit[0]);
+        out[1] = (lit[1] < 0.0f) ? 0.0f : ((lit[1] > 1.0f) ? 1.0f : lit[1]);
+        out[2] = (lit[2] < 0.0f) ? 0.0f : ((lit[2] > 1.0f) ? 1.0f : lit[2]);
+        out[3] = lit[3];
+    }
+}
+
 void VitaGlRenderer::DrawStagedGeometry()
 {
     const uint32_t count3D = m_geometry.Count3D();
@@ -239,6 +281,11 @@ void VitaGlRenderer::DrawStagedGeometry()
         glLoadMatrixf(matrix);
 
         BindVertexArrays(m_geometry.Vertices3D());
+        // Overrides just the colour pointer bound above (vertex/normal/
+        // texcoord stay stride-into-the-interleaved-buffer): dynamic
+        // lighting, folded in here on the CPU -- see ComputeLitColors3D.
+        ComputeLitColors3D();
+        glColorPointer(4, GL_FLOAT, 0, m_litColors3D);
 
         const StagedGeometry::DrawRun* runs = m_geometry.Runs();
         for (uint32_t i = 0; i < m_geometry.RunCount(); ++i)
@@ -410,6 +457,9 @@ uint32_t VitaGlRenderer::RenderToImage3D(const Renderable3D& what, const Camera3
 void VitaGlRenderer::SetCamera3D(CameraID id, const Camera3D& camera) { m_drawLists.SetCamera3D(id, camera); }
 void VitaGlRenderer::SetActiveCamera3D(CameraID id) { m_drawLists.SetActiveCamera3D(id); }
 void VitaGlRenderer::SetActiveCamera2D(const Camera2D& camera) { m_drawLists.SetActiveCamera2D(camera); }
+void VitaGlRenderer::SetLight3D(LightID id, const Light3D& light) { m_drawLists.SetLight3D(id, light); }
+void VitaGlRenderer::SetAmbientLight(const Color3& color) { m_drawLists.SetAmbientLight(color); }
+void VitaGlRenderer::SetShadowCasterLight(LightID id) { m_drawLists.SetShadowCasterLight(id); }
 
 bool VitaGlRenderer::IsInitialized() const { return m_initialized; }
 
@@ -432,6 +482,10 @@ void VitaGlRenderer::Shutdown()
         glDeleteTextures(1, &tex);
         m_whiteTexture = 0;
     }
+
+    free(m_litColors3D);
+    m_litColors3D = nullptr;
+    m_litColors3DCapacity = 0;
 
     if (m_imageColorTex)
     {

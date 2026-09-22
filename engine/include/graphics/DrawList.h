@@ -59,6 +59,13 @@ class DrawLists
     // Single 2D / UI camera.
     Camera2D camera2D{};
 
+    // Fixed dynamic-light slots (Renderer::SetLight3D); a slot with
+    // intensity <= 0 is off. See docs/subsystems/RENDERER.md.
+    Light3D lights[GFX_MAX_LIGHTS]{};
+    Color3 ambientLight{0.0f, 0.0f, 0.0f};
+    // Which light slot casts the single real-time shadow map, or -1 for none.
+    int8_t shadowCasterLight = -1;
+
     DrawStats m_lastStats{};
 
     // Separated vertex / normal / UV arrays extracted from MODEL_* at init.
@@ -108,6 +115,11 @@ public:
     void SetActiveCamera2D(const Camera2D& camera);
     CameraID GetActiveCamera3DIndex() const { return static_cast<CameraID>(activeCamera3D); }
 
+    // Dynamic light control (fixed-slot model, mirrors cameras).
+    void SetLight3D(LightID id, const Light3D& light); // write one slot
+    void SetAmbientLight(const Color3& color) { ambientLight = color; }
+    void SetShadowCasterLight(LightID id); // -1 = no shadow caster this frame
+
     // Sort textured primitives by texture id and models by resource id so the
     // backends bind each texture once per run instead of per draw. Safe for the
     // opaque + Z-tested pass; translucency (when added) needs its own ordering.
@@ -136,6 +148,12 @@ public:
     int32_t GetSkyboxResourceId() const { return skyboxResourceId; }
     const Camera3D& GetCamera3D() const { return cameras3D[activeCamera3D]; } // active slot
     const Camera2D& GetCamera2D() const { return camera2D; }
+
+    // Every light slot, GFX_MAX_LIGHTS long; a caller skips any with
+    // intensity <= 0 (an unset slot).
+    const Light3D* GetLights() const { return lights; }
+    const Color3& GetAmbientLight() const { return ambientLight; }
+    LightID GetShadowCasterLight() const { return static_cast<LightID>(shadowCasterLight); }
 
     DrawStats GetLastStats() const { return m_lastStats; }
     void SetLastStats(const DrawStats& stats) { m_lastStats = stats; }

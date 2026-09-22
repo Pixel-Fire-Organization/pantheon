@@ -47,15 +47,16 @@ namespace
         Sector, // PSEC streamed sector payload
     };
 
-    /// A baked model's tables, read without loading the model.
+    /// A baked model's tables, read without loading the model. Materials are
+    /// no longer embedded in the model payload -- they are just this asset's
+    /// dependencies, already shown generically by the DEPENDENCIES tree every
+    /// asset kind gets.
     struct ModelSummary
     {
         bool valid;
         BakedModelHeader header;
         BakedMeshEntry meshes[BROWSE_MAX_MESHES];
         uint32_t meshesShown;
-        BakedMaterialEntry materials[BROWSE_MAX_MATERIALS];
-        uint32_t materialsShown;
     };
 
     /// A compiled level core: its chunk table and whatever each chunk holds.
@@ -132,6 +133,8 @@ namespace
             return "FONT";
         case RES_THEME:
             return "THEME";
+        case RES_MATERIAL:
+            return "MATERIAL";
         default:
             break;
         }
@@ -195,47 +198,17 @@ namespace
     {
         if (!Engine_Archive_ReadSync(&locator, payloadOffset, &s_Model.header, sizeof(s_Model.header)))
             return;
-        if (s_Model.header.magic != BAKED_MODEL_MAGIC)
+        if (s_Model.header.magic != BAKED_MODEL_MAGIC || s_Model.header.version != BAKED_MODEL_VERSION)
             return;
 
-        const bool isV2 = (s_Model.header.version == BAKED_MODEL_VERSION);
-        if (!isV2 && s_Model.header.version != BAKED_MODEL_VERSION_LEGACY)
-            return;
-
-        const uint32_t entrySize = isV2 ? static_cast<uint32_t>(sizeof(BakedMeshEntry)) : static_cast<uint32_t>(sizeof(BakedMeshEntryV1));
         const uint32_t meshTable = payloadOffset + static_cast<uint32_t>(sizeof(BakedModelHeader));
-        const uint32_t materialTable = meshTable + s_Model.header.meshCount * entrySize;
 
         for (uint32_t i = 0; i < s_Model.header.meshCount && i < BROWSE_MAX_MESHES; ++i)
         {
             BakedMeshEntry entry;
-            memset(&entry, 0, sizeof(entry));
-            if (isV2)
-            {
-                if (!Engine_Archive_ReadSync(&locator, meshTable + i * entrySize, &entry, sizeof(entry)))
-                    break;
-            }
-            else
-            {
-                BakedMeshEntryV1 legacy;
-                if (!Engine_Archive_ReadSync(&locator, meshTable + i * entrySize, &legacy, sizeof(legacy)))
-                    break;
-                entry.vertexCount = legacy.vertexCount;
-                entry.materialIndex = legacy.materialIndex;
-                entry.vertsOffset = legacy.vertsOffset;
-                entry.normsOffset = legacy.normsOffset;
-                entry.uvsOffset = legacy.uvsOffset;
-                entry.topology = BAKED_TOPOLOGY_LIST;
-            }
-            s_Model.meshes[s_Model.meshesShown++] = entry;
-        }
-
-        for (uint32_t i = 0; i < s_Model.header.materialCount && i < BROWSE_MAX_MATERIALS; ++i)
-        {
-            BakedMaterialEntry entry;
-            if (!Engine_Archive_ReadSync(&locator, materialTable + i * static_cast<uint32_t>(sizeof(entry)), &entry, sizeof(entry)))
+            if (!Engine_Archive_ReadSync(&locator, meshTable + i * static_cast<uint32_t>(sizeof(entry)), &entry, sizeof(entry)))
                 break;
-            s_Model.materials[s_Model.materialsShown++] = entry;
+            s_Model.meshes[s_Model.meshesShown++] = entry;
         }
 
         s_Model.valid = true;
@@ -623,11 +596,10 @@ namespace
         }
 
         char value[64];
-        Ui_LabelValue("BAKED VERSION", (s_Model.header.version == BAKED_MODEL_VERSION) ? "2 (VEC4)" : "1 (VEC3)");
+        snprintf(value, sizeof(value), "%u", static_cast<unsigned>(s_Model.header.version));
+        Ui_LabelValue("BAKED VERSION", value);
         snprintf(value, sizeof(value), "%u", static_cast<unsigned>(s_Model.header.meshCount));
         Ui_LabelValue("MESHES", value);
-        snprintf(value, sizeof(value), "%u", static_cast<unsigned>(s_Model.header.materialCount));
-        Ui_LabelValue("MATERIALS", value);
 
         if (s_Model.meshesShown > 0 && Ui_BeginTree("MESH TABLE", false))
         {
@@ -650,23 +622,8 @@ namespace
             Ui_EndTree();
         }
 
-        if (s_Model.materialsShown > 0 && Ui_BeginTree("MATERIAL TABLE", false))
-        {
-            for (uint32_t i = 0; i < s_Model.materialsShown; ++i)
-            {
-                char label[16];
-                snprintf(label, sizeof(label), "MAT %u", static_cast<unsigned>(i));
-                const uint32_t ref = s_Model.materials[i].diffuseTexRef;
-                if (ref == BAKED_MODEL_TEXREF_NONE)
-                    Ui_LabelValue(label, "UNTEXTURED");
-                else
-                {
-                    snprintf(value, sizeof(value), "DEP %u", static_cast<unsigned>(ref));
-                    Ui_LabelValue(label, value);
-                }
-            }
-            Ui_EndTree();
-        }
+        // Materials are just this asset's dependencies now (see MaterialFormat.h);
+        // the generic DEPENDENCIES tree every asset kind gets already names them.
     }
 
     void DrawModelBody()
@@ -703,7 +660,8 @@ namespace
                 char label[16];
                 snprintf(label, sizeof(label), "MAT %d", i);
 
-                const int32_t texId = model->materials[i].maps[MATERIAL_MAP_DIFFUSE].textureResourceId;
+                const int32_t materialHandle = model->materials ? model->materials[i] : -1;
+                const int32_t texId = Engine_Resource_GetMaterialTexture(materialHandle, MATERIAL_PBR_TEX_ALBEDO);
                 if (texId < 0)
                 {
                     Ui_LabelValue(label, "NONE");
@@ -854,6 +812,60 @@ namespace
         }
     }
 
+    void DrawMaterialBody()
+    {
+        ResourceInfo info;
+        const bool ready = DrawPreviewControls(&info);
+        if (!ready)
+            return;
+
+        const Material* material = static_cast<const Material*>(Engine_Resource_Get(s_Preview));
+        if (!material)
+            return;
+
+        char value[64];
+        DrawResidencyRows(info);
+
+        snprintf(value, sizeof(value), "%u", static_cast<unsigned>(material->shaderType));
+        Ui_LabelValue("SHADER TYPE", value);
+        snprintf(value, sizeof(value), "0x%02X", static_cast<unsigned>(material->flags));
+        Ui_LabelValue("FLAGS", value);
+
+        if (material->shaderType == static_cast<uint8_t>(MaterialShaderType::PbrStandard) && Ui_BeginTree("PBR PARAMETERS", true))
+        {
+            snprintf(value, sizeof(value), "%.2f", static_cast<double>(material->floatParams[MATERIAL_PBR_FLOAT_METALLIC]));
+            Ui_LabelValue("METALLIC", value);
+            snprintf(value, sizeof(value), "%.2f", static_cast<double>(material->floatParams[MATERIAL_PBR_FLOAT_ROUGHNESS]));
+            Ui_LabelValue("ROUGHNESS", value);
+            snprintf(value, sizeof(value), "%.2f", static_cast<double>(material->floatParams[MATERIAL_PBR_FLOAT_NORMAL_SCALE]));
+            Ui_LabelValue("NORMAL SCALE", value);
+            snprintf(value, sizeof(value), "%.2f", static_cast<double>(material->floatParams[MATERIAL_PBR_FLOAT_ALPHA_CUTOFF]));
+            Ui_LabelValue("ALPHA CUTOFF", value);
+            Ui_EndTree();
+        }
+
+        if (Ui_BeginTree("TEXTURE SLOTS", true))
+        {
+            static const char* const SLOT_NAMES[MATERIAL_MAX_TEXTURE_SLOTS] = {"ALBEDO", "NORMAL", "ORM", "SLOT 3"};
+            for (int slot = 0; slot < MATERIAL_MAX_TEXTURE_SLOTS; ++slot)
+            {
+                const int32_t texId = material->textureRefs[slot];
+                if (texId < 0)
+                {
+                    Ui_LabelValue(SLOT_NAMES[slot], "NONE");
+                    continue;
+                }
+                ResourceInfo texInfo;
+                if (Engine_Resource_GetInfo(texId, &texInfo) && texInfo.state == RES_STATE_READY)
+                    snprintf(value, sizeof(value), "H%d %dX%d", static_cast<int>(texId), static_cast<int>(texInfo.width), static_cast<int>(texInfo.height));
+                else
+                    snprintf(value, sizeof(value), "H%d LOADING", static_cast<int>(texId));
+                Ui_LabelValue(SLOT_NAMES[slot], value);
+            }
+            Ui_EndTree();
+        }
+    }
+
     void DrawSoundBody()
     {
         Ui_LabelColored("NOT IMPLEMENTED ENGINE-WIDE", UiColor::TextWarn);
@@ -906,6 +918,9 @@ namespace
             break;
         case RES_THEME:
             DrawThemeBody();
+            break;
+        case RES_MATERIAL:
+            DrawMaterialBody();
             break;
         }
     }

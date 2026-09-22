@@ -73,6 +73,34 @@
           "type": "object",
           "additionalProperties": false,
           "properties": { "enabled": { "type": "boolean" } }
+        },
+        "MATERIAL": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Fixed-function platforms (PS2, PSP) set bake_normal/bake_orm false: those maps cost nothing to skip since nothing there ever samples them.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "bake_normal": { "type": "boolean", "description": "Default true. False skips baking a material's normal map dependency entirely." },
+            "bake_orm": { "type": "boolean", "description": "Default true. False skips baking a material's packed occlusion/roughness/metallic map dependency entirely." },
+            "normal_max_dimensions": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Optional stricter cap for normal maps specifically, on top of the general 'assets.TEXTURE' ceiling. Absent falls back to that ceiling.",
+              "properties": {
+                "max_width": { "type": "integer", "minimum": 1 },
+                "max_height": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "orm_max_dimensions": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Optional stricter cap for packed ORM maps specifically, on top of the general 'assets.TEXTURE' ceiling. Absent falls back to that ceiling.",
+              "properties": {
+                "max_width": { "type": "integer", "minimum": 1 },
+                "max_height": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
         }
       }
     }

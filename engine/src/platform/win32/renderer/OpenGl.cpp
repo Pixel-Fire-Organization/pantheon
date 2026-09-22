@@ -80,10 +80,418 @@ void main() {
 }
 )GLSL";
 
-    GLuint CompileShader(GLenum type, const char* source)
+    // PBR main-scene shaders. Bodies only -- CompilePbrShader prepends the
+    // real #version line and a #define block carrying GFX_MAX_LIGHTS/
+    // GFX_SHADOW_MAP_SIZE as separate source strings, so those two constants
+    // are never duplicated as literals here. Mirrors the WGSL shader in
+    // WebGpu.cpp: metallic-roughness Cook-Torrance, screen-space derivative
+    // tangent reconstruction, a fixed dynamic-light array, single-shadow-
+    // caster PCF sampling, and the same baked/dynamic lighting split (the
+    // vertex's incoming colour is added once, as the indirect term -- never
+    // folded into albedo, which would square it wherever albedo is reused).
+    const char* const kVertexPbr330 = R"GLSL(
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec2 aUv;
+layout(location = 3) in vec4 aColor;
+uniform mat4 uViewProj;
+out vec3 vWorldPos;
+out vec3 vWorldNormal;
+out vec2 vUv;
+out vec4 vColor;
+void main() {
+    gl_Position = uViewProj * vec4(aPos, 1.0);
+    vWorldPos = aPos;
+    vWorldNormal = aNormal;
+    vUv = aUv;
+    vColor = aColor;
+}
+)GLSL";
+
+    const char* const kFragmentPbr330 = R"GLSL(
+in vec3 vWorldPos;
+in vec3 vWorldNormal;
+in vec2 vUv;
+in vec4 vColor;
+out vec4 oColor;
+
+uniform vec3 uCameraPos;
+uniform vec3 uAmbient;
+uniform vec4 uLightPosOrDir[GFX_MAX_LIGHTS];
+uniform vec4 uLightColorIntensity[GFX_MAX_LIGHTS];
+uniform vec4 uLightRange[GFX_MAX_LIGHTS];
+uniform int uShadowCaster;
+uniform mat4 uLightViewProj;
+uniform sampler2D uAlbedoTex;
+uniform sampler2D uNormalTex;
+uniform sampler2D uOrmTex;
+uniform sampler2DShadow uShadowMap;
+uniform vec4 uBaseColor;
+uniform vec3 uEmissive;
+uniform vec4 uMrna; // metallic, roughness, normalScale, alphaCutoff
+uniform float uAlphaMask;
+
+const float PI = 3.14159265359;
+
+float DistributionGGX(vec3 N, vec3 H, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+    float denom = NdotH2 * (a2 - 1.0) + 1.0;
+    return a2 / max(PI * denom * denom, 1e-6);
+}
+
+float GeometrySchlickGGX(float NdotV, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    return GeometrySchlickGGX(NdotV, roughness) * GeometrySchlickGGX(NdotL, roughness);
+}
+
+vec3 FresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (vec3(1.0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+float SampleShadow(vec3 worldPos) {
+    if (uShadowCaster < 0) {
+        return 1.0;
+    }
+    vec4 lightClip = uLightViewProj * vec4(worldPos, 1.0);
+    if (lightClip.w <= 0.0) {
+        return 1.0;
+    }
+    vec3 ndc = lightClip.xyz / lightClip.w;
+    vec3 shadowUv = ndc * 0.5 + 0.5;
+    if (shadowUv.x < 0.0 || shadowUv.x > 1.0 || shadowUv.y < 0.0 || shadowUv.y > 1.0 || shadowUv.z < 0.0 || shadowUv.z > 1.0) {
+        return 1.0;
+    }
+    float bias = 0.0025;
+    float texel = 1.0 / GFX_SHADOW_MAP_SIZE;
+    float sum = 0.0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            vec2 offs = vec2(float(dx), float(dy)) * texel;
+            sum += texture(uShadowMap, vec3(shadowUv.xy + offs, shadowUv.z - bias));
+        }
+    }
+    return sum / 9.0;
+}
+
+void main() {
+    vec4 albedoSample = texture(uAlbedoTex, vUv);
+    vec3 albedo = albedoSample.rgb * uBaseColor.rgb;
+    float alpha = albedoSample.a * uBaseColor.a;
+    if (uAlphaMask > 0.5 && alpha < uMrna.w) {
+        discard;
+    }
+
+    float metallic = clamp(uMrna.x, 0.0, 1.0);
+    float roughness = clamp(uMrna.y, 0.045, 1.0);
+
+    vec3 N = normalize(vWorldNormal);
+    if (dot(vWorldNormal, vWorldNormal) < 0.0001) {
+        N = vec3(0.0, 1.0, 0.0);
+    }
+
+    vec3 posDx = dFdx(vWorldPos);
+    vec3 posDy = dFdy(vWorldPos);
+    vec2 uvDx = dFdx(vUv);
+    vec2 uvDy = dFdy(vUv);
+    vec3 T = posDx * uvDy.y - posDy * uvDx.y;
+    float tdott = dot(T, T);
+    if (tdott < 1e-10) {
+        T = vec3(1.0, 0.0, 0.0);
+    } else {
+        T = T * inversesqrt(tdott);
+    }
+    T = normalize(T - N * dot(N, T));
+    vec3 B = cross(N, T);
+
+    vec3 normalSample = texture(uNormalTex, vUv).xyz * 2.0 - vec3(1.0);
+    vec3 mapped = normalize(vec3(normalSample.x * uMrna.z, normalSample.y * uMrna.z, normalSample.z));
+    N = normalize(T * mapped.x + B * mapped.y + N * mapped.z);
+
+    vec4 orm = texture(uOrmTex, vUv);
+    float occlusion = orm.r;
+    float finalRoughness = clamp(orm.g * roughness, 0.045, 1.0);
+    float finalMetallic = clamp(orm.b * metallic, 0.0, 1.0);
+
+    vec3 V = normalize(uCameraPos - vWorldPos);
+    vec3 F0 = mix(vec3(0.04), albedo, finalMetallic);
+
+    vec3 Lo = vec3(0.0);
+    for (int i = 0; i < GFX_MAX_LIGHTS; i++) {
+        vec4 posOrDir = uLightPosOrDir[i];
+        vec4 colorIntensity = uLightColorIntensity[i];
+        if (colorIntensity.w <= 0.0) {
+            continue;
+        }
+
+        vec3 L;
+        float attenuation = 1.0;
+        if (posOrDir.w < 0.5) {
+            L = normalize(-posOrDir.xyz);
+        } else {
+            vec3 toLight = posOrDir.xyz - vWorldPos;
+            float dist = length(toLight);
+            float range = max(uLightRange[i].x, 1e-4);
+            L = toLight / max(dist, 1e-4);
+            attenuation = clamp(1.0 - (dist / range), 0.0, 1.0);
+            attenuation = attenuation * attenuation;
+        }
+
+        float NdotL = max(dot(N, L), 0.0);
+        if (NdotL <= 0.0) {
+            continue;
+        }
+
+        float shadowFactor = 1.0;
+        if (i == uShadowCaster) {
+            shadowFactor = SampleShadow(vWorldPos);
+        }
+
+        vec3 H = normalize(V + L);
+        float NDF = DistributionGGX(N, H, finalRoughness);
+        float G = GeometrySmith(N, V, L, finalRoughness);
+        vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+
+        vec3 specular = (NDF * G * F) / max(4.0 * max(dot(N, V), 0.0) * NdotL, 1e-4);
+        vec3 kD = (vec3(1.0) - F) * (1.0 - finalMetallic);
+        vec3 radiance = colorIntensity.rgb * colorIntensity.w * attenuation;
+
+        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadowFactor;
+    }
+
+    vec3 indirect = (vColor.rgb + uAmbient) * albedo * occlusion;
+    vec3 finalRgb = indirect + Lo + uEmissive;
+    oColor = vec4(finalRgb, alpha);
+}
+)GLSL";
+
+    const char* const kVertexPbr120 = R"GLSL(
+attribute vec3 aPos;
+attribute vec3 aNormal;
+attribute vec2 aUv;
+attribute vec4 aColor;
+uniform mat4 uViewProj;
+varying vec3 vWorldPos;
+varying vec3 vWorldNormal;
+varying vec2 vUv;
+varying vec4 vColor;
+void main() {
+    gl_Position = uViewProj * vec4(aPos, 1.0);
+    vWorldPos = aPos;
+    vWorldNormal = aNormal;
+    vUv = aUv;
+    vColor = aColor;
+}
+)GLSL";
+
+    const char* const kFragmentPbr120 = R"GLSL(
+varying vec3 vWorldPos;
+varying vec3 vWorldNormal;
+varying vec2 vUv;
+varying vec4 vColor;
+
+uniform vec3 uCameraPos;
+uniform vec3 uAmbient;
+uniform vec4 uLightPosOrDir[GFX_MAX_LIGHTS];
+uniform vec4 uLightColorIntensity[GFX_MAX_LIGHTS];
+uniform vec4 uLightRange[GFX_MAX_LIGHTS];
+uniform int uShadowCaster;
+uniform mat4 uLightViewProj;
+uniform sampler2D uAlbedoTex;
+uniform sampler2D uNormalTex;
+uniform sampler2D uOrmTex;
+uniform sampler2DShadow uShadowMap;
+uniform vec4 uBaseColor;
+uniform vec3 uEmissive;
+uniform vec4 uMrna;
+uniform float uAlphaMask;
+
+const float PI = 3.14159265359;
+
+float DistributionGGX(vec3 N, vec3 H, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+    float denom = NdotH2 * (a2 - 1.0) + 1.0;
+    return a2 / max(PI * denom * denom, 1e-6);
+}
+
+float GeometrySchlickGGX(float NdotV, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    return GeometrySchlickGGX(NdotV, roughness) * GeometrySchlickGGX(NdotL, roughness);
+}
+
+vec3 FresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (vec3(1.0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+float SampleShadow(vec3 worldPos) {
+    if (uShadowCaster < 0) {
+        return 1.0;
+    }
+    vec4 lightClip = uLightViewProj * vec4(worldPos, 1.0);
+    if (lightClip.w <= 0.0) {
+        return 1.0;
+    }
+    vec3 ndc = lightClip.xyz / lightClip.w;
+    vec3 shadowUv = ndc * 0.5 + 0.5;
+    if (shadowUv.x < 0.0 || shadowUv.x > 1.0 || shadowUv.y < 0.0 || shadowUv.y > 1.0 || shadowUv.z < 0.0 || shadowUv.z > 1.0) {
+        return 1.0;
+    }
+    float bias = 0.0025;
+    float texel = 1.0 / GFX_SHADOW_MAP_SIZE;
+    float sum = 0.0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            vec2 offs = vec2(float(dx), float(dy)) * texel;
+            sum += shadow2D(uShadowMap, vec3(shadowUv.xy + offs, shadowUv.z - bias)).r;
+        }
+    }
+    return sum / 9.0;
+}
+
+void main() {
+    vec4 albedoSample = texture2D(uAlbedoTex, vUv);
+    vec3 albedo = albedoSample.rgb * uBaseColor.rgb;
+    float alpha = albedoSample.a * uBaseColor.a;
+    if (uAlphaMask > 0.5 && alpha < uMrna.w) {
+        discard;
+    }
+
+    float metallic = clamp(uMrna.x, 0.0, 1.0);
+    float roughness = clamp(uMrna.y, 0.045, 1.0);
+
+    vec3 N = normalize(vWorldNormal);
+    if (dot(vWorldNormal, vWorldNormal) < 0.0001) {
+        N = vec3(0.0, 1.0, 0.0);
+    }
+
+    vec3 posDx = dFdx(vWorldPos);
+    vec3 posDy = dFdy(vWorldPos);
+    vec2 uvDx = dFdx(vUv);
+    vec2 uvDy = dFdy(vUv);
+    vec3 T = posDx * uvDy.y - posDy * uvDx.y;
+    float tdott = dot(T, T);
+    if (tdott < 1e-10) {
+        T = vec3(1.0, 0.0, 0.0);
+    } else {
+        T = T * inversesqrt(tdott);
+    }
+    T = normalize(T - N * dot(N, T));
+    vec3 B = cross(N, T);
+
+    vec3 normalSample = texture2D(uNormalTex, vUv).xyz * 2.0 - vec3(1.0);
+    vec3 mapped = normalize(vec3(normalSample.x * uMrna.z, normalSample.y * uMrna.z, normalSample.z));
+    N = normalize(T * mapped.x + B * mapped.y + N * mapped.z);
+
+    vec4 orm = texture2D(uOrmTex, vUv);
+    float occlusion = orm.r;
+    float finalRoughness = clamp(orm.g * roughness, 0.045, 1.0);
+    float finalMetallic = clamp(orm.b * metallic, 0.0, 1.0);
+
+    vec3 V = normalize(uCameraPos - vWorldPos);
+    vec3 F0 = mix(vec3(0.04), albedo, finalMetallic);
+
+    vec3 Lo = vec3(0.0);
+    for (int i = 0; i < GFX_MAX_LIGHTS; i++) {
+        vec4 posOrDir = uLightPosOrDir[i];
+        vec4 colorIntensity = uLightColorIntensity[i];
+        if (colorIntensity.w <= 0.0) {
+            continue;
+        }
+
+        vec3 L;
+        float attenuation = 1.0;
+        if (posOrDir.w < 0.5) {
+            L = normalize(-posOrDir.xyz);
+        } else {
+            vec3 toLight = posOrDir.xyz - vWorldPos;
+            float dist = length(toLight);
+            float range = max(uLightRange[i].x, 1e-4);
+            L = toLight / max(dist, 1e-4);
+            attenuation = clamp(1.0 - (dist / range), 0.0, 1.0);
+            attenuation = attenuation * attenuation;
+        }
+
+        float NdotL = max(dot(N, L), 0.0);
+        if (NdotL <= 0.0) {
+            continue;
+        }
+
+        float shadowFactor = 1.0;
+        if (i == uShadowCaster) {
+            shadowFactor = SampleShadow(vWorldPos);
+        }
+
+        vec3 H = normalize(V + L);
+        float NDF = DistributionGGX(N, H, finalRoughness);
+        float G = GeometrySmith(N, V, L, finalRoughness);
+        vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+
+        vec3 specular = (NDF * G * F) / max(4.0 * max(dot(N, V), 0.0) * NdotL, 1e-4);
+        vec3 kD = (vec3(1.0) - F) * (1.0 - finalMetallic);
+        vec3 radiance = colorIntensity.rgb * colorIntensity.w * attenuation;
+
+        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadowFactor;
+    }
+
+    vec3 indirect = (vColor.rgb + uAmbient) * albedo * occlusion;
+    vec3 finalRgb = indirect + Lo + uEmissive;
+    gl_FragColor = vec4(finalRgb, alpha);
+}
+)GLSL";
+
+    // Depth-only shadow-pass shaders: dynamic (model/primitive) geometry
+    // only -- static sector geometry already carries baked, shadow-aware
+    // lighting. No alpha-mask cutout support yet: every dynamic mesh casts a
+    // solid silhouette (see docs/subsystems/RENDERER.md).
+    const char* const kVertexShadow330 = R"GLSL(
+layout(location = 0) in vec3 aPos;
+uniform mat4 uLightViewProj;
+void main() {
+    gl_Position = uLightViewProj * vec4(aPos, 1.0);
+}
+)GLSL";
+
+    const char* const kFragmentShadow330 = R"GLSL(
+void main() {
+}
+)GLSL";
+
+    const char* const kVertexShadow120 = R"GLSL(
+attribute vec3 aPos;
+uniform mat4 uLightViewProj;
+void main() {
+    gl_Position = uLightViewProj * vec4(aPos, 1.0);
+}
+)GLSL";
+
+    const char* const kFragmentShadow120 = R"GLSL(
+void main() {
+}
+)GLSL";
+
+    GLuint CompileShaderSources(GLenum type, const char* const* sources, GLsizei count)
     {
         GLuint shader = gl_CreateShader(type);
-        gl_ShaderSource(shader, 1, &source, nullptr);
+        gl_ShaderSource(shader, count, sources, nullptr);
         gl_CompileShader(shader);
 
         GLint status = 0;
@@ -101,15 +509,36 @@ void main() {
         return shader;
     }
 
+    GLuint CompileShader(GLenum type, const char* source) { return CompileShaderSources(type, &source, 1); }
+
+    // Splices the platform's real GFX_MAX_LIGHTS/GFX_SHADOW_MAP_SIZE constants
+    // into a PBR/shadow shader as GLSL #defines injected between the #version
+    // line and the shader body, rather than duplicating them as literals in
+    // the raw shader text that could silently drift from PlatformConstants.h.
+    // Unlike WGSL (no preprocessor), GLSL's own #define expands these for us
+    // once the two source strings are concatenated, so no manual token
+    // substitution is needed.
+    GLuint CompilePbrShader(GLenum type, const char* versionLine, const char* body)
+    {
+        char defines[128];
+        snprintf(defines, sizeof(defines), "#define GFX_MAX_LIGHTS %d\n#define GFX_SHADOW_MAP_SIZE %d.0\n", GFX_MAX_LIGHTS, GFX_SHADOW_MAP_SIZE);
+        const char* sources[3] = {versionLine, defines, body};
+        return CompileShaderSources(type, sources, 3);
+    }
+
 } // namespace
 
 OpenGlRenderer::OpenGlRenderer(const EngineConfig& config) :
-    m_hwnd(nullptr), m_dc(nullptr), m_context(nullptr), m_coreProfile(false), m_versionMajor(0), m_versionMinor(0), m_program(0), m_uniformViewProj(-1), m_uniformTexture(-1), m_vao(0),
-    m_vertexBuffer(0), m_vertexBufferCapacity(0), m_whiteTexture(0), m_clearColor{0.0f, 0.0f, 0.0f}, m_width(0), m_height(0), m_frameStats{}, m_initialized(false), m_imageFbo(0), m_imageColorTex(0),
-    m_imageDepthRb(0), m_imageWidth(0), m_imageHeight(0)
+    m_hwnd(nullptr), m_dc(nullptr), m_context(nullptr), m_coreProfile(false), m_versionMajor(0), m_versionMinor(0), m_program(0), m_uniformViewProj(-1), m_uniformTexture(-1), m_programPbr(0),
+    m_pbrUniformViewProj(-1), m_pbrUniformCameraPos(-1), m_pbrUniformAmbient(-1), m_pbrUniformLightPosOrDir(-1), m_pbrUniformLightColorIntensity(-1), m_pbrUniformLightRange(-1),
+    m_pbrUniformShadowCaster(-1), m_pbrUniformLightViewProj(-1), m_pbrUniformAlbedoTex(-1), m_pbrUniformNormalTex(-1), m_pbrUniformOrmTex(-1), m_pbrUniformShadowMap(-1), m_pbrUniformBaseColor(-1),
+    m_pbrUniformEmissive(-1), m_pbrUniformMrna(-1), m_pbrUniformAlphaMask(-1), m_shadowProgram(0), m_shadowUniformLightViewProj(-1), m_shadowFbo(0), m_shadowDepthTex(0), m_defaultNormalTex(0),
+    m_defaultOrmTex(0), m_shadowActive(false), m_shadowCasterIndex(-1), m_vao(0), m_vertexBuffer(0), m_vertexBufferCapacity(0), m_whiteTexture(0), m_clearColor{0.0f, 0.0f, 0.0f}, m_width(0),
+    m_height(0), m_frameStats{}, m_initialized(false), m_imageFbo(0), m_imageColorTex(0), m_imageDepthRb(0), m_imageWidth(0), m_imageHeight(0)
 {
     UNUSED_VAR(config);
     memset(m_textures, 0, sizeof(m_textures));
+    memset(m_lastLightViewProj, 0, sizeof(m_lastLightViewProj));
 
     Platform* platform = Engine_GetPlatform();
     platform->GetFramebufferSize(&m_width, &m_height);
@@ -130,6 +559,14 @@ OpenGlRenderer::OpenGlRenderer(const EngineConfig& config) :
     if (!CreateProgram())
         return;
     if (!CreateWhiteTexture())
+        return;
+    if (!CreateDefaultMaterialTextures())
+        return;
+    if (!EnsureShadowMap())
+        return;
+    if (!CreatePbrProgram())
+        return;
+    if (!CreateShadowProgram())
         return;
 
     gl_GenBuffers(1, &m_vertexBuffer);
@@ -353,6 +790,167 @@ bool OpenGlRenderer::CreateWhiteTexture()
     return true;
 }
 
+bool OpenGlRenderer::CreateDefaultMaterialTextures()
+{
+    // Flat tangent-space normal (encoded 128,128,255) and a neutral ORM
+    // (occlusion=1, roughness=1, metallic=0) -- what a material with no
+    // normal/ORM map of its own samples.
+    glGenTextures(1, &m_defaultNormalTex);
+    if (!m_defaultNormalTex)
+        return false;
+    glBindTexture(GL_TEXTURE_2D, m_defaultNormalTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    const uint8_t flatNormal[4] = {128, 128, 255, 255};
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, flatNormal);
+
+    glGenTextures(1, &m_defaultOrmTex);
+    if (!m_defaultOrmTex)
+        return false;
+    glBindTexture(GL_TEXTURE_2D, m_defaultOrmTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    const uint8_t neutralOrm[4] = {255, 255, 0, 255};
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, neutralOrm);
+
+    return true;
+}
+
+bool OpenGlRenderer::EnsureShadowMap()
+{
+    if (m_shadowFbo)
+        return true;
+    if (!gl_GenFramebuffers || !gl_BindFramebuffer || !gl_FramebufferTexture2D || !gl_CheckFramebufferStatus)
+    {
+        Engine_LogError("OpenGl: this context has no FBO support; the real-time shadow pass is unavailable");
+        return false;
+    }
+
+    glGenTextures(1, &m_shadowDepthTex);
+    glBindTexture(GL_TEXTURE_2D, m_shadowDepthTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    // Hardware PCF: sampling this texture from a sampler2DShadow compares
+    // against the reference depth instead of returning the raw value.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, GFX_SHADOW_MAP_SIZE, GFX_SHADOW_MAP_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+
+    gl_GenFramebuffers(1, &m_shadowFbo);
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    gl_BindFramebuffer(GL_FRAMEBUFFER, m_shadowFbo);
+    gl_FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_shadowDepthTex, 0);
+    // Depth-only: no colour attachment, so tell the driver not to expect one.
+    // glDrawBuffer/glReadBuffer are core GL 1.0, unlike the FBO entry points
+    // above -- no dynamic loading needed.
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    const bool complete = gl_CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    gl_BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
+
+    if (!complete)
+    {
+        Engine_LogError("OpenGl: shadow map framebuffer is incomplete");
+        return false;
+    }
+    return true;
+}
+
+bool OpenGlRenderer::CreatePbrProgram()
+{
+    const char* versionLine = m_coreProfile ? "#version 330 core\n" : "#version 120\n";
+    const char* vertexBody = m_coreProfile ? kVertexPbr330 : kVertexPbr120;
+    const char* fragmentBody = m_coreProfile ? kFragmentPbr330 : kFragmentPbr120;
+
+    GLuint vs = CompilePbrShader(GL_VERTEX_SHADER, versionLine, vertexBody);
+    GLuint fs = CompilePbrShader(GL_FRAGMENT_SHADER, versionLine, fragmentBody);
+    if (!vs || !fs)
+        return false;
+
+    m_programPbr = gl_CreateProgram();
+    gl_AttachShader(m_programPbr, vs);
+    gl_AttachShader(m_programPbr, fs);
+
+    gl_BindAttribLocation(m_programPbr, 0, "aPos");
+    gl_BindAttribLocation(m_programPbr, 1, "aNormal");
+    gl_BindAttribLocation(m_programPbr, 2, "aUv");
+    gl_BindAttribLocation(m_programPbr, 3, "aColor");
+
+    gl_LinkProgram(m_programPbr);
+
+    GLint status = 0;
+    gl_GetProgramiv(m_programPbr, GL_LINK_STATUS, &status);
+    if (!status)
+    {
+        char log[1024];
+        GLsizei len = 0;
+        gl_GetProgramInfoLog(m_programPbr, sizeof(log), &len, log);
+        log[sizeof(log) - 1] = '\0';
+        Engine_LogError("OpenGl: PBR program link failed: %s", log);
+        return false;
+    }
+
+    gl_DeleteShader(vs);
+    gl_DeleteShader(fs);
+
+    m_pbrUniformViewProj = gl_GetUniformLocation(m_programPbr, "uViewProj");
+    m_pbrUniformCameraPos = gl_GetUniformLocation(m_programPbr, "uCameraPos");
+    m_pbrUniformAmbient = gl_GetUniformLocation(m_programPbr, "uAmbient");
+    m_pbrUniformLightPosOrDir = gl_GetUniformLocation(m_programPbr, "uLightPosOrDir");
+    m_pbrUniformLightColorIntensity = gl_GetUniformLocation(m_programPbr, "uLightColorIntensity");
+    m_pbrUniformLightRange = gl_GetUniformLocation(m_programPbr, "uLightRange");
+    m_pbrUniformShadowCaster = gl_GetUniformLocation(m_programPbr, "uShadowCaster");
+    m_pbrUniformLightViewProj = gl_GetUniformLocation(m_programPbr, "uLightViewProj");
+    m_pbrUniformAlbedoTex = gl_GetUniformLocation(m_programPbr, "uAlbedoTex");
+    m_pbrUniformNormalTex = gl_GetUniformLocation(m_programPbr, "uNormalTex");
+    m_pbrUniformOrmTex = gl_GetUniformLocation(m_programPbr, "uOrmTex");
+    m_pbrUniformShadowMap = gl_GetUniformLocation(m_programPbr, "uShadowMap");
+    m_pbrUniformBaseColor = gl_GetUniformLocation(m_programPbr, "uBaseColor");
+    m_pbrUniformEmissive = gl_GetUniformLocation(m_programPbr, "uEmissive");
+    m_pbrUniformMrna = gl_GetUniformLocation(m_programPbr, "uMrna");
+    m_pbrUniformAlphaMask = gl_GetUniformLocation(m_programPbr, "uAlphaMask");
+    return true;
+}
+
+bool OpenGlRenderer::CreateShadowProgram()
+{
+    const char* versionLine = m_coreProfile ? "#version 330 core\n" : "#version 120\n";
+    const char* vertexBody = m_coreProfile ? kVertexShadow330 : kVertexShadow120;
+    const char* fragmentBody = m_coreProfile ? kFragmentShadow330 : kFragmentShadow120;
+
+    GLuint vs = CompilePbrShader(GL_VERTEX_SHADER, versionLine, vertexBody);
+    GLuint fs = CompilePbrShader(GL_FRAGMENT_SHADER, versionLine, fragmentBody);
+    if (!vs || !fs)
+        return false;
+
+    m_shadowProgram = gl_CreateProgram();
+    gl_AttachShader(m_shadowProgram, vs);
+    gl_AttachShader(m_shadowProgram, fs);
+    gl_BindAttribLocation(m_shadowProgram, 0, "aPos");
+    gl_LinkProgram(m_shadowProgram);
+
+    GLint status = 0;
+    gl_GetProgramiv(m_shadowProgram, GL_LINK_STATUS, &status);
+    if (!status)
+    {
+        char log[1024];
+        GLsizei len = 0;
+        gl_GetProgramInfoLog(m_shadowProgram, sizeof(log), &len, log);
+        log[sizeof(log) - 1] = '\0';
+        Engine_LogError("OpenGl: shadow program link failed: %s", log);
+        return false;
+    }
+
+    gl_DeleteShader(vs);
+    gl_DeleteShader(fs);
+
+    m_shadowUniformLightViewProj = gl_GetUniformLocation(m_shadowProgram, "uLightViewProj");
+    return true;
+}
+
 void OpenGlRenderer::SetupVertexAttributes()
 {
     const GLsizei stride = sizeof(StagedGeometry::Vertex);
@@ -525,6 +1123,56 @@ void OpenGlRenderer::BeginFrame()
 
 void OpenGlRenderer::Render() { m_geometry.BuildFrame(m_drawLists, &m_frameStats); }
 
+void OpenGlRenderer::RenderShadowMap(const DrawLists& lists)
+{
+    m_shadowActive = false;
+
+    const LightID casterId = lists.GetShadowCasterLight();
+    if (casterId < 0 || casterId >= GFX_MAX_LIGHTS)
+        return; // no caster designated this frame
+    const Light3D& caster = lists.GetLights()[casterId];
+    // Only a directional light can cast the shadow map -- see the member
+    // comment on SetShadowCasterLight in Renderer.h and BuildLightViewProjection
+    // in StagedGeometry.h.
+    if (caster.intensity <= 0.0f || caster.type != LightType::Directional)
+        return;
+
+    const uint32_t dynStart = m_geometry.DynamicVertexStart();
+    const uint32_t dynCount = m_geometry.Count3D() - dynStart;
+    if (dynCount == 0)
+        return; // nothing dynamic to cast this frame; leave the map unsampled
+
+    // A frustum centred on the camera, not the whole level: this pass only
+    // ever covers dynamic (model/primitive) geometry, which clusters near
+    // wherever the camera is looking, not the static world.
+    const float kShadowHalfExtent = 24.0f;
+    const float kShadowDepthExtent = 120.0f;
+    StagedGeometry::BuildLightViewProjection(caster.direction, lists.GetCamera3D().position, kShadowHalfExtent, kShadowDepthExtent, false, m_lastLightViewProj);
+
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    GLint prevViewport[4];
+    glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+    gl_BindFramebuffer(GL_FRAMEBUFFER, m_shadowFbo);
+    glViewport(0, 0, GFX_SHADOW_MAP_SIZE, GFX_SHADOW_MAP_SIZE);
+    glEnable(GL_DEPTH_TEST);
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    gl_UseProgram(m_shadowProgram);
+    gl_UniformMatrix4fv(m_shadowUniformLightViewProj, 1, GL_FALSE, m_lastLightViewProj);
+    // One draw over every dynamic vertex: no per-material texture binding to
+    // change between runs (no alpha-mask cutout support yet -- see
+    // kFragmentShadow330/120), so there is nothing run boundaries buy it.
+    glDrawArrays(GL_TRIANGLES, static_cast<GLint>(dynStart), static_cast<GLsizei>(dynCount));
+
+    gl_BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
+    glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+
+    m_shadowActive = true;
+    m_shadowCasterIndex = casterId;
+}
+
 void OpenGlRenderer::UploadAndDraw()
 {
     const uint32_t count3D = m_geometry.Count3D();
@@ -551,25 +1199,83 @@ void OpenGlRenderer::UploadAndDraw()
 
     SetupVertexAttributes();
 
-    gl_UseProgram(m_program);
-    gl_Uniform1i(m_uniformTexture, 0);
-    gl_ActiveTexture(GL_TEXTURE0);
+    // The shadow pass reads from the vertex buffer just uploaded above, and
+    // must finish (and restore the default framebuffer/viewport) before the
+    // main pass samples its result.
+    RenderShadowMap(m_drawLists);
 
     float matrix[16];
 
-    // --- 3D: one draw per texture run --------------------------------------
+    // --- 3D: one draw per material run, PBR-shaded --------------------------
     if (count3D > 0)
     {
         glEnable(GL_DEPTH_TEST);
+        gl_UseProgram(m_programPbr);
+
         StagedGeometry::BuildViewProjection(m_drawLists.GetCamera3D(), m_width, m_height, false, matrix);
-        gl_UniformMatrix4fv(m_uniformViewProj, 1, GL_FALSE, matrix);
+        gl_UniformMatrix4fv(m_pbrUniformViewProj, 1, GL_FALSE, matrix);
+        gl_UniformMatrix4fv(m_pbrUniformLightViewProj, 1, GL_FALSE, m_lastLightViewProj);
+
+        const Camera3D& camera = m_drawLists.GetCamera3D();
+        const float cameraPos[3] = {camera.position.x, camera.position.y, camera.position.z};
+        gl_Uniform3fv(m_pbrUniformCameraPos, 1, cameraPos);
+        const Color3& ambient = m_drawLists.GetAmbientLight();
+        const float ambientArr[3] = {ambient.r, ambient.g, ambient.b};
+        gl_Uniform3fv(m_pbrUniformAmbient, 1, ambientArr);
+
+        float lightPosOrDir[GFX_MAX_LIGHTS * 4];
+        float lightColorIntensity[GFX_MAX_LIGHTS * 4];
+        float lightRange[GFX_MAX_LIGHTS * 4];
+        const Light3D* lights = m_drawLists.GetLights();
+        for (uint32_t i = 0; i < GFX_MAX_LIGHTS; ++i)
+        {
+            const Light3D& l = lights[i];
+            const bool directional = (l.type == LightType::Directional);
+            lightPosOrDir[i * 4 + 0] = directional ? l.direction.x : l.position.x;
+            lightPosOrDir[i * 4 + 1] = directional ? l.direction.y : l.position.y;
+            lightPosOrDir[i * 4 + 2] = directional ? l.direction.z : l.position.z;
+            lightPosOrDir[i * 4 + 3] = directional ? 0.0f : 1.0f;
+            lightColorIntensity[i * 4 + 0] = l.color.r;
+            lightColorIntensity[i * 4 + 1] = l.color.g;
+            lightColorIntensity[i * 4 + 2] = l.color.b;
+            lightColorIntensity[i * 4 + 3] = l.intensity; // <= 0 means "off"; the shader skips it
+            lightRange[i * 4 + 0] = l.range;
+            lightRange[i * 4 + 1] = 0.0f;
+            lightRange[i * 4 + 2] = 0.0f;
+            lightRange[i * 4 + 3] = 0.0f;
+        }
+        gl_Uniform4fv(m_pbrUniformLightPosOrDir, GFX_MAX_LIGHTS, lightPosOrDir);
+        gl_Uniform4fv(m_pbrUniformLightColorIntensity, GFX_MAX_LIGHTS, lightColorIntensity);
+        gl_Uniform4fv(m_pbrUniformLightRange, GFX_MAX_LIGHTS, lightRange);
+        gl_Uniform1i(m_pbrUniformShadowCaster, m_shadowActive ? static_cast<GLint>(m_shadowCasterIndex) : -1);
+
+        gl_Uniform1i(m_pbrUniformAlbedoTex, 0);
+        gl_Uniform1i(m_pbrUniformNormalTex, 1);
+        gl_Uniform1i(m_pbrUniformOrmTex, 2);
+        gl_Uniform1i(m_pbrUniformShadowMap, 3);
+        gl_ActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + 3));
+        glBindTexture(GL_TEXTURE_2D, m_shadowDepthTex);
 
         const StagedGeometry::DrawRun* runs = m_geometry.Runs();
         for (uint32_t i = 0; i < m_geometry.RunCount(); ++i)
         {
+            const StagedGeometry::RunMaterial& mat = runs[i].material;
+            gl_Uniform4fv(m_pbrUniformBaseColor, 1, mat.baseColor);
+            gl_Uniform3fv(m_pbrUniformEmissive, 1, mat.emissive);
+            const float mrna[4] = {mat.metallic, mat.roughness, mat.normalScale, mat.alphaCutoff};
+            gl_Uniform4fv(m_pbrUniformMrna, 1, mrna);
+            gl_Uniform1f(m_pbrUniformAlphaMask, (mat.flags & MATERIAL_FLAG_ALPHA_MASK) ? 1.0f : 0.0f);
+
+            gl_ActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, runs[i].texture ? runs[i].texture : m_whiteTexture);
+            gl_ActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + 1));
+            glBindTexture(GL_TEXTURE_2D, mat.normalTexture ? mat.normalTexture : m_defaultNormalTex);
+            gl_ActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + 2));
+            glBindTexture(GL_TEXTURE_2D, mat.ormTexture ? mat.ormTexture : m_defaultOrmTex);
+
             glDrawArrays(GL_TRIANGLES, static_cast<GLint>(runs[i].first), static_cast<GLsizei>(runs[i].count));
         }
+        gl_ActiveTexture(GL_TEXTURE0);
     }
 
     // --- 2D: unlit, blended, drawn over the top, one draw per texture run ---
@@ -578,6 +1284,11 @@ void OpenGlRenderer::UploadAndDraw()
         glDisable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        gl_UseProgram(m_program);
+        gl_Uniform1i(m_uniformTexture, 0);
+        gl_ActiveTexture(GL_TEXTURE0);
+
         StagedGeometry::BuildOrtho2D(m_width, m_height, false, matrix);
         gl_UniformMatrix4fv(m_uniformViewProj, 1, GL_FALSE, matrix);
 
@@ -748,6 +1459,9 @@ uint32_t OpenGlRenderer::RenderToImage3D(const Renderable3D& what, const Camera3
 void OpenGlRenderer::SetCamera3D(CameraID id, const Camera3D& camera) { m_drawLists.SetCamera3D(id, camera); }
 void OpenGlRenderer::SetActiveCamera3D(CameraID id) { m_drawLists.SetActiveCamera3D(id); }
 void OpenGlRenderer::SetActiveCamera2D(const Camera2D& camera) { m_drawLists.SetActiveCamera2D(camera); }
+void OpenGlRenderer::SetLight3D(LightID id, const Light3D& light) { m_drawLists.SetLight3D(id, light); }
+void OpenGlRenderer::SetAmbientLight(const Color3& color) { m_drawLists.SetAmbientLight(color); }
+void OpenGlRenderer::SetShadowCasterLight(LightID id) { m_drawLists.SetShadowCasterLight(id); }
 
 bool OpenGlRenderer::IsInitialized() const { return m_initialized; }
 
@@ -763,12 +1477,25 @@ void OpenGlRenderer::Shutdown()
     }
     if (m_whiteTexture)
         glDeleteTextures(1, &m_whiteTexture);
+    if (m_defaultNormalTex)
+        glDeleteTextures(1, &m_defaultNormalTex);
+    if (m_defaultOrmTex)
+        glDeleteTextures(1, &m_defaultOrmTex);
     if (m_vertexBuffer)
         gl_DeleteBuffers(1, &m_vertexBuffer);
     if (m_vao && gl_DeleteVertexArrays)
         gl_DeleteVertexArrays(1, &m_vao);
     if (m_program)
         gl_DeleteProgram(m_program);
+    if (m_programPbr)
+        gl_DeleteProgram(m_programPbr);
+    if (m_shadowProgram)
+        gl_DeleteProgram(m_shadowProgram);
+
+    if (m_shadowDepthTex)
+        glDeleteTextures(1, &m_shadowDepthTex);
+    if (m_shadowFbo && gl_DeleteFramebuffers)
+        gl_DeleteFramebuffers(1, &m_shadowFbo);
 
     if (m_imageColorTex)
         glDeleteTextures(1, &m_imageColorTex);

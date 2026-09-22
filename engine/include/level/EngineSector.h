@@ -22,7 +22,7 @@ typedef struct
     uint8_t state; // SectorState
     uint32_t meshCount;
     Mesh meshes[LEVEL_MAX_MESHES_PER_SECTOR]; // views into the slot geometry
-    int32_t meshTexture[LEVEL_MAX_MESHES_PER_SECTOR]; // resolved texture handles
+    int32_t meshMaterial[LEVEL_MAX_MESHES_PER_SECTOR]; // resolved RES_MATERIAL handles
     Aabb3 bounds; // world-space sector AABB (from the PSEC header)
 } SectorResident;
 

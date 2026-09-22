@@ -27,6 +27,9 @@ PFN_glBindAttribLocation gl_BindAttribLocation = nullptr;
 PFN_glGetUniformLocation gl_GetUniformLocation = nullptr;
 PFN_glUniformMatrix4fv gl_UniformMatrix4fv = nullptr;
 PFN_glUniform1i gl_Uniform1i = nullptr;
+PFN_glUniform1f gl_Uniform1f = nullptr;
+PFN_glUniform3fv gl_Uniform3fv = nullptr;
+PFN_glUniform4fv gl_Uniform4fv = nullptr;
 PFN_glEnableVertexAttribArray gl_EnableVertexAttribArray = nullptr;
 PFN_glDisableVertexAttribArray gl_DisableVertexAttribArray = nullptr;
 PFN_glVertexAttribPointer gl_VertexAttribPointer = nullptr;
@@ -103,6 +106,9 @@ bool Gl_LoadFunctions(bool coreProfile)
     ok &= Load(reinterpret_cast<void**>(&gl_GetUniformLocation), "glGetUniformLocation", true);
     ok &= Load(reinterpret_cast<void**>(&gl_UniformMatrix4fv), "glUniformMatrix4fv", true);
     ok &= Load(reinterpret_cast<void**>(&gl_Uniform1i), "glUniform1i", true);
+    ok &= Load(reinterpret_cast<void**>(&gl_Uniform1f), "glUniform1f", true);
+    ok &= Load(reinterpret_cast<void**>(&gl_Uniform3fv), "glUniform3fv", true);
+    ok &= Load(reinterpret_cast<void**>(&gl_Uniform4fv), "glUniform4fv", true);
     ok &= Load(reinterpret_cast<void**>(&gl_EnableVertexAttribArray), "glEnableVertexAttribArray", true);
     ok &= Load(reinterpret_cast<void**>(&gl_DisableVertexAttribArray), "glDisableVertexAttribArray", true);
     ok &= Load(reinterpret_cast<void**>(&gl_VertexAttribPointer), "glVertexAttribPointer", true);
@@ -122,9 +128,12 @@ bool Gl_LoadFunctions(bool coreProfile)
     // uncapped, which is a nuisance rather than a failure.
     Load(reinterpret_cast<void**>(&gl_wglSwapIntervalEXT), "wglSwapIntervalEXT", false);
 
-    // Optional: see the comment beside these declarations in GlApi.h.
-    // RenderToImage3D checks gl_GenFramebuffers itself before using any of
-    // this, so a miss here never fails renderer construction.
+    // Loaded as optional here (see the comment beside these declarations in
+    // GlApi.h) but no longer optional in practice: RenderToImage3D checks
+    // gl_GenFramebuffers itself and degrades gracefully, but OpenGlRenderer's
+    // real-time shadow pass (EnsureShadowMap) now requires it and fails
+    // renderer construction outright when it is missing, since a context
+    // with no FBO support cannot honour SupportsPbrShading()==true anyway.
     Load(reinterpret_cast<void**>(&gl_GenFramebuffers), "glGenFramebuffers", false);
     Load(reinterpret_cast<void**>(&gl_BindFramebuffer), "glBindFramebuffer", false);
     Load(reinterpret_cast<void**>(&gl_FramebufferTexture2D), "glFramebufferTexture2D", false);

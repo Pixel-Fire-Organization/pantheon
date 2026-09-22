@@ -10,6 +10,17 @@
 // caller, matching what the PS2 backends promise.
 #define WGPU_MAX_TEXTURES 256
 
+// Cached per-material (albedo+normal+ORM) bind groups for the PBR pass -- see
+// MaterialGroupFor. Bounded the same way the texture registry is.
+#define WGPU_MAX_MATERIAL_GROUPS 256
+
+// wgpu's guaranteed minimum for a dynamic uniform offset (WebGPU spec default
+// limits.minUniformBufferOffsetAlignment); the per-run material buffer is
+// written once per frame at this stride and indexed with a dynamic offset per
+// draw run, since wgpuQueueWriteBuffer cannot be interleaved with draw calls
+// inside an already-encoded render pass.
+#define WGPU_MATERIAL_UNIFORM_STRIDE 256
+
 class WebGpuRenderer final : public Renderer
 {
 public:
@@ -44,6 +55,11 @@ public:
     void SetActiveCamera3D(CameraID id) override;
     void SetActiveCamera2D(const Camera2D& camera) override;
 
+    void SetLight3D(LightID id, const Light3D& light) override;
+    void SetAmbientLight(const Color3& color) override;
+    void SetShadowCasterLight(LightID id) override;
+    bool SupportsPbrShading() const override { return true; }
+
     uint32_t UploadTexture(const TextureUpload& upload) override;
     void ReleaseTexture(uint32_t handle) override;
 
@@ -59,13 +75,51 @@ protected:
     void RenderSkybox(const DrawLists& lists) override;
     void RenderPrimitives(DrawLists& lists) override;
     void RenderModels(const DrawLists& lists) override;
+    void RenderShadowMap(const DrawLists& lists) override;
 
 private:
     // Matches the WGSL uniform block: mat4x4 is 64 bytes and the struct must
-    // be a multiple of 16.
+    // be a multiple of 16. Used by the flat/unlit shader shared between the 2D
+    // pass and RenderToImage3D's preview pipeline -- see kShaderSourceFlat.
     struct Uniforms
     {
         float viewProj[16];
+    };
+
+    // Group 0 of the PBR 3D pass: everything constant for the whole frame
+    // (camera, lights, ambient, the shadow-caster's light-space matrix).
+    // Field order/padding matches FrameUniforms in kShaderSource3D exactly.
+    struct GpuLight
+    {
+        float positionOrDir[4]; // xyz, w: 0 = directional, 1 = point
+        float colorIntensity[4]; // rgb, intensity (<=0 means the slot is off)
+        float rangeParams[4]; // x = range (point lights), yzw unused/padding
+    };
+
+    struct FrameUniforms3D
+    {
+        float viewProj[16];
+        float lightViewProj[16];
+        float cameraPos[4];
+        float ambient[4];
+        GpuLight lights[GFX_MAX_LIGHTS];
+        float shadowCaster[4]; // x = active light index as a float, -1 = none
+    };
+
+    // Group 1 of the PBR 3D pass: one per-run material, read through a
+    // dynamic uniform offset (see WGPU_MATERIAL_UNIFORM_STRIDE).
+    struct MaterialUniformGpu
+    {
+        float baseColor[4];
+        float emissive[4]; // rgb, unused w
+        float metallicRoughnessNormalAlpha[4]; // metallic, roughness, normalScale, alphaCutoff
+        float matFlags[4]; // x = alpha-mask enabled (0/1), yzw unused/padding
+    };
+
+    // Group 0 of the depth-only shadow pass: just the caster's light-space matrix.
+    struct ShadowUniforms
+    {
+        float lightViewProj[16];
     };
 
     struct TextureEntry
@@ -75,14 +129,50 @@ private:
         WGPUBindGroup bindGroup;
     };
 
+    // Cached bind group for one resolved (albedo, normal, orm) texture-handle
+    // triple -- see MaterialGroupFor. Built lazily the first time a combination
+    // is seen and reused after, so the PBR pass never creates a WebGPU object
+    // on the per-draw-call path.
+    struct MaterialGroupEntry
+    {
+        uint32_t albedo;
+        uint32_t normal;
+        uint32_t orm;
+        WGPUBindGroup group;
+    };
+
     bool InitDevice();
     bool CreatePipelines();
+    bool CreatePbrPipeline();
+    bool CreateShadowPipeline();
     bool CreateWhiteTexture();
+    bool CreateDefaultMaterialTextures();
     bool ConfigureSurface(uint32_t width, uint32_t height);
     bool EnsureDepthTexture(uint32_t width, uint32_t height);
     void ReleaseDepthTexture();
+    bool EnsureShadowMap();
 
     WGPUBindGroup BindGroupFor(uint32_t handle) const;
+
+    /// Resolve (or lazily build and cache) the group-2 bind group for one
+    /// material's three texture slots. A slot of 0 samples the matching
+    /// default (white albedo, flat normal, or occlusion=1/roughness=1/
+    /// metallic=0 ORM) rather than being left unbound.
+    WGPUBindGroup MaterialGroupFor(uint32_t albedo, uint32_t normal, uint32_t orm);
+
+    /// Drop any cached MaterialGroupEntry that references `handle` in any of
+    /// its three slots, releasing its bind group first. Called from
+    /// ReleaseTexture: a cached group holding a destroyed WGPUTextureView
+    /// would sample an invalid resource, so eviction must be eager, not
+    /// merely stale-tolerant.
+    void PurgeMaterialGroupsReferencing(uint32_t handle);
+
+    /// Write the whole per-run material array for this frame's PBR pass in
+    /// one call, before any render pass begins -- wgpuQueueWriteBuffer writes
+    /// cannot be interleaved with draw calls inside an open pass, so every
+    /// run's material data is uploaded up front and selected per-draw with a
+    /// dynamic offset instead.
+    void UploadMaterialUniforms(const StagedGeometry::DrawRun* runs, uint32_t count);
 
     // --- wgpu objects -------------------------------------------------------
     WGPUInstance m_instance;
@@ -92,26 +182,65 @@ private:
     WGPUSurface m_surface;
     WGPUTextureFormat m_surfaceFormat;
 
-    WGPURenderPipeline m_pipeline3D;
+    // --- Flat/unlit pipeline: shared by the 2D pass and RenderToImage3D's
+    // preview target. Thumbnails intentionally stay on the cheap flat-headlight
+    // shader rather than the full PBR pass below, so a preview's lighting never
+    // depends on -- and never goes dark relative to -- the scene's own dynamic
+    // lights/shadow caster. See docs/subsystems/RENDERER.md.
     WGPURenderPipeline m_pipeline2D;
     WGPUBindGroupLayout m_uniformLayout;
     WGPUBindGroupLayout m_textureLayout;
-    WGPUBindGroup m_bindGroup3D;
     WGPUBindGroup m_bindGroup2D;
-    WGPUBuffer m_uniformBuffer3D;
     WGPUBuffer m_uniformBuffer2D;
-    WGPUBuffer m_vertexBuffer;
-    uint64_t m_vertexBufferCapacity;
     WGPUSampler m_sampler;
     WGPUSampler m_samplerNearest;
+
+    // --- PBR 3D pipeline (main scene) ---
+    WGPURenderPipeline m_pipeline3D;
+    WGPUBindGroupLayout m_frameLayout3D; // group 0: frame uniforms + shadow map
+    WGPUBindGroupLayout m_materialLayout3D; // group 1: dynamic-offset per-run material
+    WGPUBindGroupLayout m_materialTexLayout3D; // group 2: albedo/normal/orm + sampler
+    WGPUBindGroup m_frameBindGroup3D;
+    WGPUBindGroup m_materialBindGroup3D; // bound with a dynamic offset per draw run
+    WGPUBuffer m_frameUniformBuffer3D;
+    WGPUBuffer m_materialUniformBuffer3D; // GFX_MAX_DRAW_RUNS * WGPU_MATERIAL_UNIFORM_STRIDE bytes
+
+    MaterialGroupEntry m_materialGroups[WGPU_MAX_MATERIAL_GROUPS];
+    uint32_t m_materialGroupCount;
+
+    // --- Shadow pass: dynamic geometry only, one caster, depth-only ---
+    WGPURenderPipeline m_shadowPipeline;
+    WGPUBindGroupLayout m_shadowPassLayout;
+    WGPUBindGroup m_shadowPassBindGroup;
+    WGPUBuffer m_shadowPassUniformBuffer;
+    WGPUTexture m_shadowMapTexture;
+    WGPUTextureView m_shadowMapView;
+    WGPUSampler m_shadowSamplerCompare;
+
+    // Result of this frame's RenderShadowMap, consumed when EndFrame builds
+    // FrameUniforms3D for the main pass right afterwards.
+    float m_lastLightViewProj[16];
+    bool m_shadowActive;
+    LightID m_shadowCasterIndex;
+
+    WGPUBuffer m_vertexBuffer;
+    uint64_t m_vertexBufferCapacity;
 
     WGPUTexture m_depthTexture;
     WGPUTextureView m_depthView;
 
     // Sampled by untextured geometry, so one pipeline serves both cases rather
-    // than two that differ only in whether a texture is bound.
+    // than two that differ only in whether a texture is bound. Also the PBR
+    // pass's default albedo.
     TextureEntry m_whiteTexture;
     TextureEntry m_textures[WGPU_MAX_TEXTURES];
+
+    // PBR pass defaults for a material with no normal/ORM map: flat tangent-
+    // space normal (128,128,255), and occlusion=1/roughness=1/metallic=0.
+    WGPUTexture m_defaultNormalTexture;
+    WGPUTextureView m_defaultNormalView;
+    WGPUTexture m_defaultOrmTexture;
+    WGPUTextureView m_defaultOrmView;
 
     // Geometry staging is shared with the OpenGL backend: the transform and
     // texture batching are identical, only the upload differs.

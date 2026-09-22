@@ -22,7 +22,8 @@ enum class ComponentTypeId : uint16_t
     ModelComponent = 4,
     ButtonComponent = 5,
     LevelComponent = 6,
-    DoorComponent = 7,
+    LightComponent = 7,
+    DoorComponent = 8,
 };
 
 struct HealthComponent
@@ -67,6 +68,15 @@ struct LevelComponent
     const char* args = "";
 };
 
+struct LightComponent
+{
+    static const ComponentTypeId kTypeId = ComponentTypeId::LightComponent;
+    int light_type = 1;
+    const char* color = "255 255 255";
+    float intensity = 1.0f;
+    float range = 512.0f;
+};
+
 struct DoorComponent
 {
     static const ComponentTypeId kTypeId = ComponentTypeId::DoorComponent;
@@ -104,6 +114,12 @@ struct Ecs_func_changeLevel
 struct Ecs_func_door
 {
     CollisionComponent collisionComponent;
+};
+
+struct Ecs_light
+{
+    TransformComponent transformComponent;
+    LightComponent lightComponent;
 };
 
 // Spawn dispatch entry point (defined in the generated EcsSpawn.cpp).

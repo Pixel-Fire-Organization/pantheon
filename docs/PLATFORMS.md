@@ -66,6 +66,7 @@ last is a console format one platform is obliged to produce.
 **Payloads**
 
 - [TIM2_TEXTURE.md](formats/TIM2_TEXTURE.md) — a cooked texture
+- [MATERIAL_FORMAT.md](formats/MATERIAL_FORMAT.md) — a cooked material, shared by models and levels
 - [FONT_FORMAT.md](formats/FONT_FORMAT.md) — a cooked font's metrics
 - [THEME_FORMAT.md](formats/THEME_FORMAT.md) — a cooked interface theme
 - [LEVEL_FORMAT.md](formats/LEVEL_FORMAT.md) — compiled worlds

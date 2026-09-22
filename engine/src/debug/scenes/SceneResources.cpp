@@ -15,8 +15,8 @@ namespace
     const char* const DEFAULT_PATH = "RASSETS\\BOX.PS2A";
 
     const int TYPE_AUTO = 0;
-    const int TYPE_COUNT = 6;
-    const char* const TYPE_NAMES[TYPE_COUNT] = {"AUTO", "TEXTURE", "MODEL", "SOUND", "FONT", "THEME"};
+    const int TYPE_COUNT = 7;
+    const char* const TYPE_NAMES[TYPE_COUNT] = {"AUTO", "TEXTURE", "MODEL", "SOUND", "FONT", "THEME", "MATERIAL"};
 
     char s_PathBuffer[UI_TEXT_INPUT_MAX] = "";
     int s_TypeIndex = TYPE_AUTO;
@@ -37,6 +37,8 @@ namespace
             return "FNT";
         case RES_THEME:
             return "THM";
+        case RES_MATERIAL:
+            return "MAT";
         }
         return "?";
     }

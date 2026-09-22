@@ -50,6 +50,32 @@ half of why this backend holds so much less: the cooked asset that the default
 backend uploads as a palette and indices is expanded fourfold here before it is
 stored.
 
+## Materials & lighting
+
+- **Vertex-lit fallback tier.** `SupportsPbrShading()` is the base class's
+  `false` default. A material's albedo texture and `baseColorFactor` tint are
+  sampled; normal and ORM maps never are.
+- **Dynamic lighting is computed on the processor, not this library's
+  fixed-function lighting.** `glColorMaterial` is declared in this vendored
+  library's headers but has no defined symbol in the linkable `libGL.a` —
+  confirmed with `psp-nm`, which finds no `colormaterial` symbol at all — so
+  binding it would fail at link time. Real hardware colour-material tracking
+  is therefore not available here, unlike [VitaGl](../../vita/renderers/VITAGL.md),
+  whose equivalent library genuinely implements it. Lighting is instead
+  computed by the engine-shared `VertexLighting_Compute` helper (the same
+  additive `baseline + ambient + Σlights` formula documented on
+  [GIFTAG](../../ps2/renderers/GIFTAG.md)), written into a scratch colour
+  buffer and bound over the geometry stager's own vertex colours via
+  `glColorPointer` just before the 3D draw.
+- **The lit result is explicitly clamped to `[0,1]` before upload**, unlike
+  [Gu](GU.md)'s equivalent step, which can rely on its own `PackColor`
+  confirmed (by reading its body) to saturate each channel. Whether this
+  library's driver saturates or wraps an out-of-range float vertex colour
+  when it quantizes for the GPU is not confirmed, so the clamp happens on the
+  engine side instead of assuming it.
+- **No real-time shadow caster.** This tier never gets one — every shadow
+  here is the level compiler's static bake.
+
 ## Quirks and limits
 
 - **The texture budget is a fraction of the default backend's**, for the two

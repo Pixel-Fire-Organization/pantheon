@@ -1,0 +1,175 @@
+// PBR main-scene fragment shader: metallic-roughness Cook-Torrance (GGX
+// distribution, Smith geometry, Schlick Fresnel), screen-space derivative
+// tangent reconstruction (no vertex tangent attribute -- the shared vertex
+// format carries none), a fixed dynamic-light array, and single-shadow-
+// caster PCF sampling. Mirrors the WGSL/GLSL shaders in WebGpu.cpp/OpenGl.cpp
+// (Win32) -- same BRDF, same baked/dynamic lighting split, same reasons.
+//
+// GFX_MAX_LIGHTS is hardcoded to 4 below (matches PlatformConstantsVita.h;
+// Gxm.cpp static_asserts this at compile time, since this tool has no
+// preprocessor-define injection to keep the two in sync automatically).
+//
+// The vertex's incoming colour (vColor) is the level compiler's baked static
+// lighting result for sector geometry, or flat white for dynamic models (see
+// docs/formats/MATERIAL_FORMAT.md, "Static vs. dynamic lighting"). It is
+// added to the dynamic ambient once, then multiplied by albedo -- never
+// folded into albedo itself, which would let it double up wherever albedo is
+// reused (Fresnel F0, the diffuse BRDF term).
+float4 main(
+    float3 vWorldPos    : TEXCOORD0,
+    float3 vWorldNormal : TEXCOORD1,
+    float2 vTexcoord    : TEXCOORD2,
+    float4 vColor       : COLOR0,
+
+    uniform float3   uCameraPos,
+    uniform float3   uAmbient,
+    uniform float4   uLightPosOrDir[4],
+    uniform float4   uLightColorIntensity[4],
+    uniform float4   uLightRange[4],
+    uniform float    uShadowCaster, // active light index as a float, -1 = none
+    uniform float4x4 uLightViewProj,
+
+    uniform sampler2D uAlbedoTex,
+    uniform sampler2D uNormalTex,
+    uniform sampler2D uOrmTex,
+    uniform sampler2D uShadowMap,
+
+    uniform float4 uBaseColor,
+    uniform float3 uEmissive,
+    uniform float4 uMrna, // metallic, roughness, normalScale, alphaCutoff
+    uniform float  uAlphaMask) : COLOR
+{
+    float4 albedoSample = tex2D(uAlbedoTex, vTexcoord);
+    float3 albedo = albedoSample.rgb * uBaseColor.rgb;
+    float alpha = albedoSample.a * uBaseColor.a;
+    if (uAlphaMask > 0.5f && alpha < uMrna.w)
+        discard;
+
+    float metallic = clamp(uMrna.x, 0.0f, 1.0f);
+    float roughness = clamp(uMrna.y, 0.045f, 1.0f);
+
+    float3 N = normalize(vWorldNormal);
+    if (dot(vWorldNormal, vWorldNormal) < 0.0001f)
+        N = float3(0.0f, 1.0f, 0.0f);
+
+    // Screen-space derivative tangent reconstruction.
+    float3 posDx = ddx(vWorldPos);
+    float3 posDy = ddy(vWorldPos);
+    float2 uvDx = ddx(vTexcoord);
+    float2 uvDy = ddy(vTexcoord);
+    float3 T = posDx * uvDy.y - posDy * uvDx.y;
+    float TdotT = dot(T, T);
+    if (TdotT < 1e-10f)
+        T = float3(1.0f, 0.0f, 0.0f);
+    else
+        T = T * rsqrt(TdotT);
+    T = normalize(T - N * dot(N, T));
+    float3 B = cross(N, T);
+
+    float3 normalSample = tex2D(uNormalTex, vTexcoord).xyz * 2.0f - 1.0f;
+    float3 mapped = normalize(float3(normalSample.x * uMrna.z, normalSample.y * uMrna.z, normalSample.z));
+    N = normalize(T * mapped.x + B * mapped.y + N * mapped.z);
+
+    float4 orm = tex2D(uOrmTex, vTexcoord);
+    float occlusion = orm.r;
+    float finalRoughness = clamp(orm.g * roughness, 0.045f, 1.0f);
+    float finalMetallic = clamp(orm.b * metallic, 0.0f, 1.0f);
+
+    float3 V = normalize(uCameraPos - vWorldPos);
+    float3 F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo, finalMetallic);
+    float shadowCasterIndex = uShadowCaster;
+
+    float3 Lo = float3(0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 4; ++i)
+    {
+        float4 posOrDir = uLightPosOrDir[i];
+        float4 colorIntensity = uLightColorIntensity[i];
+        if (colorIntensity.w <= 0.0f)
+            continue;
+
+        float3 L;
+        float attenuation = 1.0f;
+        if (posOrDir.w < 0.5f)
+        {
+            L = normalize(-posOrDir.xyz);
+        }
+        else
+        {
+            float3 toLight = posOrDir.xyz - vWorldPos;
+            float dist = length(toLight);
+            float range = max(uLightRange[i].x, 1e-4f);
+            L = toLight / max(dist, 1e-4f);
+            float att = clamp(1.0f - (dist / range), 0.0f, 1.0f);
+            attenuation = att * att;
+        }
+
+        float NdotL = dot(N, L);
+        if (NdotL <= 0.0f)
+            continue;
+
+        float shadowFactor = 1.0f;
+        if (shadowCasterIndex >= 0.0f && (float)i == shadowCasterIndex)
+        {
+            float4 lightClip = mul(float4(vWorldPos, 1.0f), uLightViewProj);
+            if (lightClip.w > 0.0f)
+            {
+                float3 ndc = lightClip.xyz / lightClip.w;
+                float2 shadowUv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
+                if (shadowUv.x >= 0.0f && shadowUv.x <= 1.0f && shadowUv.y >= 0.0f && shadowUv.y <= 1.0f && ndc.z >= 0.0f && ndc.z <= 1.0f)
+                {
+                    // Manual compare, not hardware PCF: this profile is not
+                    // confirmed to support a depth-compare sampler, so the
+                    // shadow map is bound as an ordinary A8B8G8R8 colour
+                    // texture (depth in the R channel, 8 bits) and compared
+                    // here instead -- the coarser precision is why the bias
+                    // is more generous than the other backends' equivalent.
+                    // GFX_SHADOW_MAP_SIZE is hardcoded to 512 below (matches
+                    // PlatformConstantsVita.h; Gxm.cpp static_asserts this),
+                    // same reason as GFX_MAX_LIGHTS above.
+                    float bias = 0.01f;
+                    float texel = 1.0f / 512.0f;
+                    float sum = 0.0f;
+                    for (int dy = -1; dy <= 1; ++dy)
+                    {
+                        for (int dx = -1; dx <= 1; ++dx)
+                        {
+                            float2 offs = float2((float)dx, (float)dy) * texel;
+                            float storedDepth = tex2D(uShadowMap, shadowUv + offs).r;
+                            sum += (storedDepth < ndc.z - bias) ? 0.0f : 1.0f;
+                        }
+                    }
+                    shadowFactor = sum / 9.0f;
+                }
+            }
+        }
+
+        float3 H = normalize(V + L);
+        float NdotH = max(dot(N, H), 0.0f);
+        float NdotV = max(dot(N, V), 0.0f);
+
+        float a = finalRoughness * finalRoughness;
+        float a2 = a * a;
+        float NdotH2 = NdotH * NdotH;
+        float ggxDenom = NdotH2 * (a2 - 1.0f) + 1.0f;
+        float NDF = a2 / max(3.14159265f * ggxDenom * ggxDenom, 1e-6f);
+
+        float r = finalRoughness + 1.0f;
+        float k = (r * r) / 8.0f;
+        float gV = NdotV / (NdotV * (1.0f - k) + k);
+        float gL = NdotL / (NdotL * (1.0f - k) + k);
+        float G = gV * gL;
+
+        float cosTheta = max(dot(H, V), 0.0f);
+        float3 F = F0 + (float3(1.0f, 1.0f, 1.0f) - F0) * pow(clamp(1.0f - cosTheta, 0.0f, 1.0f), 5.0f);
+
+        float3 specular = (NDF * G * F) / max(4.0f * NdotV * NdotL, 1e-4f);
+        float3 kD = (float3(1.0f, 1.0f, 1.0f) - F) * (1.0f - finalMetallic);
+        float3 radiance = colorIntensity.rgb * colorIntensity.w * attenuation;
+
+        Lo += (kD * albedo / 3.14159265f + specular) * radiance * NdotL * shadowFactor;
+    }
+
+    float3 indirect = (vColor.rgb + uAmbient) * albedo * occlusion;
+    float3 finalRgb = indirect + Lo + uEmissive;
+    return float4(finalRgb, alpha);
+}

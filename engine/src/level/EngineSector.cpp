@@ -57,9 +57,9 @@ static bool Internal_SectorMeshesAreSane(const BakedMeshEntry* entries, uint32_t
         }
 
         const uint64_t count = e.vertexCount;
-        const uint32_t offsets[3] = {e.vertsOffset, e.normsOffset, e.uvsOffset};
-        const uint64_t strides[3] = {4 * sizeof(float), 3 * sizeof(float), 2 * sizeof(float)};
-        for (int a = 0; a < 3; ++a)
+        const uint32_t offsets[4] = {e.vertsOffset, e.normsOffset, e.uvsOffset, e.colorsOffset};
+        const uint64_t strides[4] = {4 * sizeof(float), 3 * sizeof(float), 2 * sizeof(float), 4 * sizeof(float)};
+        for (int a = 0; a < 4; ++a)
         {
             if (offsets[a] == 0)
                 continue;
@@ -157,6 +157,7 @@ static void Internal_LoadSector(int cx, int cz, SectorResident* res)
         mesh.vertices = reinterpret_cast<float*>(dst + e.vertsOffset);
         mesh.normals = e.normsOffset ? reinterpret_cast<float*>(dst + e.normsOffset) : nullptr;
         mesh.texcoords = e.uvsOffset ? reinterpret_cast<float*>(dst + e.uvsOffset) : nullptr;
+        mesh.colors = e.colorsOffset ? reinterpret_cast<float*>(dst + e.colorsOffset) : nullptr;
         mesh.indices = nullptr;
         mesh.boundsCenter = Vector3{e.boundsCenter[0], e.boundsCenter[1], e.boundsCenter[2]};
         mesh.boundsRadius = e.boundsRadius;
@@ -164,7 +165,7 @@ static void Internal_LoadSector(int cx, int cz, SectorResident* res)
         mesh.vertexComponents = 4; // PSEC positions are vec4
 
         const uint32_t matIdx = e.materialIndex;
-        res->meshTexture[m] = (matIdx < LEVEL_MAX_MATERIALS) ? s_Level->materialTex[matIdx] : -1;
+        res->meshMaterial[m] = (matIdx < LEVEL_MAX_MATERIALS) ? s_Level->materialHandles[matIdx] : -1;
     }
     res->meshCount = meshCount;
     res->bounds.min = Vector3{hdr->aabbMin[0], hdr->aabbMin[1], hdr->aabbMin[2]};
