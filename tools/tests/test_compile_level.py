@@ -45,8 +45,6 @@ def test_struct_sizes():
     assert struct.calcsize(levelfmt._ENTREC) == 20
     assert struct.calcsize(levelfmt._SECHDR) == 48
     assert struct.calcsize(levelfmt._MESHENTRY) == 48
-    assert struct.calcsize(levelfmt._FARFHDR) == 32
-    assert struct.calcsize(levelfmt._FARFCLUSTER) == 24
 
 
 _PLATFORM_HEADERS = {
@@ -82,6 +80,65 @@ def test_level_texture_max_bytes_matches_every_platform_header():
         assert m, f"IO_READ_BUFFER_SIZE not found in {header_path}"
         buffer_size = _product_of_literals(m.group(1), header_path)
         assert compile_level.LEVEL_TEXTURE_MAX_BYTES_BY_PLATFORM[platform] <= buffer_size
+
+
+def _header_define(header, name):
+    m = re.search(r"#define\s+" + name + r"\s+\(?([^)/\n]+)\)?", header)
+    assert m, f"{name} not found"
+    return m.group(1).strip()
+
+
+def test_lod1_sector_max_bytes_matches_every_platform_slot():
+    """LEVEL_LOD1_SECTOR_MAX_BYTES_BY_PLATFORM must equal the ARENA_LEVEL_LOD1
+    slot each platform actually carves: the arena size over its slot count,
+    rounded down to the slot alignment, exactly as the engine does."""
+    for platform, header_path in _PLATFORM_HEADERS.items():
+        header = header_path.read_text(encoding="utf-8")
+        size = _product_of_literals(_header_define(header, "MEM_BLOCK_LEVEL_LOD1_SIZE"), header_path)
+        slots = int(_header_define(header, "MEM_BLOCK_LEVEL_LOD1_SLOTS"))
+        align = _product_of_literals(_header_define(header, "MEM_ARENA_SLOT_ALIGNMENT"), header_path)
+        slot_bytes = (size // slots) // align * align
+        assert compile_level.LEVEL_LOD1_SECTOR_MAX_BYTES_BY_PLATFORM[platform] == slot_bytes, platform
+    assert compile_level.DEFAULT_LEVEL_LOD1_SECTOR_MAX_BYTES == min(compile_level.LEVEL_LOD1_SECTOR_MAX_BYTES_BY_PLATFORM.values())
+
+
+def _soup_area(verts):
+    area = 0.0
+    for k in range(0, len(verts), 3):
+        a, b, c = verts[k:k + 3]
+        ab = [b[i] - a[i] for i in range(3)]
+        ac = [c[i] - a[i] for i in range(3)]
+        cross = (ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0])
+        area += 0.5 * sum(x * x for x in cross) ** 0.5
+    return area
+
+
+def test_uv_tile_clipping_keeps_area_and_confines_every_triangle_to_one_tile():
+    """An atlased triangle that tiles its texture must be split so each piece
+    samples one tile, shifted into [0, 1] - otherwise it samples the next
+    atlas cell on every backend without a region-repeat wrap mode."""
+    verts = [(0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (0.0, 0.0, 4.0)]
+    norms = [(0.0, 1.0, 0.0)] * 3
+    uvs = [(-0.5, -1.25), (2.75, -1.25), (-0.5, 2.0)]
+    cv, cn, ct = compile_level._clip_soup_to_uv_tiles(verts, norms, uvs)
+    assert len(cv) % 3 == 0 and len(cv) > 3
+    assert abs(_soup_area(cv) - _soup_area(verts)) < 1e-6
+    assert all(0.0 <= u <= 1.0 and 0.0 <= v <= 1.0 for u, v in ct)
+    assert all(n == (0.0, 1.0, 0.0) for n in cn)
+
+
+def test_split_long_edges_bounds_every_edge_and_keeps_area():
+    verts = [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (0.0, 0.0, 7.0)]
+    norms = [(0.0, 1.0, 0.0)] * 3
+    uvs = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
+    cols = [(1.0, 0.5, 0.25, 1.0)] * 3
+    sv, sn, st, sc = meshlib.split_long_edges(verts, norms, uvs, 4.0, cols)
+    assert len(sv) == len(sn) == len(st) == len(sc)
+    assert abs(_soup_area(sv) - _soup_area(verts)) < 1e-6
+    for k in range(0, len(sv), 3):
+        for j in range(3):
+            a, b = sv[k + j], sv[k + (j + 1) % 3]
+            assert sum((a[i] - b[i]) ** 2 for i in range(3)) ** 0.5 <= 4.0 + 1e-6
 
 
 def test_bake_material_respects_the_level_texture_dimension_cap(tmp_path):
@@ -246,36 +303,23 @@ def test_sectors_within_budget(compiled):
             assert m["verts_offset"] % 16 == 0
 
 
-def test_farfield_clusters_reference_only_what_the_chunk_holds(compiled):
-    """The runtime refuses a FARF chunk whose atlases, clusters or frames point
-    outside the chunk or the material table, so the cook must never produce
-    one - in particular a cluster with fewer frames than azimuth_count once
-    the atlas has filled up."""
+def test_visi_lists_cover_the_grid_and_name_only_lod1_sectors(compiled):
+    """The runtime refuses a VISI chunk whose lists overrun the chunk, do not
+    cover exactly the grid, or name a cell outside it, so the cook must never
+    produce one; every named cell must also have a LOD1 sector to stream."""
     toc = pack_archive.read_toc(compiled)
     by_key = {e["key"]: e for e in toc["entries"]}
     core = pack_archive.read_payload(compiled, by_key["TEST.PS2L"])
     lv = levelfmt.parse_ps2l(core)
     chunks = {c["name"]: c for c in lv["chunks"]}
-    assert "FARF" in chunks
+    assert "VISI" in chunks
     info = levelfmt.parse_info(core, chunks["INFO"])
-    farf = levelfmt.parse_farfield(core, chunks["FARF"])
-    assert farf["frame_bytes"] % struct.calcsize(levelfmt._FARFFRAME) == 0
-    assert 0 < farf["atlas_count"] <= levelfmt.FARFIELD_MAX_ATLASES
-    assert farf["azimuth_count"] > 0
-    for material in farf["atlas_materials"]:
-        assert material < info["material_count"]
-    assert farf["cluster_count"] > 0
-    for c in farf["clusters"]:
-        assert c["atlas_index"] < farf["atlas_count"]
-        assert c["first_frame"] + farf["azimuth_count"] <= len(farf["frames"])
-
-
-def test_pack_farfield_refuses_a_cluster_short_of_frames():
-    cluster = {"center": (0.0, 0.0, 0.0), "half_w": 1.0, "half_h": 1.0,
-               "atlas_index": 0, "first_frame": 0}
-    frames = [(0.0, 0.0, 1.0, 1.0)] * 3
-    with pytest.raises(ValueError):
-        levelfmt.pack_farfield([0], 4, [cluster], frames)
+    pvs = levelfmt.parse_visi(core, chunks["VISI"])
+    assert len(pvs) == info["cells_x"] * info["cells_z"]
+    for visible in pvs:
+        for (tx, tz) in visible:
+            assert tx < info["cells_x"] and tz < info["cells_z"]
+            assert f"TEST/L{tx:03d}_{tz:03d}.SEC" in by_key
 
 
 def test_triangle_edges_within_max_edge(compiled):

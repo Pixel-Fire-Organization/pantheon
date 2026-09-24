@@ -93,6 +93,10 @@ class Ps2GlRenderer final : public Renderer
     void ClearModelDListCache();
 
     void InitGsMemory(bool pal); // replaces raylib's initGsMemoryForRaylib
+    /// Re-write the display read-out for the configured frame buffer width.
+    /// ps2gl programs a fixed four-clock magnification, sized for a 640-wide
+    /// buffer, and re-sends it on every swap; this follows each such send.
+    void ApplyDisplayWidth();
     void CompilePrimitiveDLists(); // build DLists from DrawLists' arrays
     unsigned int GetListForType(Primitive3D type) const;
     void FlushQuads2D(); // draw queued 2D rects (ortho) inside the frame block

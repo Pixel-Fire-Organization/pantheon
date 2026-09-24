@@ -183,6 +183,9 @@ public:
     virtual bool IsInitialized() const = 0;
     virtual void Shutdown() = 0;
 
+    virtual void SetFogEnabled(bool enabled) { (void)enabled; }
+    virtual void SetLodFadeEnabled(bool enabled) { (void)enabled; }
+
     virtual DrawStats GetLastStats() const = 0;
     virtual Camera3D GetActiveCamera3D() const = 0;
 

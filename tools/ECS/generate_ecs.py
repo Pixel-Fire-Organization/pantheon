@@ -472,7 +472,7 @@ def generate_fgd(data):
             default = _fgd_default(prop)
             ptype = prop["type"]
             if ptype in ("choices", "flags", "bool"):
-                assign = f" : {default} =" if ptype in ("choices", "bool") else " ="
+                assign = f' : "{default}" =' if ptype in ("choices", "bool") else " ="
                 wl(f"    {prop['name']}({fgd_type}){assign} [")
                 options = prop.get("options")
                 if ptype == "bool":

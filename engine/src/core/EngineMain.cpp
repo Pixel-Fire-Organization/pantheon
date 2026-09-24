@@ -217,6 +217,10 @@ int Engine_Main(int argc, char** argv)
     if (!EngineStart(config, platform, renderer))
         return -1;
 
+    // Uncomment for debugging of the level loading system.
+    renderer->SetFogEnabled(false);
+    // renderer->SetLodFadeEnabled(false);
+
     while (!EngineExited() && !platform->WindowShouldClose())
         EngineUpdate();
 

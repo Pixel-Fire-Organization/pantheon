@@ -45,6 +45,33 @@ void MainScene::GetStreamingCenter(float* outX, float* outZ) const
     *outZ = m_playerZ;
 }
 
+#include "core/EngineCore.h"
+#include "level/EngineSector.h"
+
+static void DrawGroundGridBox(const Vector3& min, const Vector3& max, Color3 c)
+{
+    Renderer* renderer = Engine_GetRenderer();
+    if (!renderer) return;
+
+    float thickness = 0.4f; // slightly thicker so it's visible on the ground
+    float y = 0.5f; // hover slightly above 0 to prevent z-fighting with the ground
+
+    // 4 edges to form a flat square on the ground
+    Vector3 cX = {(min.x+max.x)*0.5f, y, min.z};
+    Vector3 sX = {max.x-min.x, thickness, thickness};
+    renderer->AddPrimitiveToDrawList(Primitive3D::Cube, cX, Vector3{0,0,0}, sX, c);
+    
+    cX.z = max.z; 
+    renderer->AddPrimitiveToDrawList(Primitive3D::Cube, cX, Vector3{0,0,0}, sX, c);
+
+    Vector3 cZ = {min.x, y, (min.z+max.z)*0.5f};
+    Vector3 sZ = {thickness, thickness, max.z-min.z};
+    renderer->AddPrimitiveToDrawList(Primitive3D::Cube, cZ, Vector3{0,0,0}, sZ, c);
+    
+    cZ.x = max.x; 
+    renderer->AddPrimitiveToDrawList(Primitive3D::Cube, cZ, Vector3{0,0,0}, sZ, c);
+}
+
 void MainScene::OnLevelUpdate(float dt)
 {
     MovePlayer(dt);
@@ -52,6 +79,25 @@ void MainScene::OnLevelUpdate(float dt)
 
     game::Clear(20, 20, 26);
     game::DrawGrid(GRID_SLICES, GRID_SPACING);
+
+    // Draw sector boundaries on the ground
+    uint32_t count = 0;
+    const SectorResident* res = Engine_Sector_GetResidents(&count);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        if (res[i].state == SECTOR_READY)
+        {
+            DrawGroundGridBox(res[i].bounds.min, res[i].bounds.max, Color3{0.f, 1.f, 0.f}); // Green for LOD0
+        }
+    }
+    const SectorResident* lod1 = Engine_Sector_GetLod1Residents(&count);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        if (lod1[i].state == SECTOR_READY)
+        {
+            DrawGroundGridBox(lod1[i].bounds.min, lod1[i].bounds.max, Color3{0.f, 0.5f, 1.f}); // Light Blue for LOD1
+        }
+    }
 
     if (m_texture >= 0 && game::IsResourceReady(m_texture))
         game::DrawCubeTextured(m_playerX, m_playerY, m_playerZ, PLAYER_SIZE, m_texture);

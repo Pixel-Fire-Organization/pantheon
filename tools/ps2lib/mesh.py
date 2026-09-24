@@ -53,6 +53,65 @@ def aabb(positions):
     return (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))
 
 
+def decimate_soup(out_v, out_n, out_t, grid_size, out_c=None):
+    """Grid-based vertex clustering for crude LOD decimation.
+    Snaps positions to `grid_size` and drops triangles that collapse to fewer
+    than three distinct corners; surviving corners keep their own normal, UV
+    and (when given) baked colour. Returns (v, n, t, c), c None without out_c."""
+    snapped = []
+    for v in out_v:
+        snapped.append((round(v[0] / grid_size) * grid_size,
+                        round(v[1] / grid_size) * grid_size,
+                        round(v[2] / grid_size) * grid_size))
+
+    new_v, new_n, new_t = [], [], []
+    new_c = [] if out_c is not None else None
+    for k in range(0, len(snapped), 3):
+        p0, p1, p2 = snapped[k], snapped[k + 1], snapped[k + 2]
+        if p0 == p1 or p1 == p2 or p2 == p0:
+            continue
+        new_v.extend((p0, p1, p2))
+        new_n.extend(out_n[k:k + 3])
+        new_t.extend(out_t[k:k + 3])
+        if out_c is not None:
+            new_c.extend(out_c[k:k + 3])
+    return new_v, new_n, new_t, new_c
+
+
+def _lerp(a, b):
+    return tuple((x + y) * 0.5 for x, y in zip(a, b))
+
+
+def split_long_edges(out_v, out_n, out_t, max_edge, out_c=None):
+    """Halve the longest edge of every triangle until no edge exceeds
+    `max_edge`, interpolating normal, UV and (when given) colour at each new
+    corner. Returns (v, n, t, c), c None without out_c."""
+    limit = max_edge * max_edge * (1.0 + 1e-6)
+    has_c = out_c is not None
+    stack = []
+    for k in range(len(out_v) - 3, -1, -3):
+        stack.append([(out_v[k + j], out_n[k + j], out_t[k + j], out_c[k + j] if has_c else None) for j in range(3)])
+    new_v, new_n, new_t = [], [], []
+    new_c = [] if has_c else None
+    while stack:
+        tri = stack.pop()
+        lengths = [sum((tri[j][0][q] - tri[(j + 1) % 3][0][q]) ** 2 for q in range(3)) for j in range(3)]
+        longest = max(range(3), key=lambda j: lengths[j])
+        if lengths[longest] <= limit:
+            for (v, n, t, c) in tri:
+                new_v.append(v)
+                new_n.append(n)
+                new_t.append(t)
+                if has_c:
+                    new_c.append(c)
+            continue
+        a, b, c3 = tri[longest], tri[(longest + 1) % 3], tri[(longest + 2) % 3]
+        mid = (_lerp(a[0], b[0]), _lerp(a[1], b[1]), _lerp(a[2], b[2]), _lerp(a[3], b[3]) if has_c else None)
+        stack.append([mid, b, c3])
+        stack.append([a, mid, c3])
+    return new_v, new_n, new_t, new_c
+
+
 def dedup_corners(out_v, out_n, out_t, out_c=None):
     """Collapse identical (pos, normal, uv) triangle corners to unique vertices.
     Returns (unique_v, unique_n, unique_t, unique_c, triangles) with triangles
@@ -63,6 +122,15 @@ def dedup_corners(out_v, out_n, out_t, out_c=None):
     uv, un, ut = [], [], []
     uc = [] if out_c is not None else None
     indices = []
+    if len(out_v) != len(out_t) or len(out_v) != len(out_n):
+        print(f"WARN: Mismatched lengths in dedup_corners! len(v)={len(out_v)}, len(n)={len(out_n)}, len(t)={len(out_t)}")
+        # Truncate to min to prevent crash
+        min_l = min(len(out_v), len(out_n), len(out_t))
+        out_v = out_v[:min_l]
+        out_n = out_n[:min_l]
+        out_t = out_t[:min_l]
+        if out_c is not None:
+            out_c = out_c[:min_l]
     for i in range(len(out_v)):
         key = (out_v[i], out_n[i], out_t[i])
         idx = unique.get(key)
@@ -217,7 +285,7 @@ def parse_obj(source_path):
     return out_v, out_n, out_t
 
 
-def bake_mesh(out_v, out_n, out_t, out_c=None):
+def bake_mesh(out_v, out_n, out_t, out_c=None, decimate_grid=None, max_edge=None):
     """Core mesh baker. Dedups corners, stripifies (verified) when it is a win,
     else emits an unindexed list. Returns a dict with the emitted vec4/vec3/vec2
     byte blobs, topology, vertex count and object-space bounding sphere. Shared by
@@ -226,9 +294,21 @@ def bake_mesh(out_v, out_n, out_t, out_c=None):
     `out_c`, when given, is a baked per-corner RGBA colour list (the level
     compiler's static lighting bake -- see docs/formats/MATERIAL_FORMAT.md)
     carried through the same dedup/stripify remapping as position/normal/uv;
-    the result then carries a "cbytes" entry alongside vbytes/nbytes/tbytes."""
+    the result then carries a "cbytes" entry alongside vbytes/nbytes/tbytes.
+
+    `decimate_grid`, when positive, first snaps the soup to that grid (see
+    decimate_soup) -- the level compiler's LOD1 sectors. Snapping can lengthen
+    edges, so `max_edge`, when positive, then splits any edge longer than it
+    again (see split_long_edges). Returns None when nothing survives."""
+    if decimate_grid is not None and decimate_grid > 0.0:
+        out_v, out_n, out_t, out_c = decimate_soup(out_v, out_n, out_t, decimate_grid, out_c)
+        if max_edge is not None and max_edge > 0.0:
+            out_v, out_n, out_t, out_c = split_long_edges(out_v, out_n, out_t, max_edge, out_c)
+
     count = len(out_v)
-    if count == 0 or count % 3 != 0:
+    if count == 0:
+        return None
+    if count % 3 != 0:
         raise ValueError(f"bake_mesh: not a triangle soup ({count} corners)")
     tri_count = count // 3
 

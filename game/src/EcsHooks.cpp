@@ -16,6 +16,7 @@
 #include "EcsComponents.h" // generated (build dir): typed component/aggregate structs
 #include "GameAPI.h"
 #include "Macros.h"
+#include "core/EngineDebug.h"
 
 namespace EcsHooks
 {
@@ -94,3 +95,12 @@ void Game_Spawn_light(const Ecs_light& def, const game::EntitySpawn& spawn)
                   static_cast<double>(def.lightComponent.intensity), spawn.x, spawn.y, spawn.z);
     game::Log(msg);
 }
+
+void Game_Spawn_func_detail(const Ecs_func_detail& def, const game::EntitySpawn& spawn)
+{
+    UNUSED_VAR(def);
+    char msg[192];
+    std::snprintf(msg, sizeof(msg), "func_detail was missed by the map compiler and was attempted to be spawned. Location at (%.1f, %.1f, %.1f)", spawn.x, spawn.y, spawn.z);
+    Engine_Panic(msg);
+}
+void Game_Spawn_worldspawn(const Ecs_worldspawn&, const game::EntitySpawn&) {}

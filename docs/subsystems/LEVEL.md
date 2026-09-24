@@ -24,7 +24,7 @@ level in the first place — see [Archive](ARCHIVE.md).
 
 **The core is resident; geometry is not.** The core holds what must always be
 addressable: level info, the material table, the spatial grid, entity records,
-and the optional far-field description. It is read once and kept. Sector geometry
+and the optional per-cell visibility lists. It is read once and kept. Sector geometry
 is streamed and may be absent for most of the world at any moment.
 
 **Chunk pointers are views, not copies.** The descriptor exposes pointers
@@ -40,19 +40,20 @@ Values the rest of the subsystem divides or indexes by are checked in the same
 pass: a zero or non-finite cell size, an empty grid, a grid chunk too small for
 the cell count it declares, a material table too small for the material count,
 every entity record, property index and string offset in the entity chunk, and
-every atlas, cluster and frame reference in the far-field chunk.
+every list and cell reference in the visibility chunk.
 Fixed-width key fields are terminated as part of that pass, so a key that
 reaches a loader is a string rather than a run of bytes. A core that fails any
 of this is refused whole and the level does not load; nothing is clamped into
 range, because a clamped offset still reads bytes that belong to something else.
 
-**Materials are requested and pinned on load.** A level requests its
-materials and pins the resulting handles as part of loading, marking them as
-content the world cannot lose while it is current. A material's own texture
-maps stream in over the following frames and are resolved at draw time,
-exactly as a model's are — a level can therefore be current before all of its
-textures are resident. Unloading unpins them, optionally retaining pins
-across a transition when the next level shares materials. See
+**Materials are held by the sectors that use them, not by the level.** Loading
+a level requests no materials; a sector requests and pins the materials its
+meshes name when it becomes resident, and unpins them when it is evicted. Pins
+are counted, so a material two resident sectors share stays resident until
+both have let it go, and releasing the last pin releases the material's own
+texture maps with it. A material's texture maps stream in over the following
+frames and are resolved at draw time, exactly as a model's are — a sector can
+therefore be resident before its textures are. See
 [formats/MATERIAL_FORMAT.md](../formats/MATERIAL_FORMAT.md) — the same
 material asset a model references can be, and for a shared texture will be,
 the exact one a level references too.
@@ -99,7 +100,8 @@ Started after Resource. It holds no level until asked. The streaming centre must
 be updated each frame with the position that should be surrounded by resident
 geometry — normally the camera or player. Without that update the resident set
 never moves and geometry ends where it was when the level loaded. Unloading
-releases sectors, unpins materials, and clears the arena, in that order. The
+releases sectors (and with them their material pins) and clears the arena, in
+that order. The
 master archive stays mounted throughout — nothing about unloading touches it.
 
 **A runtime reset unloads the current level as part of it**, the same as it
@@ -135,10 +137,8 @@ loading, run in this configuration.
   come from it.
 - **An entity chunk whose records, properties or string offsets leave it** —
   refused before any entity is spawned, rather than part-way through the world.
-- **A far-field chunk whose atlases, clusters or frames point outside it or
-  outside the material table** — refused the same way, although nothing draws
-  the far field yet: the view is bounded where it is published, not where it is
-  first consumed.
+- **A visibility chunk whose lists overrun it, do not cover the grid, or name a
+  cell outside it** — refused the same way, before the streamer ever walks it.
 - **Material texture fails to load** — logged with the material and the level;
   the level still loads, and geometry using that material draws untextured. A
   missing texture is a content error that should be visible, not fatal.
@@ -149,7 +149,7 @@ loading, run in this configuration.
 ## Limits
 
 - One level resident at a time.
-- Material count, entity property count and far-field extent are fixed by the
+- Material count and entity property count are fixed by the
   level format and identical on every platform.
 - The core is read synchronously and entirely; there is no partial core.
 - The streaming centre is two-dimensional. Worlds are streamed across a

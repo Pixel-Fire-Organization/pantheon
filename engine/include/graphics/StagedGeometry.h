@@ -162,7 +162,10 @@ private:
                     uint32_t texture, const RunMaterial& material);
     void AppendPrimitive(const DrawLists& lists, const PrimitiveDrawEntry& entry);
     void AppendModel(const ModelDrawEntry& entry);
-    void AppendLevelSectors();
+    /// Stage the resident level sectors: full-detail ones once fully
+    /// resolvable, and LOD1 ones for cells whose full-detail sector is not.
+    /// @param camera The camera position, for the LOD1 decision.
+    void AppendLevelSectors(const Vector3& camera);
     void PushRun(uint32_t firstVertex, uint32_t count, uint32_t texture, const RunMaterial& material);
 
     // Resolve a resource handle to the backend texture handle the resource

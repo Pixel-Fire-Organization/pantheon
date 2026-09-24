@@ -17,6 +17,10 @@
 #define MEM_BLOCK_LEVEL_DATA_SIZE (32 * 1024 * 1024) // 32 MB
 #define MEM_BLOCK_LEVEL_DATA_SLOTS 16
 
+#define MEM_BLOCK_LEVEL_LOD1_SIZE (16 * 1024 * 1024) // 16 MB
+#define MEM_BLOCK_LEVEL_LOD1_SLOTS 32
+
+
 #define MEM_BLOCK_RENDERER_SIZE (16 * 1024 * 1024) // 16 MB
 #define MEM_BLOCK_RENDERER_SLOTS 1
 
@@ -33,7 +37,7 @@
 /** ASYNC IO                  **/
 /*******************************/
 
-#define IO_ASYNC_MAX_REQUESTS 32
+#define IO_ASYNC_MAX_REQUESTS 64
 #define IO_THREAD_SLEEP_USEC 1000
 #define IO_DRAIN_MAX_SPINS 10000
 #define IO_THREAD_STACK_SIZE (64 * 1024)
@@ -78,7 +82,10 @@
 
 #define LEVEL_FARFIELD_MAX_DRAWN 1024
 #define LEVEL_SECTOR_HYSTERESIS 0.15f
-#define LEVEL_RESIDENT_SECTORS 9
+#define LEVEL_LOD1_FADE_START_CELLS 1.5f // LOD1 fully transparent within this many cells of the camera
+#define LEVEL_LOD1_FADE_WIDTH_CELLS 1.0f // then fades in over this many more
+#define LEVEL_LOD1_LOADS_PER_FRAME 2 // LOD1 sector reads issued per frame at most
+#define LEVEL_RESIDENT_SECTORS (MEM_BLOCK_LEVEL_DATA_SLOTS - 2)
 #define LEVEL_CORE_SLOTS 2
 #define LEVEL_SECTOR_SLOT_BASE LEVEL_CORE_SLOTS
 

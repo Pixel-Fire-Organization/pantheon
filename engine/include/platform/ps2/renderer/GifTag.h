@@ -28,6 +28,8 @@ class GifTagRenderer final : public Renderer
     packet2_t* m_env = nullptr;
     uint8_t m_geomIndex = 0;
     bool m_framePending = false;
+    bool m_fogEnabled = true;
+    bool m_lodFadeEnabled = true;
 
     xyz_t* m_xyz = nullptr;
     uint32_t* m_srcIdx = nullptr;
@@ -115,7 +117,8 @@ class GifTagRenderer final : public Renderer
     ///        for every vertex -- see ComputeLitVertexColors, which is what
     ///        callers use to fill this in.
     /// @param textureId A backend texture handle, or zero when untextured.
-    void DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, const float* colors, uint32_t vertexCount, Color3 color, uint32_t textureId);
+    /// @param alpha Whole-batch opacity; below one the batch is alpha-blended.
+    void DrawTriangles(const float mvp[16], const float* verts, int components, const float* uvs, const float* colors, uint32_t vertexCount, Color3 color, uint32_t textureId, float alpha = 1.0f);
 
     /// Transform and emit one triangle strip, split into runs of visible
     /// vertices.
@@ -125,7 +128,8 @@ class GifTagRenderer final : public Renderer
     /// @param colors Four floats (RGBA) per vertex, or null to use `color`
     ///        for every vertex.
     /// @param textureId A backend texture handle, or zero when untextured.
-    void DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, const float* colors, uint32_t vertexCount, Color3 color, uint32_t textureId);
+    /// @param alpha Whole-batch opacity; below one the batch is alpha-blended.
+    void DrawStrip(const float mvp[16], const float* verts, int components, const float* uvs, const float* colors, uint32_t vertexCount, Color3 color, uint32_t textureId, float alpha = 1.0f);
 
     /// Compute ambient + dynamic-light Lambertian shading per vertex and
     /// write RGBA into `outColors` (4 floats/vertex, sized for at least
@@ -221,6 +225,9 @@ public:
 
     bool IsInitialized() const override;
     void Shutdown() override;
+
+    void SetFogEnabled(bool enabled) override { m_fogEnabled = enabled; }
+    void SetLodFadeEnabled(bool enabled) override { m_lodFadeEnabled = enabled; }
 
     DrawStats GetLastStats() const override;
     Camera3D GetActiveCamera3D() const override;

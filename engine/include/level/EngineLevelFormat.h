@@ -44,11 +44,24 @@
 // static_asserts that its own slot capacity is at least this big.
 #define LEVEL_SECTOR_MAX_BYTES (512 * 1024)
 
-// Far-field impostor azimuth views baked per cluster (N/E/S/W). Data-driven at
-// runtime via FarfieldHeader.azimuthCount; this is the compiler default.
+// --- Visibility (VISI) -----------------------------------------------------
+// VisiHeader, then uint32_t cellOffset[totalCells] (row-major, byte offset of
+// each cell's VisiCell from the start of the chunk), then the lists. Each list
+// is a VisiCell followed by numVisible (x, z) uint16_t pairs, nearest first.
+typedef struct
+{
+    uint32_t totalCells;
+} VisiHeader;
+
+typedef struct
+{
+    uint32_t numVisible;
+} VisiCell;
+
+// Legacy far-field constants; the FARF chunk is reserved and no longer emitted.
+
 #define LEVEL_FARFIELD_AZIMUTHS 4
 
-// Impostor atlases a far field may sample; sizes FarfieldHeader.atlasMaterial.
 // Mirrored by tools/ps2lib/levelfmt.py as FARFIELD_MAX_ATLASES.
 #define LEVEL_FARFIELD_MAX_ATLASES 4
 
@@ -75,6 +88,7 @@ typedef struct
 #define LEVEL_CHUNK_MATERIALS 0x4C54414Du /* "MATL" */
 #define LEVEL_CHUNK_GRID 0x44524753u /* "SGRD" */
 #define LEVEL_CHUNK_ENTITIES 0x53544E45u /* "ENTS" */
+#define LEVEL_CHUNK_VISI 0x49534956u /* "VISI" */
 #define LEVEL_CHUNK_FARFIELD 0x46524146u /* "FARF" */
 #define LEVEL_CHUNK_BSP 0x54505342u /* "BSPT" — reserved, never emitted in v1 */
 
@@ -149,29 +163,6 @@ typedef struct
 // --- Far field (FARF) -------------------------------------------------------
 // One cluster per non-empty cell; azimuthCount frames per cluster (billboard
 // impostor views). atlasMaterial[] index into the level MATL table.
-typedef struct
-{
-    uint32_t clusterCount;
-    uint32_t atlasCount;
-    uint32_t atlasMaterial[LEVEL_FARFIELD_MAX_ATLASES]; // MATL indices of the impostor atlases
-    uint32_t azimuthCount;
-    uint32_t groundOffset; // reserved (coarse ground quad); 0 = none
-} FarfieldHeader;
-
-typedef struct
-{
-    float center[3];
-    float halfWidth;
-    float halfHeight;
-    uint16_t atlasIndex; // which atlasMaterial[] this cluster samples
-    uint16_t firstFrame; // index of its first FarfieldFrame (azimuthCount frames)
-} FarfieldCluster;
-
-typedef struct
-{
-    float u0, v0, u1, v1; // atlas UV rect for one azimuth view
-} FarfieldFrame;
-
 // On-disc sizes are contractual with tools/ps2lib/levelfmt.py — lock them so a
 // field reorder that introduces padding fails the build instead of the game.
 static_assert(sizeof(LevelInfoChunk) == 92, "LevelInfoChunk size");
@@ -179,6 +170,5 @@ static_assert(sizeof(LevelGridCell) == 32, "LevelGridCell size");
 static_assert(sizeof(LevelEntityRecord) == 20, "LevelEntityRecord size");
 static_assert(sizeof(LevelEntityProp) == 8, "LevelEntityProp size");
 static_assert(sizeof(SectorHeader) == 48, "SectorHeader size");
-static_assert(sizeof(FarfieldHeader) == 32, "FarfieldHeader size");
-static_assert(sizeof(FarfieldCluster) == 24, "FarfieldCluster size");
-static_assert(sizeof(FarfieldFrame) == 16, "FarfieldFrame size");
+static_assert(sizeof(VisiHeader) == 4, "VisiHeader size");
+static_assert(sizeof(VisiCell) == 4, "VisiCell size");

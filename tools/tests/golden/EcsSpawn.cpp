@@ -14,6 +14,8 @@ void Game_Spawn_func_button(const Ecs_func_button& def, const game::EntitySpawn&
 void Game_Spawn_func_changeLevel(const Ecs_func_changeLevel& def, const game::EntitySpawn& spawn);
 void Game_Spawn_func_door(const Ecs_func_door& def, const game::EntitySpawn& spawn);
 void Game_Spawn_light(const Ecs_light& def, const game::EntitySpawn& spawn);
+void Game_Spawn_func_detail(const Ecs_func_detail& def, const game::EntitySpawn& spawn);
+void Game_Spawn_worldspawn(const Ecs_worldspawn& def, const game::EntitySpawn& spawn);
 
 namespace
 {
@@ -154,6 +156,34 @@ bool Ecs_SpawnDispatch(const game::EntitySpawn& spawn)
             if (raw) { double v = std::strtod(raw, nullptr); def.lightComponent.range = (float)v; }
         }
         Game_Spawn_light(def, spawn);
+        return true;
+    }
+    if (std::strcmp(spawn.classname, "func_detail") == 0)
+    {
+        Ecs_func_detail def;
+        {
+            const char* raw = Internal_FindProp(spawn, "include_in_lod1");
+            if (raw) { bool v = (std::strcmp(raw, "1") == 0 || std::strcmp(raw, "true") == 0); def.detailComponent.include_in_lod1 = v; }
+        }
+        Game_Spawn_func_detail(def, spawn);
+        return true;
+    }
+    if (std::strcmp(spawn.classname, "worldspawn") == 0)
+    {
+        Ecs_worldspawn def;
+        {
+            const char* raw = Internal_FindProp(spawn, "_map_scale");
+            if (raw) { double v = std::strtod(raw, nullptr); def.worldComponent._map_scale = (float)v; }
+        }
+        {
+            const char* raw = Internal_FindProp(spawn, "_sector_size");
+            if (raw) { double v = std::strtod(raw, nullptr); def.worldComponent._sector_size = (float)v; }
+        }
+        {
+            const char* raw = Internal_FindProp(spawn, "_max_edge");
+            if (raw) { double v = std::strtod(raw, nullptr); def.worldComponent._max_edge = (float)v; }
+        }
+        Game_Spawn_worldspawn(def, spawn);
         return true;
     }
     return false;
