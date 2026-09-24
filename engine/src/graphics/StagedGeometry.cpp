@@ -417,12 +417,13 @@ bool StagedGeometry::BuildOne(const Renderable3D& what, const DrawLists& primiti
     return true;
 }
 
-void StagedGeometry::AppendLevelSectors()
+void StagedGeometry::AppendLevelSectors(const Vector3& camera)
 {
-    uint32_t count = 0;
-    const SectorResident* residents = Engine_Sector_GetResidents(&count);
-    if (!residents)
-        return;
+    uint32_t count0 = 0, count1 = 0;
+    const SectorResident* lod0 = Engine_Sector_GetResidents(&count0);
+    const SectorResident* lod1 = Engine_Sector_GetLod1Residents(&count1);
+    const uint32_t n0 = lod0 ? count0 : 0u;
+    const uint32_t count = n0 + (lod1 ? count1 : 0u);
 
     // Sector geometry is already in world space, so the model matrix is identity.
     float identity[16];
@@ -430,8 +431,10 @@ void StagedGeometry::AppendLevelSectors()
 
     for (uint32_t s = 0; s < count; ++s)
     {
-        const SectorResident& sector = residents[s];
+        const SectorResident& sector = (s < n0) ? lod0[s] : lod1[s - n0];
         if (sector.state != SECTOR_READY)
+            continue;
+        if (sector.isLod1 ? (Engine_Sector_Lod1Opacity(&sector, camera.x, camera.z, false) <= 0.0f) : !Engine_Sector_IsResidentReady(&sector))
             continue;
 
         for (uint32_t m = 0; m < sector.meshCount && m < LEVEL_MAX_MESHES_PER_SECTOR; ++m)
@@ -477,7 +480,7 @@ void StagedGeometry::BuildFrame(DrawLists& lists, DrawStats* stats)
     // a single draw call.
     lists.SortForSubmission();
 
-    AppendLevelSectors();
+    AppendLevelSectors(lists.GetCamera3D().position);
     m_dynamicRunStart = m_runCount;
     m_dynamicVertexStart = m_count3D;
 

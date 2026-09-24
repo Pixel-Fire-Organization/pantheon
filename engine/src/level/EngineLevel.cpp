@@ -94,70 +94,61 @@ static bool Internal_EntitiesAreSane(const char* name, uint8_t* ents, size_t ent
     return true;
 }
 
-/// Whether a FARF chunk's header, cluster array and frame array agree with each
-/// other, with the chunk and with the material table. Checked where the view is
-/// published, ahead of any consumer.
+/// Whether a VISI chunk's offset table and per-cell lists fit the chunk, cover
+/// exactly the level's grid, and name only cells inside it. Checked where the
+/// view is published, ahead of any consumer.
 /// @param name The level, for the report.
-/// @param farf The chunk payload.
-/// @param farfSize Its size in bytes.
-/// @param materialCount Entries in the level's material table.
-/// @return Whether every atlas, cluster and frame reference is in range.
-static bool Internal_FarfieldIsSane(const char* name, const uint8_t* farf, size_t farfSize, uint16_t materialCount)
+/// @param visi The chunk payload.
+/// @param visiSize Its size in bytes.
+/// @param cellsX Grid width in cells.
+/// @param cellsZ Grid depth in cells.
+/// @return Whether every offset, list and cell reference is in range.
+static bool Internal_VisiIsSane(const char* name, const uint8_t* visi, size_t visiSize, uint16_t cellsX, uint16_t cellsZ)
 {
-    if (farfSize < sizeof(FarfieldHeader))
+    if (visiSize < sizeof(VisiHeader))
     {
-        Engine_LogError("Level '%s': FARF chunk is %zu bytes, shorter than its header", name, farfSize);
+        Engine_LogError("Level '%s': VISI chunk is %zu bytes, shorter than its header", name, visiSize);
+        return false;
+    }
+    const VisiHeader* hdr = reinterpret_cast<const VisiHeader*>(visi);
+    const uint64_t gridCells = static_cast<uint64_t>(cellsX) * cellsZ;
+    if (hdr->totalCells != gridCells)
+    {
+        Engine_LogError("Level '%s': VISI covers %u cells, the grid has %llu", name, hdr->totalCells, static_cast<unsigned long long>(gridCells));
+        return false;
+    }
+    const uint64_t tableBytes = gridCells * sizeof(uint32_t);
+    if (!Level_SpanFits(sizeof(VisiHeader), tableBytes, visiSize))
+    {
+        Engine_LogError("Level '%s': VISI offset table of %u cells does not fit its chunk", name, hdr->totalCells);
         return false;
     }
 
-    const FarfieldHeader* hdr = reinterpret_cast<const FarfieldHeader*>(farf);
-    if (hdr->atlasCount > LEVEL_FARFIELD_MAX_ATLASES)
+    const uint32_t* offsets = reinterpret_cast<const uint32_t*>(visi + sizeof(VisiHeader));
+    const uint64_t listsStart = sizeof(VisiHeader) + tableBytes;
+    for (uint32_t c = 0; c < hdr->totalCells; ++c)
     {
-        Engine_LogError("Level '%s': FARF names %u atlases, the header holds %d", name, hdr->atlasCount, LEVEL_FARFIELD_MAX_ATLASES);
-        return false;
-    }
-    for (uint32_t a = 0; a < hdr->atlasCount; ++a)
-    {
-        if (hdr->atlasMaterial[a] >= materialCount)
+        const uint64_t pos = offsets[c];
+        if (pos < listsStart || (pos % sizeof(uint32_t)) != 0 || !Level_SpanFits(pos, sizeof(VisiCell), visiSize))
         {
-            Engine_LogError("Level '%s': FARF atlas %u names material %u of %u", name, a, hdr->atlasMaterial[a], materialCount);
+            Engine_LogError("Level '%s': VISI list %u at offset %llu is misplaced or past the end of its chunk", name, c, static_cast<unsigned long long>(pos));
             return false;
         }
-    }
-    if (hdr->azimuthCount == 0)
-    {
-        Engine_LogError("Level '%s': FARF declares no azimuth views per cluster", name);
-        return false;
-    }
-
-    const uint64_t clusterBytes = static_cast<uint64_t>(hdr->clusterCount) * sizeof(FarfieldCluster);
-    if (!Level_SpanFits(sizeof(FarfieldHeader), clusterBytes, farfSize))
-    {
-        Engine_LogError("Level '%s': FARF declares %u clusters, past the end of its chunk", name, hdr->clusterCount);
-        return false;
-    }
-    const uint64_t frameBytes = farfSize - sizeof(FarfieldHeader) - clusterBytes;
-    if (frameBytes % sizeof(FarfieldFrame) != 0)
-    {
-        Engine_LogError("Level '%s': FARF frame array is %llu bytes, not a whole number of frames", name, static_cast<unsigned long long>(frameBytes));
-        return false;
-    }
-    const uint64_t frameTotal = frameBytes / sizeof(FarfieldFrame);
-
-    const FarfieldCluster* clusters = reinterpret_cast<const FarfieldCluster*>(farf + sizeof(FarfieldHeader));
-    for (uint32_t c = 0; c < hdr->clusterCount; ++c)
-    {
-        if (clusters[c].atlasIndex >= hdr->atlasCount)
+        const VisiCell* cell = reinterpret_cast<const VisiCell*>(visi + pos);
+        const uint64_t pairBytes = static_cast<uint64_t>(cell->numVisible) * 2u * sizeof(uint16_t);
+        if (!Level_SpanFits(pos + sizeof(VisiCell), pairBytes, visiSize))
         {
-            Engine_LogError("Level '%s': FARF cluster %u samples atlas %u of %u", name, c, clusters[c].atlasIndex, hdr->atlasCount);
+            Engine_LogError("Level '%s': VISI list %u declares %u cells, past the end of its chunk", name, c, cell->numVisible);
             return false;
         }
-        const uint64_t last = static_cast<uint64_t>(clusters[c].firstFrame) + hdr->azimuthCount;
-        if (last > frameTotal)
+        const uint16_t* pairs = reinterpret_cast<const uint16_t*>(visi + pos + sizeof(VisiCell));
+        for (uint32_t v = 0; v < cell->numVisible; ++v)
         {
-            Engine_LogError("Level '%s': FARF cluster %u claims frames %u..%llu of %llu", name, c, clusters[c].firstFrame, static_cast<unsigned long long>(last),
-                            static_cast<unsigned long long>(frameTotal));
-            return false;
+            if (pairs[v * 2] >= cellsX || pairs[v * 2 + 1] >= cellsZ)
+            {
+                Engine_LogError("Level '%s': VISI list %u names cell (%u, %u) outside the %ux%u grid", name, c, pairs[v * 2], pairs[v * 2 + 1], cellsX, cellsZ);
+                return false;
+            }
         }
     }
     return true;
@@ -220,12 +211,12 @@ static bool Internal_ReadCore(Level* level)
     uint8_t* infoChunk = nullptr;
     uint8_t* materialsChunk = nullptr;
     uint8_t* entsChunk = nullptr;
-    uint8_t* farfieldChunk = nullptr;
+    uint8_t* visiChunk = nullptr;
+    uint32_t visiSize = 0;
     uint32_t infoSize = 0;
     uint32_t materialsSize = 0;
     uint32_t gridSize = 0;
     uint32_t entsSize = 0;
-    uint32_t farfieldSize = 0;
 
     const LevelChunkEntry* table = reinterpret_cast<const LevelChunkEntry*>(core + sizeof(LevelFileHeaderV2));
     for (uint32_t i = 0; i < hdr->chunkCount; ++i)
@@ -263,9 +254,11 @@ static bool Internal_ReadCore(Level* level)
             entsChunk = chunk;
             entsSize = chunkSize;
             break;
+        case LEVEL_CHUNK_VISI:
+            visiChunk = chunk;
+            visiSize = chunkSize;
+            break;
         case LEVEL_CHUNK_FARFIELD:
-            farfieldChunk = chunk;
-            farfieldSize = chunkSize;
             break;
         case LEVEL_CHUNK_BSP:
             // Reserved for indoor BSP — forward-compat hook, nothing to do yet.
@@ -338,42 +331,14 @@ static bool Internal_ReadCore(Level* level)
             return false;
         level->entsChunk = entsChunk;
     }
-
-    if (farfieldChunk)
+    if (visiChunk)
     {
-        if (!Internal_FarfieldIsSane(level->name, farfieldChunk, farfieldSize, info->materialCount))
+        if (!Internal_VisiIsSane(level->name, visiChunk, visiSize, info->cellsX, info->cellsZ))
             return false;
-        level->farfieldChunk = farfieldChunk;
+        level->visiChunk = visiChunk;
     }
 
     return true;
-}
-
-// Load + pin every material. Async: handles are stored now and the material's
-// own texture dependencies stream in over the next frames (resolved at draw
-// time, like a model's already are).
-static void Internal_PinMaterials(Level* level)
-{
-    const uint16_t count = level->info->materialCount;
-    for (uint16_t i = 0; i < LEVEL_MAX_MATERIALS; ++i)
-        level->materialHandles[i] = -1;
-
-    for (uint16_t i = 0; i < count && i < LEVEL_MAX_MATERIALS; ++i)
-    {
-        const char* key = level->materials[i].assetKey;
-        if (key[0] == '\0')
-            continue;
-        int32_t handle = Engine_Resource_LoadAuto(key);
-        if (handle >= 0)
-        {
-            Engine_Resource_Pin(handle);
-            level->materialHandles[i] = handle;
-        }
-        else
-        {
-            Engine_LogError("Level '%s': failed to load material '%s'", level->name, key);
-        }
-    }
 }
 
 // Walk the ENTS chunk and hand each record to the game's spawn dispatcher.
@@ -435,7 +400,7 @@ bool Engine_Level_Load(Level* level)
     level->materials = nullptr;
     level->grid = nullptr;
     level->entsChunk = nullptr;
-    level->farfieldChunk = nullptr;
+    level->visiChunk = nullptr;
 
     // The level's core, sectors and materials live in the master archive
     // alongside every other asset (see docs/subsystems/LEVEL.md) - Internal_
@@ -447,11 +412,10 @@ bool Engine_Level_Load(Level* level)
         level->materials = nullptr;
         level->grid = nullptr;
         level->entsChunk = nullptr;
-        level->farfieldChunk = nullptr;
+    level->visiChunk = nullptr;
         return false;
     }
 
-    Internal_PinMaterials(level);
     Internal_SpawnEntities(level);
 
     // Prime the resident sector ring around the grid centre.
@@ -469,21 +433,8 @@ void Engine_Level_SetStreamingCenter(float worldX, float worldZ) { Engine_Sector
 
 void Engine_Level_Unload(Level* level, bool keepPinned)
 {
+    (void)level;
     Engine_Sector_End();
-
-    if (level && !keepPinned)
-    {
-        const uint16_t count = level->info ? level->info->materialCount : 0;
-        for (uint16_t i = 0; i < count && i < LEVEL_MAX_MATERIALS; ++i)
-        {
-            if (level->materialHandles[i] >= 0)
-            {
-                Engine_Resource_Unpin(level->materialHandles[i]);
-                Engine_Resource_Unload(level->materialHandles[i]);
-                level->materialHandles[i] = -1;
-            }
-        }
-    }
 
     for (uint32_t i = 0; i < MEM_BLOCK_LEVEL_DATA_SLOTS; ++i)
         Engine_ClearSlot(ARENA_LEVEL_DATA, i);

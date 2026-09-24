@@ -18,10 +18,14 @@
 #define MEM_BLOCK_LEVEL_DATA_SIZE (8 * 1024 * 1024) // 8 MB
 #define MEM_BLOCK_LEVEL_DATA_SLOTS 16
 
+#define MEM_BLOCK_LEVEL_LOD1_SIZE (4 * 1024 * 1024)
+#define MEM_BLOCK_LEVEL_LOD1_SLOTS 24
+
+
 #define MEM_BLOCK_RENDERER_SIZE (3 * 1024 * 1024) // 3 MB
 #define MEM_BLOCK_RENDERER_SLOTS 1
 
-#define MEM_ARENA_MAX_SLOTS 32
+#define MEM_ARENA_MAX_SLOTS 64
 
 // Slots are 16KB aligned so every slot start is quadword-aligned for DMA/VIF.
 #define MEM_ARENA_SLOT_ALIGNMENT (16 * 1024) // 16 KB
@@ -33,7 +37,7 @@
 /** ASYNC IO                  **/
 /*******************************/
 
-#define IO_ASYNC_MAX_REQUESTS 16
+#define IO_ASYNC_MAX_REQUESTS 64
 #define IO_THREAD_SLEEP_USEC 1000
 
 // Thread priorities, lowest number scheduled first. The kernel does not
@@ -100,9 +104,12 @@
 // Sector residency: recenter the 3x3 ring only once the camera leaves the
 // current cell by this fraction of a cell (hysteresis against boundary thrash).
 #define LEVEL_SECTOR_HYSTERESIS 0.15f
+#define LEVEL_LOD1_FADE_START_CELLS 1.5f // LOD1 fully transparent within this many cells of the camera
+#define LEVEL_LOD1_FADE_WIDTH_CELLS 1.0f // then fades in over this many more
+#define LEVEL_LOD1_LOADS_PER_FRAME 2 // LOD1 sector reads issued per frame at most
 
 // Resident sectors: a 3x3 ring around the camera cell.
-#define LEVEL_RESIDENT_SECTORS 9
+#define LEVEL_RESIDENT_SECTORS (MEM_BLOCK_LEVEL_DATA_SLOTS - 2)
 
 // ARENA_LEVEL_DATA slot assignment: slots [0..CORE_SLOTS) hold the resident
 // level core; sectors stream into the slots after that.
@@ -119,17 +126,30 @@
 
 #define GFX_MAX_TEXTURE_GS_PAGES 64
 
-// Total GS VRAM pages available for textures across all slots.
-#define GFX_GS_TEXTURE_PAGE_BUDGET 264
+// Total GS VRAM pages available for textures across all slots: ps2gl's
+// fixed slot layout (GFX_PS2GL_TEXTURE_LAYOUT_PAGES, less its 2-page CLUT
+// slot) plus the 256x256 and 128x128 slots the 512-wide frame buffers free.
+#define GFX_GS_TEXTURE_PAGE_BUDGET 304
+
+#define GFX_GS_VRAM_PAGES 512 // 4 MB of GS local memory in 8 KB pages
+#define GFX_PS2GL_TEXTURE_LAYOUT_PAGES 266 // pages ps2gl's fixed texture slot layout spans
+#define GFX_PS2GL_EXTRA_TEXTURE_PAGES 40 // one 256x256 slot plus one 128x128 slot
+
+// Display read-out, as ps2stuff programs it for NTSC and PAL alike: the
+// horizontal and vertical start of the visible area, and one scan line's
+// visible width in video clocks, which a framebuffer width must divide.
+#define GFX_PS2_DISPLAY_X_VCK 632
+#define GFX_PS2_DISPLAY_Y 50
+#define GFX_PS2_DISPLAY_WIDTH_VCK 2560
 
 #define GFX_MAX_TEXTURE_WIDTH 512
 #define GFX_MAX_TEXTURE_HEIGHT 512
 
 // Both region framebuffer sizes are defined here (identical across variants);
 // the active GFX_SCREEN_WIDTH / GFX_SCREEN_HEIGHT are chosen by the variant.
-#define GFX_SCREEN_PAL_WIDTH 640
+#define GFX_SCREEN_PAL_WIDTH 512
 #define GFX_SCREEN_PAL_HEIGHT 512
-#define GFX_SCREEN_NTSC_WIDTH 640
+#define GFX_SCREEN_NTSC_WIDTH 512
 #define GFX_SCREEN_NTSC_HEIGHT 448
 
 // Projection aspect ratio. The PS2 outputs its framebuffer to a 4:3 display with
@@ -233,6 +253,8 @@
 #define GFX_GIFTAG_PACKET_BUFFERS 2 // double-buffered geometry packets
 #define GFX_GIFTAG_MAX_VERTS 40000 // per-frame transformed-vertex cap (scratch bound)
 #define GFX_GIFTAG_XFORM_BATCH 1024 // verts per VU0 batch transform
+#define GFX_GIFTAG_FOG_NEAR 10.0f // view depth where fog begins
+#define GFX_GIFTAG_FOG_FAR 50.0f // view depth where geometry is fully fogged
 #define GFX_GIFTAG_PACKET_MARGIN_QW 64 // headroom left free per packet
 
 // Centre of the GS primitive coordinate space. Vertex coordinates are written

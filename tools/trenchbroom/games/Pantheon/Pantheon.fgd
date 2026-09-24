@@ -20,7 +20,7 @@
 
 @BaseClass model({ "path": model }) = ModelComponent [
     model(string) : "Path to the 3D model file" : "models/barrel.mdl"
-    is_static(choices) : 1 = [
+    is_static(choices) : "1" = [
         0 : "No"
         1 : "Yes"
     ]
@@ -36,7 +36,7 @@
 ]
 
 @BaseClass = LightComponent [
-    light_type(choices) : 1 = [
+    light_type(choices) : "1" = [
         0 : "Directional"
         1 : "Point"
     ]
@@ -47,10 +47,23 @@
 
 @BaseClass = DoorComponent [
     door_weight(string) : "The door's weight. The heavier the door, the more force it will need to open it." : 1.0
-    is_locked(choices) : 0 = [
+    is_locked(choices) : "0" = [
         0 : "No"
         1 : "Yes"
     ]
+]
+
+@BaseClass = DetailComponent [
+    include_in_lod1(choices) : "0" = [
+        0 : "No"
+        1 : "Yes"
+    ]
+]
+
+@BaseClass = WorldComponent [
+    _map_scale(string) : "World scale factor. Quake units (QU) to Engine meters (EM). e.g., 0.03125 EM for 1 QU = 1/32 EM." : 0.03125
+    _sector_size(string) : "Streaming grid cell size in EM. Determines streaming chunk granularity." : 32.0
+    _max_edge(string) : "Max triangle edge length in EM. Prevents large polygons from vanishing abruptly on PS2." : 16.0
 ]
 
 @PointClass base(HealthComponent, CollisionComponent, ModelComponent) size(-16 -16 -16, 16 16 16) = prop_barrel : "An explosive barrel" []
@@ -64,4 +77,8 @@
 @SolidClass base(CollisionComponent) = func_door : "Door that can be interacted by a player, NPCs or other physics objecs" []
 
 @PointClass base(TransformComponent, LightComponent) size(-16 -16 -16, 16 16 16) = light : "A static light the level compiler bakes into nearby geometry. Its TransformComponent position places a point light, or its angles orient a directional one." []
+
+@SolidClass base(DetailComponent) = func_detail : "Decorative brushwork that does not cut BSP leaves. Dropped from LOD1 unless include_in_lod1 is true." []
+
+@SolidClass base(WorldComponent) = worldspawn : "The base world geometry. Holds global map properties." []
 

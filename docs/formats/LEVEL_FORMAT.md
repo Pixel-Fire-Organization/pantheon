@@ -3,9 +3,9 @@
 Levels are authored in TrenchBroom (Valve-220 `.map`) and compiled offline into a
 sectorized runtime format, whose entries ship folded into the one master archive
 every asset the game owns lives in (see [subsystems/ARCHIVE.md](../subsystems/ARCHIVE.md)).
-The runtime streams a 3×3 ring of sectors around the camera and draws billboard
-impostors for the rest (see [subsystems/SECTOR.md](../subsystems/SECTOR.md) once
-Phase D lands).
+The runtime streams a 3×3 ring of full-detail (LOD0) sectors around the camera
+and, beyond it, the reduced-detail (LOD1) sectors the core's visibility lists
+name for the camera's cell (see [subsystems/SECTOR.md](../subsystems/SECTOR.md)).
 
 - Format structs: [engine/include/EngineLevelFormat.h](../../engine/include/level/EngineLevelFormat.h)
   (sizes locked with `static_assert`), mirrored by [tools/ps2lib/levelfmt.py](../../tools/ps2lib/levelfmt.py).
@@ -41,13 +41,16 @@ merge needs no rewriting, only concatenation:
 | Entry | Key | Contents |
 |-------|-----|----------|
 | Core | `<NAME>.PS2L` | chunked metadata, always resident once loaded |
-| Sector | `<NAME>/S<cx>_<cz>.SEC` | per-cell geometry (PSEC), streamed |
-| Texture | `<NAME>/<TEX>.PS2A` or `RASSETS/<TEX>.PS2A` | TIM2 material, pinned for level lifetime |
+| Sector | `<NAME>/S<cx>_<cz>.SEC` | per-cell full-detail geometry (PSEC), streamed |
+| LOD1 sector | `<NAME>/L<cx>_<cz>.SEC` | per-cell reduced-detail geometry (PSEC), streamed |
+| Material | `<NAME>/<TEX>.PS2A`, `<NAME>/M<hash>.PS2A` or `RASSETS/<MAT>.PS2A` | `RES_MATERIAL`, resident while a sector using it is |
+| Texture | `<NAME>/<TEX>_TEX.PS2A` or `RASSETS/<TEX>.PS2A` | TIM2 a material wraps |
+| Atlas | `<NAME>/ATLAS_<hash>.PS2A` or `<NAME>/LOD1_<hash>.PS2A`, each with a `_TEX` TIM2 | per-cell texture atlas, as a material |
 | Model | `<NAME>/<MODEL>.PS2A` | BKM2 entity model |
-| Impostors | `<NAME>/FARFIELD.PS2A` | far-field billboard atlas |
 
 Within one level, entries are laid out in access order (core, then sectors
-row-major, then textures/models/atlas) so a sector crossing reads contiguous
+row-major with each cell's LOD1 sector beside its full-detail one, then
+materials/textures/models) so a sector crossing reads contiguous
 sectors. Across levels, the master archive orders rassets first and then each
 level's entries in level-name order — locality between two different levels'
 sectors is not meaningful, since loading one no longer means unmounting
@@ -59,28 +62,29 @@ another (see [subsystems/LEVEL.md](../subsystems/LEVEL.md)).
 
 - **INFO** — level name, grid origin/size, cell counts, material/entity counts.
 - **MATL** — `LevelMaterialEntry[]`: the canonical archive key of each
-  material's `RES_MATERIAL` asset (see [MATERIAL_FORMAT.md](MATERIAL_FORMAT.md);
-  the far-field atlas entry is the one exception and still names a raw TIM2
-  directly, since nothing draws the far field yet). The same cooked material a
-  model references can be, and for a shared texture will be, the exact one a
-  level references too.
+  material's `RES_MATERIAL` asset (see [MATERIAL_FORMAT.md](MATERIAL_FORMAT.md)),
+  atlases included. The same cooked material a model references can be, and
+  for a shared texture will be, the exact one a level references too. A key
+  that would not fit the 63-byte field is replaced by a stable hashed one
+  rather than truncated.
 - **SGRD** — `LevelGridCell[cellsX*cellsZ]` row-major: per-cell PSEC size (0 =
   empty), world-space AABB, and an entity range (reserved; v1 spawns all entities
   at load).
 - **ENTS** — a flat list of entity spawn records (`classname`, origin, key/values
   as string-table offsets). The engine hands these to the game's generated
   `Ecs_SpawnDispatch` (see [the ECS pipeline](../../tools/ECS/generate_ecs.py)).
-- **FARF** — `FarfieldHeader` + `FarfieldCluster[]` + `FarfieldFrame[]`: one
-  cluster per non-empty cell, `azimuthCount` impostor views each. The frame
-  array is whatever the chunk has room for after the clusters, and every
-  cluster owns a full set of `azimuthCount` frames: once the atlas is full the
-  compiler stops emitting clusters rather than emit one with fewer views.
+- **VISI** — one visibility list per grid cell, row-major: a cell count equal
+  to `cellsX * cellsZ`, then per cell a count followed by that many (x, z)
+  cell pairs, nearest first. A list names only cells that have a LOD1 sector;
+  it is what the runtime streams LOD1 geometry from.
+- **FARF** — reserved chunk type, no longer emitted: the billboard far field
+  was replaced by LOD1 sectors. A reader skips it.
 - **BSPT** — reserved chunk type; indoor BSP is a future addition (never emitted
   in v1). `SectorHeader.bvhOffset` is the matching per-sector hook.
 
 ### Sector payload (PSEC)
 
-`SectorHeader` + `BakedMeshEntry[]` (reusing the BKM2 v3 mesh entry;
+`SectorHeader` (version 3) + `BakedMeshEntry[]` (reusing the BKM2 v4 mesh entry;
 `materialIndex` indexes the level MATL table) + 16-byte-aligned vec4/vec3/vec2
 (/vec4 colour) geometry. The runtime builds `Mesh` views straight into the
 arena slot — zero copy into the existing render path. Meshes are
@@ -91,6 +95,14 @@ A mesh's `colorsOffset` is populated when the map places any static light
 (see "Static lighting" below); it is 0 (absent) for a level with none, and
 the runtime then leaves every vertex at its default white tint, identical to
 the format's behaviour before static baking existed.
+
+A mesh's clamp region (`minU`/`maxU`/`minV`/`maxV`) is non-zero only for a
+mesh drawn from a per-cell atlas. It is expressed the way the PS2 GS's
+region-repeat wrap mode takes it: `minU`/`minV` are a texel mask (the cell
+size less one) and `maxU`/`maxV` the cell's texel offset, so a tiled material
+keeps wrapping inside its own atlas cell. An atlas cell is therefore always a
+power of two. Backends without such a wrap mode ignore it (see "LOD1 sectors
+and atlases" below).
 
 ### What a reader must establish before it trusts a chunk
 
@@ -117,14 +129,12 @@ belonging to something else.
   table each fit the chunk, the property array is a whole number of properties,
   and every `classnameOffset`, `keyOffset`, `valueOffset` and
   `propFirst + propCount` stays inside its table.
-- **FARF is internally consistent**: its cluster array fits the chunk, the
-  remainder is a whole number of frames, it names no more atlases than the
-  header holds (`LEVEL_FARFIELD_MAX_ATLASES`), every atlas names a material
-  inside the material table, `azimuthCount` is non-zero, and every cluster
-  samples an atlas the header names and owns `azimuthCount` frames inside the
-  frame array. Nothing draws the far field yet; it is checked where the view
-  is published so the first consumer inherits a bounded view rather than a
-  raw chunk.
+- **VISI is internally consistent**: its cell count equals `cellsX * cellsZ`,
+  every per-cell list fits the chunk, and every pair it names is inside the
+  grid. The streamer walks it every frame with no further checking.
+- **A PSEC mesh names a material inside the material table**: its
+  `materialIndex` is below `materialCount`, not merely below
+  `LEVEL_MAX_MATERIALS`, since MATL holds only `materialCount` entries.
 - **A PSEC mesh table fits its blob**, and each entry's `vertsOffset`,
   `normsOffset`, `uvsOffset` and `colorsOffset` are 16-byte aligned and span
   `vertexCount` elements inside the blob. A sector declares no more than
@@ -157,7 +167,10 @@ property of what it loaded rather than of what it was given.
    cell, group by material and bake one mesh each into a PSEC blob. Enforces
    `LEVEL_MAX_MESHES_PER_SECTOR` (32) and `LEVEL_SECTOR_MAX_BYTES` (512KB → one
    arena slot); over-budget is a hard error — shrink `_sector_size` or reduce
-   geometry density in the offending cell.
+   geometry density in the offending cell. Every cell is also built a second
+   time, at reduced detail, into a LOD1 sector, and per cell the meshes whose
+   textures tile within a small range are packed into one atlas (see "LOD1
+   sectors and atlases" below).
 5. Bake each brush material and each point-entity `.obj` to BKM2. Missing
    sources warn and fall back (magenta texture / kept raw model reference).
    A brush texture with a material authored under `assets/materials/`,
@@ -176,9 +189,9 @@ property of what it loaded rather than of what it was given.
    `level_textures` dimension cap; a level that paints with it does not carry
    a second copy. A texture's dimensions are otherwise (no descriptor, or the
    shared copy is oversized) first capped to the target platform's own
-   `cooklist.json` `level_textures` policy (a level pins every material for
-   its whole lifetime, so this is stricter than the `assets.TEXTURE`
-   ceiling), then downscaled further if it still would not fit that
+   `cooklist.json` `level_textures` policy (every resident sector pins its
+   materials, and many sectors are resident at once, so this is stricter than
+   the `assets.TEXTURE` ceiling), then downscaled further if it still would not fit that
    platform's `IO_READ_BUFFER_SIZE`. This is why a level compiles **per
    platform** — see [PIPELINE.md](../PIPELINE.md).
 6. Bake static lighting: for every entity the map places that carries
@@ -187,22 +200,33 @@ property of what it loaded rather than of what it was given.
    plus that light at every static vertex, including a shadow-ray occlusion
    test, and bake the sum into that vertex's colour. Skipped entirely (zero
    cost) when a map places no such entity.
-7. Bake far-field impostors and assemble the archive.
+7. Build the per-cell visibility lists and assemble the archive.
 
-## Far-field impostors (v1 limitations)
+## LOD1 sectors and atlases (v1 limitations)
 
-Each non-empty cell becomes one cluster with `LEVEL_FARFIELD_AZIMUTHS` (4:
-N/E/S/W) orthographic views, rendered host-side as **flat-colour silhouettes**
-(mean texel colour per face) with a z-buffer, packed into a PAL8 atlas whose
-index 0 is transparent. This is deliberately coarse:
+Every cell with geometry gets a second, reduced-detail sector. It is built from
+every brush except `func_detail` brushwork (unless that entity sets
+`include_in_lod1`), drops triangles whose centroid lies inside another LOD1
+brush, snaps the remainder to a coarse grid and discards whatever collapses.
+All of a LOD1 cell's textures are packed into one atlas; a full-detail cell
+packs only the textures whose UVs stay within a small tiling range and keeps
+the rest as separate meshes. Atlas textures are baked outside the platform's
+`level_textures` cap.
 
-- 4-view azimuth snapping is visible when the camera rotates around a cluster
-  (`azimuthCount` is data-driven — 8 views is an atlas-size change only).
-- Flat per-face colour, no lighting or texture projection (a v1.5 upgrade).
-- No cross-fade between impostor and streamed geometry yet.
+Visibility is a fixed radius today: every cell lists every LOD1 cell within
+eight cells of it. Portal-based lists are the intended replacement (see
+`docs/backlog/Rework Level System.md`).
 
-The chunked FARF design leaves room for an alternative low-poly-mesh far field
-later without a format break.
+Known limitations:
+
+- Grid snapping runs **after** tessellation, so a LOD1 triangle can exceed
+  `_max_edge`, the guarantee step 3 makes for the PS2 guard band. The level
+  compiler's own test reports it.
+- A LOD1 sector streams into an `ARENA_LEVEL_LOD1` slot, which on the smaller
+  targets is far smaller than `LEVEL_SECTOR_MAX_BYTES`; the compiler checks
+  only the latter.
+- Only the giftag backend applies the clamp region; on every other backend an
+  atlased mesh whose UVs tile past its cell samples its neighbour.
 
 ## Static lighting
 
@@ -225,8 +249,9 @@ The bake evaluates ambient plus every light against a cell's own static
 geometry only — a bounded, sector-local approximation that keeps the
 shadow-ray test affordable (measured at under a second for an ~18,000
 triangle test level with two lights) at the cost of not seeing an occluder
-in a neighbouring cell, the same kind of per-cell v1 limitation the
-far-field bake above already accepts. The result is written into the
+in a neighbouring cell. LOD1 sectors are lit the same way, before their
+decimation, so the two tiers agree where one fades into the other. The result
+is written into the
 affected sector meshes' `colorsOffset` array (see "Sector payload" above).
 
 A light-bearing entity is also spawned through the ordinary entity path
@@ -291,5 +316,3 @@ inspection, but not what any real build does.
 | `LEVEL_MAX_MESHES_PER_SECTOR` | 32     | one per material present in a cell             |
 | `LEVEL_SECTOR_MAX_BYTES`      | 512 KB | one `ARENA_LEVEL_DATA` slot                    |
 | `LEVEL_GS_PAGE_BUDGET`        | 200    | GS pages for level textures + atlases (of 264) |
-| `LEVEL_FARFIELD_AZIMUTHS`     | 4      | impostor views per cluster                     |
-| `LEVEL_FARFIELD_MAX_ATLASES`  | 4      | impostor atlases a far field may name          |

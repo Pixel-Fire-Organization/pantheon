@@ -16,10 +16,11 @@ CHUNK_GRID = 0x44524753       # "SGRD"
 CHUNK_ENTITIES = 0x53544E45   # "ENTS"
 CHUNK_FARFIELD = 0x46524146   # "FARF"
 CHUNK_BSP = 0x54505342        # "BSPT" (reserved)
+CHUNK_VISI = 0x49534956       # "VISI"
 
 CHUNK_NAMES = {
     CHUNK_INFO: "INFO", CHUNK_MATERIALS: "MATL", CHUNK_GRID: "SGRD",
-    CHUNK_ENTITIES: "ENTS", CHUNK_FARFIELD: "FARF", CHUNK_BSP: "BSPT",
+    CHUNK_ENTITIES: "ENTS", CHUNK_FARFIELD: "FARF", CHUNK_BSP: "BSPT", CHUNK_VISI: "VISI",
 }
 
 SECTOR_MAGIC = 0x43455350  # "PSEC"
@@ -33,6 +34,7 @@ CHUNK_ALIGN = 16
 MAX_MATERIALS = 64
 MAX_MESHES_PER_SECTOR = 32
 FARFIELD_MAX_ATLASES = 4
+MATERIAL_KEY_MAX_BYTES = 63  # LevelMaterialEntry.assetKey, less its terminator
 
 # Struct formats (little-endian). Sizes asserted against EngineLevelFormat.h.
 _HDR = "<IIII"                    # LevelFileHeaderV2 (16)
@@ -81,8 +83,8 @@ def pack_materials(keys):
     # target. A real, long, nested texture path did this before this check
     # existed (env/GroundGrass_01/GroundGrass_01_basecolor's wrapping key).
     for k in keys:
-        if len(k.encode("utf-8")) > 63:
-            raise ValueError(f"material key '{k}' is {len(k.encode('utf-8'))} bytes, LevelMaterialEntry.assetKey holds 63 (+ terminator)")
+        if len(k.encode("utf-8")) > MATERIAL_KEY_MAX_BYTES:
+            raise ValueError(f"material key '{k}' is {len(k.encode('utf-8'))} bytes, LevelMaterialEntry.assetKey holds {MATERIAL_KEY_MAX_BYTES} (+ terminator)")
     return b"".join(struct.pack(_MATERIAL, _cstr(k, 64)) for k in keys)
 
 
@@ -222,24 +224,27 @@ def pack_sector(meshes):
     return bytes(buf), (tuple(mn), tuple(mx))
 
 
-def pack_farfield(atlas_materials, azimuth_count, clusters, frames):
-    """clusters: list of {center(3), half_w, half_h, atlas_index, first_frame}.
-    frames: flat list of (u0, v0, u1, v1)."""
-    if len(atlas_materials) > FARFIELD_MAX_ATLASES:
-        raise ValueError(f"far field names {len(atlas_materials)} atlases, the header holds {FARFIELD_MAX_ATLASES}")
-    for c in clusters:
-        if c["first_frame"] + azimuth_count > len(frames):
-            raise ValueError(f"far-field cluster at frame {c['first_frame']} needs {azimuth_count} frames, {len(frames)} exist")
-    atlas = list(atlas_materials) + [0] * (FARFIELD_MAX_ATLASES - len(atlas_materials))
-    out = bytearray()
-    out += struct.pack(_FARFHDR, len(clusters), len(atlas_materials),
-                       atlas[0], atlas[1], atlas[2], atlas[3], azimuth_count, 0)
-    for c in clusters:
-        ct = c["center"]
-        out += struct.pack(_FARFCLUSTER, ct[0], ct[1], ct[2], c["half_w"], c["half_h"],
-                           c["atlas_index"], c["first_frame"])
-    for f in frames:
-        out += struct.pack(_FARFFRAME, *f)
+
+def pack_visi(cells_x, cells_z, pvs):
+    """Pack the per-cell visibility lists (pvs: one list of (tx, tz) per cell,
+    row-major) as a VISI chunk: cell count, a per-cell byte-offset table, then
+    each list as a count and its (x, z) uint16 pairs. Mirrors VisiHeader /
+    VisiCell in EngineLevelFormat.h."""
+    total = cells_x * cells_z
+    if len(pvs) != total:
+        raise ValueError(f"VISI has {len(pvs)} lists for a {cells_x}x{cells_z} grid")
+    lists = bytearray()
+    offsets = []
+    lists_start = 4 + 4 * total
+    for visible in pvs:
+        offsets.append(lists_start + len(lists))
+        lists += struct.pack("<I", len(visible))
+        for (tx, tz) in visible:
+            lists += struct.pack("<HH", tx, tz)
+    out = bytearray(struct.pack("<I", total))
+    out += struct.pack(f"<{total}I", *offsets)
+    out += lists
+    out += b"\x00" * ((-len(out)) % CHUNK_ALIGN)
     return bytes(out)
 
 
@@ -295,37 +300,25 @@ def parse_sector(blob):
         raise ValueError(f"bad PSEC magic 0x{magic:08X}")
     meshes = []
     pos = struct.calcsize(_SECHDR)
+    entry_size = struct.calcsize(_MESHENTRY)
     for _ in range(mesh_count):
-        vc, mi, vo, no, uo, topo, cxx, cyy, czz, rad, _a, _b = struct.unpack_from(_MESHENTRY, blob, pos)
-        pos += 48
+        vc, mi, vo, no, uo, co, topo, cxx, cyy, czz, rad, _r = struct.unpack_from(_MESHENTRY, blob, pos)
+        pos += entry_size
         meshes.append({"vert_count": vc, "material_index": mi, "verts_offset": vo,
-                       "norms_offset": no, "uvs_offset": uo, "topology": topo,
+                       "norms_offset": no, "uvs_offset": uo, "colors_offset": co, "topology": topo,
                        "center": (cxx, cyy, czz), "radius": rad})
     return {"magic": magic, "version": version, "mesh_count": mesh_count,
             "aabb_min": (mnx, mny, mnz), "aabb_max": (mxx, mxy, mxz), "meshes": meshes}
 
 
-def parse_farfield(blob, chunk):
-    """Header, clusters and frames of a FARF chunk. The frame count is whatever
-    the chunk has room for after the clusters, exactly as the runtime derives it."""
+def parse_visi(blob, chunk):
+    """Per-cell visible-cell lists of a VISI chunk, in cell order (row-major),
+    read through its offset table exactly as the runtime reads them."""
     base = chunk["offset"]
-    cluster_count, atlas_count, a0, a1, a2, a3, azimuth_count, ground = struct.unpack_from(_FARFHDR, blob, base)
-    header_size = struct.calcsize(_FARFHDR)
-    cluster_size = struct.calcsize(_FARFCLUSTER)
-    frame_size = struct.calcsize(_FARFFRAME)
-    clusters = []
-    pos = base + header_size
-    for _ in range(cluster_count):
-        cx, cy, cz, hw, hh, ai, ff = struct.unpack_from(_FARFCLUSTER, blob, pos)
-        pos += cluster_size
-        clusters.append({"center": (cx, cy, cz), "half_w": hw, "half_h": hh,
-                         "atlas_index": ai, "first_frame": ff})
-    frame_bytes = chunk["size"] - header_size - cluster_size * cluster_count
-    frames = []
-    for _ in range(frame_bytes // frame_size):
-        frames.append(struct.unpack_from(_FARFFRAME, blob, pos))
-        pos += frame_size
-    return {"cluster_count": cluster_count, "atlas_count": atlas_count,
-            "atlas_materials": (a0, a1, a2, a3)[:atlas_count],
-            "azimuth_count": azimuth_count, "ground_offset": ground,
-            "clusters": clusters, "frames": frames, "frame_bytes": frame_bytes}
+    (total_cells,) = struct.unpack_from("<I", blob, base)
+    offsets = struct.unpack_from(f"<{total_cells}I", blob, base + 4)
+    pvs = []
+    for off in offsets:
+        (count,) = struct.unpack_from("<I", blob, base + off)
+        pvs.append([struct.unpack_from("<HH", blob, base + off + 4 + 4 * i) for i in range(count)])
+    return pvs

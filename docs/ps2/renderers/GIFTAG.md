@@ -190,9 +190,34 @@ configuration.
 - Transform batching is fixed. It is sized to the coprocessor's local memory, not
   tunable at runtime.
 
-- **Far-field geometry is not implemented.** The level format carries a
-  far-field description and a per-frame budget for it, but no backend on any
-  platform draws it. Distant impostors simply do not appear.
+- **Atlased level meshes wrap inside their atlas cell through the texture
+  clamp register's region-repeat mode.** In that mode the register's lower
+  fields are a texel mask and its upper fields fixed bits, and a texel address
+  becomes the masked address with the fixed bits set — so a cell is a power of
+  two in size and on a multiple of its own size, and the mask is the cell size
+  less one, not a lower limit. Reading them as limits, which is what their
+  field names suggest, samples the wrong part of the atlas without any error.
+  The register is written only when a mesh's region differs from the last one
+  written, and is forced out again after every texture bind. It costs two
+  qwords that the packet-space estimate does not count; the reserved headroom
+  absorbs them.
+- **Fog is per vertex, through the fog field of the vertex register.** Vertices
+  are written through the register form that carries a fog coefficient, which
+  narrows depth to 24 bits — every depth this backend produces already fits.
+  The coefficient falls linearly between two fixed view depths and the fog
+  colour is the frame clear colour, so fogged geometry dissolves into the
+  background. It applies to everything drawn through the triangle paths, and
+  can be switched off for debugging.
+- **LOD1 sectors fade in by distance, with blending.** A reduced-detail sector
+  is drawn translucent over a band of about one cell beyond the full-detail
+  ring, and stays opaque inside that band until the full-detail sector for the
+  same cell is fully resolvable, so a slow read shows the coarse version
+  rather than a hole. The fade is by distance from the sector's corner, not
+  its nearest point. It can be switched off for debugging.
+- **The transform batch lives in the processor's scratchpad.** The batch buffer
+  the coprocessor transform writes is placed at the scratchpad's conventional
+  mapping, which the batch size fills exactly, rather than in main memory.
+  Nothing else may use the scratchpad while this backend is active.
 - **Verified under emulation, not on hardware.** The frame loop, the display
   registers, the clear, the packet path, primitives, models, textures and world
   geometry have all been observed running, and the scene produced is equivalent
@@ -227,5 +252,5 @@ depends on, and because packet-capacity limits scale with scene complexity more
 predictably than draw-call limits. It draws the same scene as
 [ps2gl](PS2GL.md) — primitives, models, the sky, the interface and streamed
 world sectors, textured — so the choice between them is now about cost and
-toolchain rather than about coverage. The far field is the one thing neither
-draws.
+toolchain rather than about coverage, with one exception: only this backend
+draws the reduced-detail (LOD1) tier beyond the full-detail ring.

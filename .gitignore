@@ -61,3 +61,6 @@ external/psp2cgc/
 # Python bytecode cache
 __pycache__/
 .pytest_cache/
+
+# Local resource folder
+local/**

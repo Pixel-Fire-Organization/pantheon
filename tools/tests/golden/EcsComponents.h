@@ -24,6 +24,8 @@ enum class ComponentTypeId : uint16_t
     LevelComponent = 6,
     LightComponent = 7,
     DoorComponent = 8,
+    DetailComponent = 9,
+    WorldComponent = 10,
 };
 
 struct HealthComponent
@@ -86,6 +88,20 @@ struct DoorComponent
     void lockDoor() { EcsHooks::LockDoor(this); }
 };
 
+struct DetailComponent
+{
+    static const ComponentTypeId kTypeId = ComponentTypeId::DetailComponent;
+    bool include_in_lod1 = false;
+};
+
+struct WorldComponent
+{
+    static const ComponentTypeId kTypeId = ComponentTypeId::WorldComponent;
+    float _map_scale = 0.03125f;
+    float _sector_size = 32.0f;
+    float _max_edge = 16.0f;
+};
+
 // Per-entity aggregates: one typed struct per Trenchbroom classname.
 struct Ecs_prop_barrel
 {
@@ -120,6 +136,16 @@ struct Ecs_light
 {
     TransformComponent transformComponent;
     LightComponent lightComponent;
+};
+
+struct Ecs_func_detail
+{
+    DetailComponent detailComponent;
+};
+
+struct Ecs_worldspawn
+{
+    WorldComponent worldComponent;
 };
 
 // Spawn dispatch entry point (defined in the generated EcsSpawn.cpp).

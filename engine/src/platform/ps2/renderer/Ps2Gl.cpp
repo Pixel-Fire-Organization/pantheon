@@ -43,6 +43,15 @@ namespace
     // our PATH1/PATH2 transfers are not ignored. (See ps2gl glut/raylib init.)
     volatile uint32_t* const GIF_CTRL = reinterpret_cast<volatile uint32_t*>(0x10003000);
 
+    // GS DISPLAY2 privileged register (display position, magnification, size).
+    volatile uint64_t* const GS_DISPLAY2 = reinterpret_cast<volatile uint64_t*>(0x120000A0);
+
+    static_assert(GFX_PS2_DISPLAY_WIDTH_VCK % GFX_SCREEN_WIDTH == 0, "the framebuffer width must divide the display's scan width");
+    static_assert(3 * (((GFX_SCREEN_WIDTH + GFX_GS_PAGE_WIDTH_PSM32 - 1) / GFX_GS_PAGE_WIDTH_PSM32) * ((GFX_SCREEN_HEIGHT / 2 + GFX_GS_PAGE_HEIGHT_PSM32 - 1) / GFX_GS_PAGE_HEIGHT_PSM32)) +
+                          GFX_PS2GL_TEXTURE_LAYOUT_PAGES + GFX_PS2GL_EXTRA_TEXTURE_PAGES <=
+                      GFX_GS_VRAM_PAGES,
+                  "ps2gl's frame, depth and texture slots must fit GS memory");
+
     // SetGsCrt display-mode values (ps2sdk GRAPH_MODE_*).
     constexpr short GS_MODE_NTSC = 2;
     constexpr short GS_MODE_PAL = 3;
@@ -73,44 +82,23 @@ static void AddPrimitive(DrawLists& lists, Primitive3D primitive, const Vector3&
     lists.AddPrimitive(entry);
 }
 
-// ---------------------------------------------------------------------------
-// GS memory initialisation (replaces raylib's initGsMemoryForRaylib).
-// Frame + depth buffers, display/draw buffer binding, and a bank of texture
-// slots whose total page count matches GFX_GS_TEXTURE_PAGE_BUDGET.
-// ---------------------------------------------------------------------------
 void Ps2GlRenderer::InitGsMemory(bool pal)
 {
-    pgl_slot_handle_t frame_slot_0, frame_slot_1, depth_slot;
-    if (pal)
-    {
-        frame_slot_0 = pglAddGsMemSlot(0, 80, GS_PSMCT32);
-        frame_slot_1 = pglAddGsMemSlot(80, 80, GS_PSMCT32);
-        depth_slot = pglAddGsMemSlot(160, 80, GS_PSMZ24);
-    }
-    else
-    {
-        frame_slot_0 = pglAddGsMemSlot(0, 70, GS_PSMCT32);
-        frame_slot_1 = pglAddGsMemSlot(70, 70, GS_PSMCT32);
-        depth_slot = pglAddGsMemSlot(140, 70, GS_PSMZ24);
-    }
+    UNUSED_VAR(pal);
+    const int fieldHeight = GFX_SCREEN_HEIGHT / 2;
+    const int framePages = ((GFX_SCREEN_WIDTH + GFX_GS_PAGE_WIDTH_PSM32 - 1) / GFX_GS_PAGE_WIDTH_PSM32) * ((fieldHeight + GFX_GS_PAGE_HEIGHT_PSM32 - 1) / GFX_GS_PAGE_HEIGHT_PSM32);
+
+    pgl_slot_handle_t frame_slot_0 = pglAddGsMemSlot(0, framePages, GS_PSMCT32);
+    pgl_slot_handle_t frame_slot_1 = pglAddGsMemSlot(framePages, framePages, GS_PSMCT32);
+    pgl_slot_handle_t depth_slot = pglAddGsMemSlot(2 * framePages, framePages, GS_PSMZ24);
 
     pglLockGsMemSlot(frame_slot_0);
     pglLockGsMemSlot(frame_slot_1);
     pglLockGsMemSlot(depth_slot);
 
-    pgl_area_handle_t frame_area_0, frame_area_1, depth_area;
-    if (pal)
-    {
-        frame_area_0 = pglCreateGsMemArea(640, 256, GS_PSMCT24);
-        frame_area_1 = pglCreateGsMemArea(640, 256, GS_PSMCT24);
-        depth_area = pglCreateGsMemArea(640, 256, GS_PSMZ24);
-    }
-    else
-    {
-        frame_area_0 = pglCreateGsMemArea(640, 224, GS_PSMCT24);
-        frame_area_1 = pglCreateGsMemArea(640, 224, GS_PSMCT24);
-        depth_area = pglCreateGsMemArea(640, 224, GS_PSMZ24);
-    }
+    pgl_area_handle_t frame_area_0 = pglCreateGsMemArea(GFX_SCREEN_WIDTH, fieldHeight, GS_PSMCT24);
+    pgl_area_handle_t frame_area_1 = pglCreateGsMemArea(GFX_SCREEN_WIDTH, fieldHeight, GS_PSMCT24);
+    pgl_area_handle_t depth_area = pglCreateGsMemArea(GFX_SCREEN_WIDTH, fieldHeight, GS_PSMZ24);
 
     pglBindGsMemAreaToSlot(frame_area_0, frame_slot_0);
     pglBindGsMemAreaToSlot(frame_area_1, frame_slot_1);
@@ -118,37 +106,32 @@ void Ps2GlRenderer::InitGsMemory(bool pal)
 
     pglSetDrawBuffers(PGL_INTERLACED, frame_area_0, frame_area_1, depth_area);
     pglSetDisplayBuffers(PGL_INTERLACED, frame_area_0, frame_area_1);
+    ApplyDisplayWidth();
 
-    // Texture VRAM slots. Layout mirrors the reference ps2gl setup so the total
-    // resident texture pages match GFX_GS_TEXTURE_PAGE_BUDGET (see PlatformConstants.h).
-    if (pal)
-    {
-        pglAddGsMemSlot(240, 2, GS_PSMT8);
-        for (int p = 242; p <= 249; ++p) // 8 * 64x32
-            pglAddGsMemSlot(p, 1, GS_PSMCT32);
-        for (int p = 250; p <= 264; p += 2) // 8 * 64x64
-            pglAddGsMemSlot(p, 2, GS_PSMCT32);
-        for (int p = 266; p <= 306; p += 8) // 6 * 128x128
-            pglAddGsMemSlot(p, 8, GS_PSMCT32);
-        pglAddGsMemSlot(314, 32, GS_PSMCT32); // 2 * 256x256
-        pglAddGsMemSlot(346, 32, GS_PSMCT32);
-        pglAddGsMemSlot(378, 64, GS_PSMCT32); // 2 * 512x256
-        pglAddGsMemSlot(442, 64, GS_PSMCT32);
-    }
-    else
-    {
-        pglAddGsMemSlot(210, 2, GS_PSMT8);
-        for (int p = 212; p <= 219; ++p) // 8 * 64x32
-            pglAddGsMemSlot(p, 1, GS_PSMCT32);
-        for (int p = 220; p <= 234; p += 2) // 8 * 64x64
-            pglAddGsMemSlot(p, 2, GS_PSMCT32);
-        for (int p = 236; p <= 276; p += 8) // 6 * 128x128
-            pglAddGsMemSlot(p, 8, GS_PSMCT32);
-        pglAddGsMemSlot(284, 32, GS_PSMCT32); // 2 * 256x256
-        pglAddGsMemSlot(316, 32, GS_PSMCT32);
-        pglAddGsMemSlot(348, 64, GS_PSMCT32); // 2 * 512x256
-        pglAddGsMemSlot(412, 64, GS_PSMCT32);
-    }
+    // Texture VRAM slots: the reference ps2gl layout, placed straight after the
+    // depth buffer, then the extra slots a narrower frame buffer leaves room for.
+    const int base = 3 * framePages;
+    pglAddGsMemSlot(base, 2, GS_PSMT8);
+    for (int p = 0; p < 8; ++p) // 8 * 64x32
+        pglAddGsMemSlot(base + 2 + p, 1, GS_PSMCT32);
+    for (int p = 0; p < 8; ++p) // 8 * 64x64
+        pglAddGsMemSlot(base + 10 + p * 2, 2, GS_PSMCT32);
+    for (int p = 0; p < 6; ++p) // 6 * 128x128
+        pglAddGsMemSlot(base + 26 + p * 8, 8, GS_PSMCT32);
+    pglAddGsMemSlot(base + 74, 32, GS_PSMCT32); // 2 * 256x256
+    pglAddGsMemSlot(base + 106, 32, GS_PSMCT32);
+    pglAddGsMemSlot(base + 138, 64, GS_PSMCT32); // 2 * 512x256
+    pglAddGsMemSlot(base + 202, 64, GS_PSMCT32);
+    pglAddGsMemSlot(base + GFX_PS2GL_TEXTURE_LAYOUT_PAGES, 32, GS_PSMCT32); // 256x256
+    pglAddGsMemSlot(base + GFX_PS2GL_TEXTURE_LAYOUT_PAGES + 32, 8, GS_PSMCT32); // 128x128
+}
+
+void Ps2GlRenderer::ApplyDisplayWidth()
+{
+    const uint64_t mag = GFX_PS2_DISPLAY_WIDTH_VCK / GFX_SCREEN_WIDTH;
+    const uint64_t display = static_cast<uint64_t>(GFX_PS2_DISPLAY_X_VCK) | (static_cast<uint64_t>(GFX_PS2_DISPLAY_Y) << 12) | ((mag - 1u) << 23) |
+                             (static_cast<uint64_t>(GFX_SCREEN_WIDTH * mag - 1u) << 32) | (static_cast<uint64_t>(GFX_SCREEN_HEIGHT - 1) << 44);
+    *GS_DISPLAY2 = display;
 }
 
 Ps2GlRenderer::Ps2GlRenderer(const EngineConfig& config)
@@ -356,6 +339,7 @@ void Ps2GlRenderer::EndFrame()
     pglWaitForVSync();
     m_frameStats.presentWaitMs = static_cast<float>((static_cast<double>(clock()) / CLOCKS_PER_SEC - waitStart) * 1000.0);
     pglSwapBuffers();
+    ApplyDisplayWidth();
     pglRenderGeometry();
 
     m_drawLists.SetLastStats(m_frameStats);
@@ -541,14 +525,20 @@ void Ps2GlRenderer::Render()
 // Draw the resident level sectors. Each sector's geometry is a set of Mesh views
 // pointing straight into an arena slot; we frustum-cull whole sectors by their
 // world AABB, then draw each mesh immediately (no display-list cache for streamed
-// sectors). Textures resolve from the level's pinned material handles at draw time.
+// sectors), full-detail tier first, then any LOD1 sector whose cell has no
+// drawable full-detail sector yet. Textures resolve from each sector's pinned
+// material handles at draw time.
 void Ps2GlRenderer::RenderLevel()
 {
     if (!Engine_Level_Current())
         return;
 
-    uint32_t count = 0;
-    const SectorResident* residents = Engine_Sector_GetResidents(&count);
+    uint32_t count0 = 0, count1 = 0;
+    const SectorResident* lod0 = Engine_Sector_GetResidents(&count0);
+    const SectorResident* lod1 = Engine_Sector_GetLod1Residents(&count1);
+    const uint32_t n0 = lod0 ? count0 : 0u;
+    const uint32_t count = n0 + (lod1 ? count1 : 0u);
+    const Vector3& camPos = m_drawLists.GetCamera3D().position;
 
     // Compiled level faces are not guaranteed to be wound for GL's front-face
     // convention after the map->engine coordinate transform, so draw both sides
@@ -571,9 +561,13 @@ void Ps2GlRenderer::RenderLevel()
 
     for (uint32_t s = 0; s < count; ++s)
     {
-        const SectorResident& sec = residents[s];
+        const SectorResident& sec = (s < n0) ? lod0[s] : lod1[s - n0];
         if (sec.state != SECTOR_READY || sec.meshCount == 0)
             continue;
+
+        if (sec.isLod1 ? (Engine_Sector_Lod1Opacity(&sec, camPos.x, camPos.z, false) <= 0.0f) : !Engine_Sector_IsResidentReady(&sec))
+            continue;
+
         ++renderable;
         if (!Frustum_AabbVisible(&m_frustum, sec.bounds))
         {

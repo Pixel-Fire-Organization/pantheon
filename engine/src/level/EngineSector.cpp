@@ -12,6 +12,8 @@
 // the PSEC blob and the Mesh views point straight into that slot memory.
 static const Level* s_Level = nullptr;
 static SectorResident s_Residents[LEVEL_RESIDENT_SECTORS];
+static SectorResident s_Lod1Residents[MEM_BLOCK_LEVEL_LOD1_SLOTS];
+static bool s_Lod1Pending = false;
 static float s_CenterX = 0.0f;
 static float s_CenterZ = 0.0f;
 static int s_CenterCellX = -0x7fff;
@@ -73,54 +75,45 @@ static bool Internal_SectorMeshesAreSane(const BakedMeshEntry* entries, uint32_t
     return true;
 }
 
-static void Internal_LoadSector(int cx, int cz, SectorResident* res)
+typedef struct
 {
-    const LevelInfoChunk* info = s_Level->info;
-    res->cellX = static_cast<int16_t>(cx);
-    res->cellZ = static_cast<int16_t>(cz);
-    res->meshCount = 0;
+    SectorResident* res;
+    uint8_t         generation;
+} SectorLoadContext;
 
-    const LevelGridCell* cell = &s_Level->grid[cz * info->cellsX + cx];
-    if (cell->sectorBytes == 0)
-    {
-        // Empty cell: resident but nothing to draw (avoids retrying every frame).
-        res->bounds.min = Vector3{0, 0, 0};
-        res->bounds.max = Vector3{0, 0, 0};
-        res->state = SECTOR_READY;
+static void Internal_OnSectorLoaded(const void* data, size_t size, void* userData)
+{
+    SectorLoadContext* ctx = static_cast<SectorLoadContext*>(userData);
+    SectorResident* res = ctx->res;
+    const uint8_t  gen  = ctx->generation;
+    Engine_PoolFreeMain(ctx);
+
+    if (res->generation != gen)
         return;
-    }
 
-    char key[IO_FILE_MAX_PATH];
-    std::snprintf(key, sizeof(key), "%s/S%03d_%03d.SEC", s_Level->name, cx, cz);
-
-    ArchiveLocator loc;
-    if (!Engine_Archive_Find(key, &loc))
+    if (!data)
     {
-        Engine_LogError("Sector: '%s' not found in archive", key);
+        Engine_LogError("Sector: read failed");
         res->state = SECTOR_EMPTY;
         return;
     }
 
-    const size_t cap = Engine_GetSlotCapacity(ARENA_LEVEL_DATA, res->arenaSlot);
-    if (loc.size > cap)
+        ArenaType arenaType = res->isLod1 ? ARENA_LEVEL_LOD1 : ARENA_LEVEL_DATA;
+    const size_t cap = Engine_GetSlotCapacity(arenaType, res->arenaSlot);
+    if (size > cap)
     {
-        Engine_LogError("Sector '%s' is %u bytes, exceeds slot capacity %zu", key, loc.size, cap);
+        Engine_LogError("Sector is %zu bytes, exceeds slot capacity %zu", size, cap);
         res->state = SECTOR_EMPTY;
         return;
     }
 
-    uint8_t* dst = static_cast<uint8_t*>(Engine_GetSlot(ARENA_LEVEL_DATA, res->arenaSlot));
-    if (!dst || !Engine_Archive_ReadSync(&loc, 0, dst, loc.size))
-    {
-        Engine_LogError("Sector: read failed for '%s'", key);
-        res->state = SECTOR_EMPTY;
-        return;
-    }
+        uint8_t* dst = static_cast<uint8_t*>(Engine_GetSlot(arenaType, res->arenaSlot));
+    std::memcpy(dst, data, size);
 
-    const size_t blobSize = loc.size;
+    const size_t blobSize = size;
     if (blobSize < sizeof(SectorHeader))
     {
-        Engine_LogError("Sector '%s' is %zu bytes, shorter than a PSEC header", key, blobSize);
+        Engine_LogError("Sector is %zu bytes, shorter than a PSEC header", blobSize);
         res->state = SECTOR_EMPTY;
         return;
     }
@@ -128,7 +121,7 @@ static void Internal_LoadSector(int cx, int cz, SectorResident* res)
     const SectorHeader* hdr = reinterpret_cast<const SectorHeader*>(dst);
     if (hdr->magic != LEVEL_SECTOR_MAGIC || hdr->version != LEVEL_SECTOR_VERSION)
     {
-        Engine_LogError("Sector: bad PSEC header for '%s'", key);
+        Engine_LogError("Sector: bad PSEC header");
         res->state = SECTOR_EMPTY;
         return;
     }
@@ -136,13 +129,13 @@ static void Internal_LoadSector(int cx, int cz, SectorResident* res)
     const uint32_t meshCount = hdr->meshCount;
     if (meshCount > LEVEL_MAX_MESHES_PER_SECTOR)
     {
-        Engine_LogError("Sector '%s' declares %u meshes, the resident ring holds %d", key, meshCount, LEVEL_MAX_MESHES_PER_SECTOR);
+        Engine_LogError("Sector declares %u meshes, the resident ring holds %d", meshCount, LEVEL_MAX_MESHES_PER_SECTOR);
         res->state = SECTOR_EMPTY;
         return;
     }
 
     const BakedMeshEntry* entries = reinterpret_cast<const BakedMeshEntry*>(dst + sizeof(SectorHeader));
-    if (!Level_SpanFits(sizeof(SectorHeader), static_cast<uint64_t>(meshCount) * sizeof(BakedMeshEntry), blobSize) || !Internal_SectorMeshesAreSane(entries, meshCount, blobSize, key))
+    if (!Level_SpanFits(sizeof(SectorHeader), static_cast<uint64_t>(meshCount) * sizeof(BakedMeshEntry), blobSize) || !Internal_SectorMeshesAreSane(entries, meshCount, blobSize, "ASYNC_SECTOR"))
     {
         res->state = SECTOR_EMPTY;
         return;
@@ -165,12 +158,70 @@ static void Internal_LoadSector(int cx, int cz, SectorResident* res)
         mesh.vertexComponents = 4; // PSEC positions are vec4
 
         const uint32_t matIdx = e.materialIndex;
-        res->meshMaterial[m] = (matIdx < LEVEL_MAX_MATERIALS) ? s_Level->materialHandles[matIdx] : -1;
+        res->meshMaterial[m] = -1;
+        if (matIdx < s_Level->info->materialCount && s_Level->materials)
+        {
+            const char* assetKey = s_Level->materials[matIdx].assetKey;
+            if (assetKey[0] != '\0')
+            {
+                const int32_t handle = Engine_Resource_LoadAuto(assetKey);
+                if (handle >= 0)
+                {
+                    Engine_Resource_Pin(handle);
+                    res->meshMaterial[m] = handle;
+                }
+            }
+        }
     }
     res->meshCount = meshCount;
     res->bounds.min = Vector3{hdr->aabbMin[0], hdr->aabbMin[1], hdr->aabbMin[2]};
     res->bounds.max = Vector3{hdr->aabbMax[0], hdr->aabbMax[1], hdr->aabbMax[2]};
     res->state = SECTOR_READY;
+
+    Engine_LogInfo("Sector loaded: %s cell (%d, %d) at physical address %p (slot %d, %zu bytes)", 
+                   res->isLod1 ? "LOD1" : "LOD0", res->cellX, res->cellZ, dst, res->arenaSlot, size);
+}
+
+static void Internal_LoadSector(int cx, int cz, SectorResident* res)
+{
+    const LevelInfoChunk* info = s_Level->info;
+    res->cellX = static_cast<int16_t>(cx);
+    res->cellZ = static_cast<int16_t>(cz);
+    res->meshCount = 0;
+
+    const LevelGridCell* cell = &s_Level->grid[cz * info->cellsX + cx];
+    if (cell->sectorBytes == 0)
+    {
+        // Empty cell: resident but nothing to draw (avoids retrying every frame).
+        res->bounds.min = Vector3{0, 0, 0};
+        res->bounds.max = Vector3{0, 0, 0};
+        res->state = SECTOR_READY;
+        return;
+    }
+
+    char key[IO_FILE_MAX_PATH];
+    if (res->isLod1)
+        std::snprintf(key, sizeof(key), "%s/L%03d_%03d.SEC", s_Level->name, cx, cz);
+    else
+        std::snprintf(key, sizeof(key), "%s/S%03d_%03d.SEC", s_Level->name, cx, cz);
+
+    SectorLoadContext* ctx = static_cast<SectorLoadContext*>(Engine_PoolAllocMain());
+    if (!ctx)
+    {
+        Engine_LogError("Sector: OOM allocating load context for '%s'", key);
+        res->state = SECTOR_EMPTY;
+        return;
+    }
+    ctx->res        = res;
+    ctx->generation = res->generation;
+
+    res->state = SECTOR_LOADING;
+    if (!Engine_IO_ReadAsync(key, Internal_OnSectorLoaded, ctx))
+    {
+        Engine_LogError("Sector: async read failed for '%s'", key);
+        Engine_PoolFreeMain(ctx);
+        res->state = SECTOR_EMPTY;
+    }
 }
 
 bool Engine_Sector_Begin(const Level* level)
@@ -184,6 +235,7 @@ bool Engine_Sector_Begin(const Level* level)
         return false;
     s_Level = level;
     s_Primed = false;
+    s_Lod1Pending = false;
     s_CenterCellX = -0x7fff;
     s_CenterCellZ = -0x7fff;
     for (int i = 0; i < LEVEL_RESIDENT_SECTORS; ++i)
@@ -192,7 +244,19 @@ bool Engine_Sector_Begin(const Level* level)
         s_Residents[i].cellZ = -1;
         s_Residents[i].arenaSlot = static_cast<uint8_t>(LEVEL_SECTOR_SLOT_BASE + i);
         s_Residents[i].state = SECTOR_EMPTY;
+        s_Residents[i].generation = 0;
         s_Residents[i].meshCount = 0;
+        s_Residents[i].isLod1 = false;
+    }
+    for (int i = 0; i < MEM_BLOCK_LEVEL_LOD1_SLOTS; ++i)
+    {
+        s_Lod1Residents[i].cellX = -1;
+        s_Lod1Residents[i].cellZ = -1;
+        s_Lod1Residents[i].arenaSlot = static_cast<uint8_t>(i);
+        s_Lod1Residents[i].state = SECTOR_EMPTY;
+        s_Lod1Residents[i].generation = 0;
+        s_Lod1Residents[i].meshCount = 0;
+        s_Lod1Residents[i].isLod1 = true;
     }
     return true;
 }
@@ -201,6 +265,18 @@ void Engine_Sector_End()
 {
     for (int i = 0; i < LEVEL_RESIDENT_SECTORS; ++i)
     {
+        if (s_Residents[i].state != SECTOR_EMPTY)
+        {
+            for (uint32_t m = 0; m < s_Residents[i].meshCount; ++m)
+            {
+                if (s_Residents[i].meshMaterial[m] >= 0)
+                {
+                    Engine_Resource_Unpin(s_Residents[i].meshMaterial[m]);
+                    Engine_Resource_Unload(s_Residents[i].meshMaterial[m]);
+                    s_Residents[i].meshMaterial[m] = -1;
+                }
+            }
+        }
         s_Residents[i].state = SECTOR_EMPTY;
         s_Residents[i].meshCount = 0;
         s_Residents[i].cellX = -1;
@@ -208,6 +284,7 @@ void Engine_Sector_End()
     }
     s_Level = nullptr;
     s_Primed = false;
+    s_Lod1Pending = false;
 }
 
 static bool Internal_IsResident(int cx, int cz)
@@ -228,36 +305,59 @@ void Engine_Sector_Update(float worldX, float worldZ)
     s_CenterZ = worldZ;
 
     const float cellSize = s_Level->info->cellSize;
-    // Hysteresis: keep the current centre cell until the camera moves more than
-    // (0.5 + H) cells from that cell's centre in either axis — avoids thrash when
-    // the camera hovers on a boundary.
+    
+    bool cellChanged = false;
+    int cx = s_CenterCellX;
+    int cz = s_CenterCellZ;
+
     if (s_Primed)
     {
         const float ccx = s_Level->info->gridOriginX + (s_CenterCellX + 0.5f) * cellSize;
         const float ccz = s_Level->info->gridOriginZ + (s_CenterCellZ + 0.5f) * cellSize;
         const float threshold = (0.5f + LEVEL_SECTOR_HYSTERESIS) * cellSize;
-        if (std::fabs(worldX - ccx) <= threshold && std::fabs(worldZ - ccz) <= threshold)
-            return; // still within the current cell (+ hysteresis)
+        if (std::fabs(worldX - ccx) > threshold || std::fabs(worldZ - ccz) > threshold)
+        {
+            Internal_CellOf(worldX, worldZ, &cx, &cz);
+            s_CenterCellX = cx;
+            s_CenterCellZ = cz;
+            cellChanged = true;
+        }
+    }
+    else
+    {
+        Internal_CellOf(worldX, worldZ, &cx, &cz);
+        s_CenterCellX = cx;
+        s_CenterCellZ = cz;
+        s_Primed = true;
+        cellChanged = true;
     }
 
-    int cx, cz;
-    Internal_CellOf(worldX, worldZ, &cx, &cz);
-    s_CenterCellX = cx;
-    s_CenterCellZ = cz;
-    s_Primed = true;
-
-    // Evict residents that fall outside the new 3x3 ring.
-    for (int i = 0; i < LEVEL_RESIDENT_SECTORS; ++i)
+    if (cellChanged)
     {
-        SectorResident* r = &s_Residents[i];
-        if (r->state == SECTOR_EMPTY)
-            continue;
-        if (std::abs(r->cellX - cx) > 1 || std::abs(r->cellZ - cz) > 1)
+        // Evict residents that fall outside the new 3x3 ring.
+        for (int i = 0; i < LEVEL_RESIDENT_SECTORS; ++i)
         {
-            r->state = SECTOR_EMPTY;
-            r->meshCount = 0;
-            r->cellX = -1;
-            r->cellZ = -1;
+            SectorResident* r = &s_Residents[i];
+            if (r->state == SECTOR_EMPTY)
+                continue;
+            if (std::abs(r->cellX - cx) > 1 || std::abs(r->cellZ - cz) > 1)
+            {
+                Engine_LogInfo("Sector unloaded: %s cell (%d, %d) from slot %d", r->isLod1 ? "LOD1" : "LOD0", r->cellX, r->cellZ, r->arenaSlot);
+                ++r->generation;
+                for (uint32_t m = 0; m < r->meshCount; ++m)
+                {
+                    if (r->meshMaterial[m] >= 0)
+                    {
+                        Engine_Resource_Unpin(r->meshMaterial[m]);
+                        Engine_Resource_Unload(r->meshMaterial[m]);
+                        r->meshMaterial[m] = -1;
+                    }
+                }
+                r->state = SECTOR_EMPTY;
+                r->meshCount = 0;
+                r->cellX = -1;
+                r->cellZ = -1;
+            }
         }
     }
 
@@ -285,6 +385,99 @@ void Engine_Sector_Update(float worldX, float worldZ)
             }
         }
     }
+
+    // --- Stream LOD1 based on VISI chunk ---
+    if (s_Level->visiChunk)
+    {
+        if (cx >= 0 && cx < s_Level->info->cellsX && cz >= 0 && cz < s_Level->info->cellsZ)
+        {
+            const uint32_t cellIdx = static_cast<uint32_t>(cz) * s_Level->info->cellsX + static_cast<uint32_t>(cx);
+            const uint32_t* offsets = reinterpret_cast<const uint32_t*>(s_Level->visiChunk + sizeof(VisiHeader));
+            const VisiCell* list = reinterpret_cast<const VisiCell*>(s_Level->visiChunk + offsets[cellIdx]);
+            const uint32_t numVis = list->numVisible;
+            const uint16_t* visCells = reinterpret_cast<const uint16_t*>(list + 1);
+
+            if (cellChanged)
+                s_Lod1Pending = true;
+
+            if (cellChanged)
+            {
+                // Mark all LOD1 residents as stale if they are no longer visible
+                for (int i = 0; i < MEM_BLOCK_LEVEL_LOD1_SLOTS; ++i)
+                {
+                    if (s_Lod1Residents[i].state == SECTOR_EMPTY) continue;
+                    bool isVisible = false;
+                    for (uint32_t v = 0; v < numVis; ++v)
+                    {
+                        if (s_Lod1Residents[i].cellX == visCells[v*2] && s_Lod1Residents[i].cellZ == visCells[v*2+1])
+                        {
+                            isVisible = true;
+                            break;
+                        }
+                    }
+                    
+
+
+                    // Evict if it's no longer visible
+                    if (!isVisible)
+                    {
+                        Engine_LogInfo("Sector unloaded: %s cell (%d, %d) from slot %d", s_Lod1Residents[i].isLod1 ? "LOD1" : "LOD0", s_Lod1Residents[i].cellX, s_Lod1Residents[i].cellZ, s_Lod1Residents[i].arenaSlot);
+                        ++s_Lod1Residents[i].generation;
+                        for (uint32_t m = 0; m < s_Lod1Residents[i].meshCount; ++m)
+                        {
+                            if (s_Lod1Residents[i].meshMaterial[m] >= 0)
+                            {
+                                Engine_Resource_Unpin(s_Lod1Residents[i].meshMaterial[m]);
+                                Engine_Resource_Unload(s_Lod1Residents[i].meshMaterial[m]);
+                                s_Lod1Residents[i].meshMaterial[m] = -1;
+                            }
+                        }
+                        s_Lod1Residents[i].state = SECTOR_EMPTY;
+                        s_Lod1Residents[i].meshCount = 0;
+                        s_Lod1Residents[i].cellX = -1;
+                        s_Lod1Residents[i].cellZ = -1;
+                    }
+                }
+            }
+            
+            int lod1Loads = 0;
+            for (uint32_t v = 0; s_Lod1Pending && v < numVis; ++v)
+            {
+                int tcx = visCells[v*2];
+                int tcz = visCells[v*2+1];
+                
+                // Skip if it's in the 3x3 LOD0 ring! We don't need LOD1 if LOD0 is loading/loaded.
+                if (std::abs(tcx - cx) <= 1 && std::abs(tcz - cz) <= 1)
+                    continue;
+                    
+                bool alreadyResident = false;
+                for (int i = 0; i < MEM_BLOCK_LEVEL_LOD1_SLOTS; ++i)
+                {
+                    if (s_Lod1Residents[i].state != SECTOR_EMPTY && s_Lod1Residents[i].cellX == tcx && s_Lod1Residents[i].cellZ == tcz)
+                    {
+                        alreadyResident = true;
+                        break;
+                    }
+                }
+                if (alreadyResident) continue;
+                // Find empty slot
+                for (int i = 0; i < MEM_BLOCK_LEVEL_LOD1_SLOTS; ++i)
+                {
+                    if (s_Lod1Residents[i].state == SECTOR_EMPTY)
+                    {
+                        Internal_LoadSector(tcx, tcz, &s_Lod1Residents[i]);
+                        ++lod1Loads;
+                        break;
+                    }
+                }
+                
+                if (lod1Loads >= LEVEL_LOD1_LOADS_PER_FRAME)
+                    break;
+            }
+            if (lod1Loads < LEVEL_LOD1_LOADS_PER_FRAME)
+                s_Lod1Pending = false;
+        }
+    }
 }
 
 const SectorResident* Engine_Sector_GetResidents(uint32_t* outCount)
@@ -292,4 +485,61 @@ const SectorResident* Engine_Sector_GetResidents(uint32_t* outCount)
     if (outCount)
         *outCount = LEVEL_RESIDENT_SECTORS;
     return s_Residents;
+}
+
+const SectorResident* Engine_Sector_GetLod1Residents(uint32_t* outCount)
+{
+    if (outCount)
+        *outCount = MEM_BLOCK_LEVEL_LOD1_SLOTS;
+    return s_Lod1Residents;
+}
+
+bool Engine_Sector_IsResidentReady(const SectorResident* res)
+{
+    if (!res || res->state != SECTOR_READY)
+        return false;
+    for (uint32_t m = 0; m < res->meshCount; ++m)
+    {
+        const int32_t material = res->meshMaterial[m];
+        if (material < 0)
+            continue;
+        if (!Engine_Resource_Get(material))
+            return false;
+        const int32_t albedo = Engine_Resource_GetMaterialTexture(material, MATERIAL_PBR_TEX_ALBEDO);
+        if (albedo >= 0 && !Engine_Resource_Get(albedo))
+            return false;
+    }
+    return true;
+}
+
+float Engine_Sector_Lod1Opacity(const SectorResident* res, float cameraX, float cameraZ, bool fade)
+{
+    if (!res || !res->isLod1 || !s_Level)
+        return 1.0f;
+    if (!Engine_Sector_IsLod0Ready(res->cellX, res->cellZ))
+        return 1.0f;
+    if (!fade)
+        return 0.0f;
+
+    const float cellSize = s_Level->info->cellSize;
+    const float fadeStart = cellSize * LEVEL_LOD1_FADE_START_CELLS;
+    const float fadeEnd = fadeStart + cellSize * LEVEL_LOD1_FADE_WIDTH_CELLS;
+    const float dx = cameraX - res->bounds.min.x;
+    const float dz = cameraZ - res->bounds.min.z;
+    const float dist = std::sqrt(dx * dx + dz * dz);
+    if (dist <= fadeStart)
+        return 0.0f;
+    if (dist >= fadeEnd)
+        return 1.0f;
+    return (dist - fadeStart) / (fadeEnd - fadeStart);
+}
+
+bool Engine_Sector_IsLod0Ready(int16_t cellX, int16_t cellZ)
+{
+    for (int i = 0; i < LEVEL_RESIDENT_SECTORS; ++i)
+    {
+        if (s_Residents[i].state == SECTOR_READY && s_Residents[i].cellX == cellX && s_Residents[i].cellZ == cellZ)
+            return Engine_Sector_IsResidentReady(&s_Residents[i]);
+    }
+    return false;
 }

@@ -36,6 +36,7 @@ compile unrestricted, e.g. for local inspection.
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -79,6 +80,28 @@ LEVEL_TEXTURE_MAX_BYTES_BY_PLATFORM = {
 }
 DEFAULT_LEVEL_TEXTURE_MAX_BYTES = 512 * 1024  # conservative fallback with no --platform
 
+# A LOD1 sector streams into one ARENA_LEVEL_LOD1 slot: that arena's size over
+# its slot count, rounded down to the 16 KB slot alignment. Kept in sync with
+# the engine headers by tools/tests/test_compile_level.py.
+LEVEL_LOD1_SECTOR_MAX_BYTES_BY_PLATFORM = {
+    "ps2": 160 * 1024,
+    "vita": 512 * 1024,
+    "win32": 512 * 1024,
+    "psp": 336 * 1024,
+    "nx": 512 * 1024,
+}
+DEFAULT_LEVEL_LOD1_SECTOR_MAX_BYTES = 160 * 1024  # the smallest target, with no --platform
+
+# Per-cell texture atlases (see "LOD1 sectors and atlases" in
+# docs/formats/LEVEL_FORMAT.md).
+ATLAS_SIZE = 256                  # atlas edge, texels
+ATLAS_UV_MIN = -2.0               # a mesh is atlased only if every UV lies in
+ATLAS_UV_MAX = 3.0                #   [ATLAS_UV_MIN, ATLAS_UV_MAX] on both axes
+ATLAS_TEXEL_INSET = 0.5           # texels kept clear inside each atlas cell edge
+ATLAS_MAX_TRI_GROWTH = 1.5        # a mesh whose tile clipping grows it more stays unatlased
+LOD1_DECIMATE_GRID = 2.0          # world units LOD1 vertices snap to
+VISI_RADIUS_CELLS = 12            # cells a visibility list reaches in each axis
+
 # Texture names that never produce render geometry.
 _SKIP_TEXTURES = ("skip", "nodraw", "clip", "trigger", "origin", "hint", "areaportal")
 
@@ -91,6 +114,11 @@ def _is_skip_texture(name):
 def q2e(p, scale):
     """Quake (x,y,z up) -> engine (x, y up, z) world units."""
     return (p[0] * scale, p[2] * scale, -p[1] * scale)
+
+def e2q(p, scale):
+    """Engine (x, y up, z) -> Quake (x,y,z up) world units."""
+    return (p[0] / scale, -p[2] / scale, p[1] / scale)
+
 
 
 def q2e_dir(n):
@@ -314,6 +342,8 @@ class Material:
         self.payload = None            # baked RES_MATERIAL .ps2a bytes (None = shared, not duplicated)
         self.texture_key = None        # underlying albedo texture's own key, if it needs its own archive entry
         self.texture_payload = None    # that texture's .ps2a bytes (None = no separate entry needed)
+        self.img = None                # level-local albedo image, kept for atlasing (None = not atlasable)
+        self.shared = False            # albedo or material lives outside this level's archive
 
 
 def _resolve_texture(tex_dir, tex_name):
@@ -392,8 +422,12 @@ def _bake_material(level_name, tex_name, tex_dir, materials_dir=None, max_width=
     # texture path long enough to need the suffix would silently overflow
     # assetKey if the two were swapped -- this bit a real, long, nested
     # texture path (env/GroundGrass_01/GroundGrass_01_basecolor) before this
-    # comment was written.
-    mat = Material(tex_name, f"{level_name}/{key_stem}.PS2A")
+    # comment was written. A path too long for even the plain scheme falls
+    # back to a stable hashed stem rather than failing the cook.
+    material_key = f"{level_name}/{key_stem}.PS2A"
+    if len(material_key.encode("utf-8")) > levelfmt.MATERIAL_KEY_MAX_BYTES:
+        material_key = f"{level_name}/M{hashlib.md5(tex_name.encode('utf-8')).hexdigest().upper()[:12]}.PS2A"
+    mat = Material(tex_name, material_key)
     src = _resolve_texture(tex_dir, tex_name)
 
     # A hand-authored material for this exact brush texture: reference its
@@ -452,6 +486,7 @@ def _bake_material(level_name, tex_name, tex_dir, materials_dir=None, max_width=
                 shared_key = f"RASSETS/{shared_base.upper()}.PS2A"
                 if fits:
                     albedo_key = shared_key
+                    mat.shared = True
                     print(f"  INFO: '{tex_name}' shared with {shared_key}; "
                           f"not duplicated into this level's archive")
                 else:
@@ -492,6 +527,7 @@ def _bake_material(level_name, tex_name, tex_dir, materials_dir=None, max_width=
             albedo_key = f"{level_name}/{key_stem}_TEX.PS2A"
             mat.texture_key = albedo_key
             mat.texture_payload = blob
+            mat.img = baked
 
         # Wrap the (shared or level-local) albedo texture in a default,
         # engine-generated material - flat, no normal/ORM - so a brush face
@@ -505,6 +541,63 @@ def _bake_material(level_name, tex_name, tex_dir, materials_dir=None, max_width=
         mat.texture_payload = ps2a.write_ps2a(ps2a.TYPE_MAP["TEXTURE"], b"", [], ".tm2")
         mat.payload = ps2a.write_ps2a(ps2a.TYPE_MAP["MATERIAL"], _default_material_payload(0), [mat.texture_key], ".mtl2")
     return mat
+
+
+def _clip_poly(poly, axis, line, keep_below):
+    """One side of a convex polygon of (pos, normal, uv) corners, cut by the
+    line uv[axis] == line. Corners on the line belong to both sides."""
+    out = []
+    count = len(poly)
+    for i in range(count):
+        a = poly[i]
+        b = poly[(i + 1) % count]
+        da = a[2][axis] - line
+        db = b[2][axis] - line
+        if (da <= 0.0) if keep_below else (da >= 0.0):
+            out.append(a)
+        if (da < 0.0 < db) or (db < 0.0 < da):
+            t = da / (da - db)
+            out.append(tuple(tuple(x + (y - x) * t for x, y in zip(pa, pb)) for pa, pb in zip(a, b)))
+    return out
+
+
+def _split_poly_on_axis(poly, axis):
+    """Split a convex polygon at every integer uv[axis] it spans."""
+    lo = math.floor(min(c[2][axis] for c in poly))
+    hi = math.ceil(max(c[2][axis] for c in poly))
+    pieces = []
+    rest = poly
+    for line in range(lo + 1, hi):
+        below = _clip_poly(rest, axis, float(line), True)
+        rest = _clip_poly(rest, axis, float(line), False)
+        if len(below) >= 3:
+            pieces.append(below)
+        if len(rest) < 3:
+            return pieces
+    pieces.append(rest)
+    return pieces
+
+
+def _clip_soup_to_uv_tiles(ov, on, ot):
+    """Split each triangle of a soup along integer U and V lines, so every
+    piece lies inside one texture tile, and shift each piece's UVs into [0, 1].
+    A tiled texture then samples correctly from an atlas cell on any backend,
+    with no wrap mode. Positions are split, never moved, so no edge lengthens.
+    Returns the new (positions, normals, uvs) soup."""
+    out_v, out_n, out_t = [], [], []
+    for k in range(0, len(ov), 3):
+        tri = [(ov[k + j], on[k + j], ot[k + j]) for j in range(3)]
+        for piece in _split_poly_on_axis(tri, 0):
+            for part in _split_poly_on_axis(piece, 1):
+                tu = math.floor(sum(c[2][0] for c in part) / len(part))
+                tv = math.floor(sum(c[2][1] for c in part) / len(part))
+                local = [(p, n, (min(1.0, max(0.0, t[0] - tu)), min(1.0, max(0.0, t[1] - tv)))) for (p, n, t) in part]
+                for i in range(1, len(local) - 1):
+                    for c in (local[0], local[i], local[i + 1]):
+                        out_v.append(c[0])
+                        out_n.append(c[1])
+                        out_t.append(c[2])
+    return out_v, out_n, out_t
 
 
 def _cell_index(x, z, origin_x, origin_z, cell_size, cells_x):
@@ -545,13 +638,24 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, pla
     # --- collect world faces (worldspawn + any solid entities' brushes) -------
     # A face -> (texture, engine polygon verts, engine normal, quake verts for UV).
     faces = []
+    faces_lod1 = []
+    lod1_brushes = []
     for ent in entities:
+        in_lod1 = True
+        if ent.classname == "func_detail":
+            inc_prop = str(ent.props.get("include_in_lod1", "0")).lower()
+            in_lod1 = (inc_prop in ("1", "true"))
+
         for brush in ent.brushes:
+            if in_lod1:
+                lod1_brushes.append(brush)
             for face, poly in mapparse.brush_polygons(brush):
                 if _is_skip_texture(face.texture):
                     continue
                 everts = [q2e(v, scale) for v in poly]
                 faces.append((face, poly, everts))
+                if in_lod1:
+                    faces_lod1.append((brush, face, poly, everts))
 
     if not faces:
         raise ValueError("map produced no render geometry")
@@ -585,58 +689,178 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, pla
     # wall); binning by the whole face's centroid would dump every one of its
     # tessellated triangles into a single cell no matter how far apart they
     # end up, which can blow LEVEL_SECTOR_MAX_BYTES regardless of _sector_size.
-    cell_groups = {}
-    for (face, poly, everts) in faces:
-        midx = material_index(face.texture)
-        mat = materials[face.texture]
-        nrm = mapparse._normalize(q2e_dir(face.normal))
-        uvs = [face.uv(qv, mat.width, mat.height) for qv in poly]
-        for k in range(1, len(poly) - 1):
-            # Fan-triangulate, then subdivide so no edge exceeds max_edge — the
-            # PS2 drops whole triangles that poke outside the guard band (see
-            # DEFAULT_MAX_EDGE), so world geometry must be small triangles.
-            fan_tri = [(everts[idx], uvs[idx]) for idx in (0, k, k + 1)]
-            for tri in _tessellate_tri(fan_tri, max_edge):
-                centroid = tuple(sum(v[i] for (v, _uv) in tri) / 3 for i in range(3))
-                cx, cz = _cell_index(centroid[0], centroid[2], origin_x, origin_z, sector_size, cells_x)
-                cx = max(0, min(cells_x - 1, cx))
-                cz = max(0, min(cells_z - 1, cz))
-                groups = cell_groups.setdefault((cx, cz), {})
-                ov, on, ot = groups.setdefault(midx, ([], [], []))
-                for (vert, uv) in tri:
-                    ov.append(vert)
-                    on.append(nrm)
-                    ot.append(uv)
+    def _build_cell_groups(face_list, is_lod1=False):
+        cgroups = {}
+        for item in face_list:
+            if is_lod1:
+                brush, face, poly, everts = item
+            else:
+                face, poly, everts = item
+            midx = material_index(face.texture)
+            mat = materials[face.texture]
+            nrm = mapparse._normalize(q2e_dir(face.normal))
+            uvs = [face.uv(qv, mat.width, mat.height) for qv in poly]
+            for k in range(1, len(poly) - 1):
+                fan_tri = [(everts[idx], uvs[idx]) for idx in (0, k, k + 1)]
+                for tri in _tessellate_tri(fan_tri, max_edge):
+                    centroid = tuple(sum(v[i] for (v, _uv) in tri) / 3 for i in range(3))
+                    
+                    if is_lod1:
+                        cent_q = e2q(centroid, scale)
+                        # Push inwards slightly
+                        cent_q = (cent_q[0] - face.normal[0]*0.1, cent_q[1] - face.normal[1]*0.1, cent_q[2] - face.normal[2]*0.1)
+                        hidden = False
+                        for other_b in lod1_brushes:
+                            if other_b is brush: continue
+                            inside = True
+                            for f in other_b.faces:
+                                if f.normal[0]*cent_q[0] + f.normal[1]*cent_q[1] + f.normal[2]*cent_q[2] - f.dist > 0.01:
+                                    inside = False
+                                    break
+                            if inside:
+                                hidden = True
+                                break
+                        if hidden:
+                            continue
+
+                    cx, cz = _cell_index(centroid[0], centroid[2], origin_x, origin_z, sector_size, cells_x)
+                    cx = max(0, min(cells_x - 1, cx))
+                    cz = max(0, min(cells_z - 1, cz))
+                    groups = cgroups.setdefault((cx, cz), {})
+                    ov, on, ot = groups.setdefault(midx, ([], [], []))
+                    for (vert, uv) in tri:
+                        ov.append(vert)
+                        on.append(nrm)
+                        ot.append(uv)
+        return cgroups
+
+    cell_groups = _build_cell_groups(faces, False)
+    cell_groups_lod1 = _build_cell_groups(faces_lod1, True)
+
+    # --- atlasing -------------------------------------------------------------
+    # Per cell, every level-local texture whose UVs stay within
+    # ATLAS_UV_MIN..ATLAS_UV_MAX is packed into one atlas and its meshes merged
+    # into one. Triangles are first split along texture-tile boundaries (see
+    # _clip_soup_to_uv_tiles) so no backend needs a wrap mode to sample them.
+    try:
+        from PIL import Image
+    except ImportError:
+        Image = None
+
+    def _pack_cell_groups(cgroups, is_lod1=False):
+        new_cgroups = {}
+        atlas_cache = {}
+        for (cx, cz), groups in cgroups.items():
+            atlasable_midxs = []
+            plain_midxs = []
+            clipped = {}
+            for m in sorted(groups.keys()):
+                mat = materials[material_order[m]]
+                ov, on, ot = groups[m]
+                in_range = bool(ot) and all(ATLAS_UV_MIN <= u <= ATLAS_UV_MAX and ATLAS_UV_MIN <= v <= ATLAS_UV_MAX for u, v in ot)
+                if Image is None or mat.shared or not mat.img or not in_range:
+                    plain_midxs.append(m)
+                    continue
+                clipped[m] = _clip_soup_to_uv_tiles(ov, on, ot)
+                if len(clipped[m][0]) > len(ov) * ATLAS_MAX_TRI_GROWTH:
+                    plain_midxs.append(m)
+                else:
+                    atlasable_midxs.append(m)
+
+            new_groups = [(m, groups[m]) for m in plain_midxs]
+
+            if len(atlasable_midxs) > 1:
+                mset_hash = hashlib.md5(str(atlasable_midxs).encode() + (b"LOD1" if is_lod1 else b"LOD0")).hexdigest()
+                if mset_hash not in atlas_cache:
+                    grid_size = max(1, int(math.ceil(math.sqrt(len(atlasable_midxs)))))
+                    cell_size = ATLAS_SIZE // grid_size
+                    atlas_img = Image.new("RGBA", (ATLAS_SIZE, ATLAS_SIZE), (255, 0, 255, 255))
+                    remaps = {}
+                    for idx, midx in enumerate(atlasable_midxs):
+                        col, row = idx % grid_size, idx // grid_size
+                        img = materials[material_order[midx]].img.resize((cell_size, cell_size), Image.LANCZOS)
+                        atlas_img.paste(img, (col * cell_size, row * cell_size))
+                        remaps[midx] = (col * cell_size, row * cell_size, cell_size)
+
+                    prefix = "LOD1" if is_lod1 else "ATLAS"
+                    atlas_tex_name = f"__{prefix}_{mset_hash}__"
+                    atlas_stem = f"{level_name}/{prefix}_{mset_hash.upper()[:8]}"
+                    atlas_mat = Material(atlas_tex_name, f"{atlas_stem}.PS2A")
+                    payload, ext = tim2.encode_pal8(atlas_img, 0), ".tm2"
+                    atlas_mat.texture_key = f"{atlas_stem}_TEX.PS2A"
+                    atlas_mat.texture_payload = ps2a.write_ps2a(ps2a.TYPE_MAP["TEXTURE"], payload, [], ext)
+                    atlas_mat.payload = ps2a.write_ps2a(ps2a.TYPE_MAP["MATERIAL"], _default_material_payload(0),
+                                                        [atlas_mat.texture_key], ".mtl2")
+                    atlas_mat.img = atlas_img
+                    materials[atlas_tex_name] = atlas_mat
+                    material_order.append(atlas_tex_name)
+                    atlas_cache[mset_hash] = (len(material_order) - 1, remaps)
+
+                atlas_matidx, remaps = atlas_cache[mset_hash]
+                merged_v, merged_n, merged_t = [], [], []
+                for m in atlasable_midxs:
+                    x0, y0, cell = remaps[m]
+                    span = cell - 2.0 * ATLAS_TEXEL_INSET
+                    cv, cn, ct = clipped[m]
+                    merged_v.extend(cv)
+                    merged_n.extend(cn)
+                    merged_t.extend(((x0 + ATLAS_TEXEL_INSET + u * span) / ATLAS_SIZE,
+                                     (y0 + ATLAS_TEXEL_INSET + v * span) / ATLAS_SIZE) for u, v in ct)
+                new_groups.append((atlas_matidx, (merged_v, merged_n, merged_t)))
+            else:
+                new_groups.extend((m, groups[m]) for m in atlasable_midxs)
+
+            new_cgroups[(cx, cz)] = new_groups
+        return new_cgroups
+
+    new_cell_groups = _pack_cell_groups(cell_groups, False)
+    new_cell_groups_lod1 = _pack_cell_groups(cell_groups_lod1, True)
 
     # --- bake sectors (PSEC) --------------------------------------------------
     # Static lighting is baked per cell, against that cell's own geometry only
     # (see _evaluate_vertex_light) -- a bounded, sector-local approximation
     # that keeps the shadow-ray test cheap; it does not see occluders in a
-    # neighbouring cell, the same kind of per-cell v1 limitation the far-field
-    # bake already accepts.
+    # neighbouring cell. LOD1 sectors are lit the same way before decimation,
+    # so the two tiers agree where one fades into the other.
     bake_start = time.time()
-    sectors = {}   # (cx,cz) -> psec bytes
-    cell_aabb = {}  # (cx,cz) -> (min,max)
-    for (cx, cz), groups in cell_groups.items():
-        shadow_tris = []
-        if bake_lights:
-            for (ov, _on, _ot) in groups.values():
-                shadow_tris.extend((ov[i], ov[i + 1], ov[i + 2]) for i in range(0, len(ov), 3))
+    lod1_max_bytes = min(LEVEL_SECTOR_MAX_BYTES, LEVEL_LOD1_SECTOR_MAX_BYTES_BY_PLATFORM.get(
+        cooklist.get("platform", "").lower(), DEFAULT_LEVEL_LOD1_SECTOR_MAX_BYTES))
 
-        meshes = []
-        for midx, (ov, on, ot) in sorted(groups.items()):
-            if len(meshes) >= levelfmt.MAX_MESHES_PER_SECTOR:
-                print(f"  WARN: cell {cx},{cz} exceeds {levelfmt.MAX_MESHES_PER_SECTOR} meshes; extra material dropped")
-                break
-            oc = [_evaluate_vertex_light(ov[i], on[i], bake_lights, shadow_tris) for i in range(len(ov))] if bake_lights else None
-            baked = meshlib.bake_mesh(ov, on, ot, oc)
-            baked["material_index"] = midx
-            meshes.append(baked)
-        blob, aabb = levelfmt.pack_sector(meshes)
-        if len(blob) > LEVEL_SECTOR_MAX_BYTES:
-            raise ValueError(f"sector {cx},{cz} is {len(blob)} bytes, exceeds {LEVEL_SECTOR_MAX_BYTES} bytes")
-        sectors[(cx, cz)] = blob
-        cell_aabb[(cx, cz)] = aabb
+    def _bake_sectors(cgroups, is_lod1=False):
+        out_sectors = {}
+        out_aabb = {}
+        max_bytes = lod1_max_bytes if is_lod1 else LEVEL_SECTOR_MAX_BYTES
+        for (cx, cz), groups in cgroups.items():
+            shadow_tris = []
+            if bake_lights:
+                for _midx, (ov, _on, _ot) in groups:
+                    shadow_tris.extend((ov[i], ov[i + 1], ov[i + 2]) for i in range(0, len(ov), 3))
+
+            meshes = []
+            for midx, (ov, on, ot) in groups:
+                if len(meshes) >= levelfmt.MAX_MESHES_PER_SECTOR:
+                    print(f"  WARN: cell {cx},{cz} exceeds {levelfmt.MAX_MESHES_PER_SECTOR} meshes; extra material dropped")
+                    break
+                oc = [_evaluate_vertex_light(ov[i], on[i], bake_lights, shadow_tris) for i in range(len(ov))] if bake_lights else None
+                baked = meshlib.bake_mesh(ov, on, ot, oc,
+                                          decimate_grid=LOD1_DECIMATE_GRID if is_lod1 else None,
+                                          max_edge=max_edge)
+                if not baked:
+                    continue
+                baked["material_index"] = midx
+                meshes.append(baked)
+            if not meshes:
+                continue
+            blob, aabb = levelfmt.pack_sector(meshes)
+            if len(blob) > max_bytes:
+                tier = "LOD1 sector" if is_lod1 else "sector"
+                raise ValueError(f"{tier} {cx},{cz} is {len(blob)} bytes, exceeds {max_bytes} bytes")
+            out_sectors[(cx, cz)] = blob
+            out_aabb[(cx, cz)] = aabb
+        return out_sectors, out_aabb
+
+    sectors, cell_aabb = _bake_sectors(new_cell_groups, False)
+    sectors_lod1, _ = _bake_sectors(new_cell_groups_lod1, True)
 
     if bake_lights:
         print(f"  INFO: static lighting bake took {time.time() - bake_start:.1f}s")
@@ -645,7 +869,7 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, pla
     entity_records = []
     model_payloads = {}  # key -> ps2a bytes
     for ent in entities:
-        if ent.classname in ("", "worldspawn"):
+        if ent.classname in ("", "worldspawn", "func_detail"):
             continue
         origin = (0.0, 0.0, 0.0)
         if "origin" in ent.props:
@@ -664,10 +888,19 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, pla
             props.append((k, v))
         entity_records.append({"classname": ent.classname, "origin": origin, "props": props})
 
-    # --- far field (FARF) -----------------------------------------------------
-    farf_chunk, atlas_payload, atlas_key = _bake_farfield(
-        level_name, cell_groups, materials, material_order, cell_aabb,
-        origin_x, origin_z, sector_size, cells_x, cells_z)
+
+    # --- visibility (VISI) ----------------------------------------------------
+    # A fixed radius until portal-based lists exist: every cell lists the LOD1
+    # sectors within VISI_RADIUS_CELLS of it, nearest first, so a list longer
+    # than the LOD1 slots at runtime loses its farthest cells, never its nearest.
+    pvs = []
+    for cz in range(cells_z):
+        for cx in range(cells_x):
+            visible = [(tx, tz) for (tx, tz) in sectors_lod1
+                       if abs(cx - tx) <= VISI_RADIUS_CELLS and abs(cz - tz) <= VISI_RADIUS_CELLS]
+            visible.sort(key=lambda c: ((c[0] - cx) ** 2 + (c[1] - cz) ** 2, c[1], c[0]))
+            pvs.append(visible)
+    visi_chunk = levelfmt.pack_visi(cells_x, cells_z, pvs)
 
     # --- assemble .ps2l core --------------------------------------------------
     grid_cells = []
@@ -688,9 +921,8 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, pla
         (levelfmt.CHUNK_MATERIALS, levelfmt.pack_materials(mat_keys)),
         (levelfmt.CHUNK_GRID, levelfmt.pack_grid(grid_cells)),
         (levelfmt.CHUNK_ENTITIES, levelfmt.pack_entities(entity_records)),
+        (levelfmt.CHUNK_VISI, visi_chunk),
     ]
-    if farf_chunk:
-        chunks.append((levelfmt.CHUNK_FARFIELD, farf_chunk))
     ps2l_blob = levelfmt.build_ps2l(chunks)
 
     # --- archive assembly (locality order) ------------------------------------
@@ -700,6 +932,9 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, pla
             blob = sectors.get((cx, cz))
             if blob:
                 archive_entries.append((f"{level_name}/S{cx:03d}_{cz:03d}.SEC", blob))
+            blob_lod1 = sectors_lod1.get((cx, cz))
+            if blob_lod1:
+                archive_entries.append((f"{level_name}/L{cx:03d}_{cz:03d}.SEC", blob_lod1))
     for tex_name in material_order:  # includes the far-field atlas material
         mat = materials[tex_name]
         if mat.texture_payload is not None:  # the wrapped albedo texture, when baked level-locally
@@ -740,103 +975,6 @@ def _bake_entity_model(level_name, model_ref, model_dir, model_payloads):
         return None
 
 
-def _bake_farfield(level_name, cell_groups, materials, material_order, cell_aabb,
-                   origin_x, origin_z, sector_size, cells_x, cells_z, azimuths=4):
-    """Render each non-empty cell to `azimuths` flat-colour orthographic views,
-    packed into one impostor atlas. Returns (farf_chunk, atlas_ps2a, atlas_key)."""
-    try:
-        from PIL import Image
-    except ImportError:
-        return b"", None, None
-
-    non_empty = sorted(cell_groups.keys())
-    if not non_empty:
-        return b"", None, None
-
-    fs = FARFIELD_FRAME_SIZE
-    per_row = max(1, FARFIELD_ATLAS_SIZE // fs)
-    atlas = Image.new("RGBA", (FARFIELD_ATLAS_SIZE, FARFIELD_ATLAS_SIZE), (0, 0, 0, 0))
-
-    clusters = []
-    frames = []
-    frame_slot = 0
-    for (cx, cz) in non_empty:
-        # Gather this cell's triangles (engine space) with a flat colour per face.
-        tris = []
-        for midx, (ov, on, ot) in cell_groups[(cx, cz)].items():
-            color = materials[material_order[midx]].color
-            for t in range(0, len(ov), 3):
-                tris.append((ov[t], ov[t + 1], ov[t + 2], color))
-        (mn, mx) = cell_aabb[(cx, cz)]
-        center = tuple((mn[i] + mx[i]) * 0.5 for i in range(3))
-        half_w = max(1e-3, 0.5 * math.hypot(mx[0] - mn[0], mx[2] - mn[2]))
-        half_h = max(1e-3, 0.5 * (mx[1] - mn[1]))
-
-        if frame_slot + azimuths > per_row * per_row:
-            print(f"  WARN: far-field atlas is full after {len(clusters)} clusters; "
-                  f"{len(non_empty) - len(clusters)} cell(s) get no impostor")
-            break
-        first_frame = len(frames)
-        for a in range(azimuths):
-            img = _render_azimuth(Image, tris, center, half_w, half_h, a, azimuths, fs)
-            ax = (frame_slot % per_row) * fs
-            ay = (frame_slot // per_row) * fs
-            atlas.paste(img, (ax, ay))
-            u0 = ax / float(FARFIELD_ATLAS_SIZE)
-            v0 = ay / float(FARFIELD_ATLAS_SIZE)
-            u1 = (ax + fs) / float(FARFIELD_ATLAS_SIZE)
-            v1 = (ay + fs) / float(FARFIELD_ATLAS_SIZE)
-            frames.append((u0, v0, u1, v1))
-            frame_slot += 1
-
-        clusters.append({"center": center, "half_w": half_w, "half_h": half_h,
-                         "atlas_index": 0, "first_frame": first_frame})
-
-    atlas_key = f"{level_name}/FARFIELD.PS2A"
-    tim2_bytes = tim2.encode_pal8_cutout(atlas)
-    atlas_payload = ps2a.write_ps2a(ps2a.TYPE_MAP["TEXTURE"], tim2_bytes, [], ".tm2")
-
-    # The atlas is the last material appended (its MATL index).
-    atlas_matidx = len(material_order)
-    materials["__farfield__"] = Material("__farfield__", atlas_key)
-    materials["__farfield__"].payload = atlas_payload
-    material_order.append("__farfield__")
-
-    farf_chunk = levelfmt.pack_farfield([atlas_matidx], azimuths, clusters, frames)
-    return farf_chunk, atlas_payload, atlas_key
-
-
-def _render_azimuth(Image, tris, center, half_w, half_h, a, azimuths, size):
-    """Orthographic flat-colour silhouette with a z-buffer, one azimuth view."""
-    ang = 2.0 * math.pi * a / azimuths
-    vd = (math.sin(ang), 0.0, math.cos(ang))
-    right = (math.cos(ang), 0.0, -math.sin(ang))
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    px = img.load()
-    zbuf = [1e30] * (size * size)
-
-    def project(p):
-        rel = (p[0] - center[0], p[1] - center[1], p[2] - center[2])
-        sx = rel[0] * right[0] + rel[1] * right[1] + rel[2] * right[2]
-        sy = rel[1]
-        depth = rel[0] * vd[0] + rel[1] * vd[1] + rel[2] * vd[2]
-        ix = (sx / half_w * 0.5 + 0.5) * (size - 1)
-        iy = (0.5 - sy / half_h * 0.5) * (size - 1)
-        return ix, iy, depth
-
-    for (v0, v1, v2, color) in tris:
-        p0, p1, p2 = project(v0), project(v1), project(v2)
-        _fill_triangle(px, zbuf, size, p0, p1, p2, color)
-    return img
-
-
-def _fill_triangle(px, zbuf, size, a, b, c, color):
-    min_x = max(0, int(math.floor(min(a[0], b[0], c[0]))))
-    max_x = min(size - 1, int(math.ceil(max(a[0], b[0], c[0]))))
-    min_y = max(0, int(math.floor(min(a[1], b[1], c[1]))))
-    max_y = min(size - 1, int(math.ceil(max(a[1], b[1], c[1]))))
-    area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])
-    if abs(area) < 1e-9:
         return
     inv = 1.0 / area
     for y in range(min_y, max_y + 1):

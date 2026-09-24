@@ -12,7 +12,7 @@ Build instructions are in [BUILD.md](BUILD.md); renderers are in
 
 | | `ps2pal` | `ps2ntsc` |
 |---|---|---|
-| Framebuffer | 640 x 512 | 640 x 448 |
+| Framebuffer | 512 x 512 | 512 x 448 |
 | Refresh | 50 Hz | ~60 Hz |
 | Frame budget | 20000 us | 16667 us |
 
@@ -50,7 +50,8 @@ differently per region.
 |---|---|---|---|
 | Engine ceiling | 31 MB | | Of 32 MB total; the engine refuses to map more and panics rather than over-committing |
 | Config arena | 256 KB | 4 | 64 KB |
-| Level-data arena | 4 MB | 16 | 256 KB |
+| Level-data arena | 8 MB | 16 | 512 KB |
+| Level-LOD1 arena | 8 MB | 64 | 128 KB |
 | Renderer arena | 3 MB | 1 | 3 MB |
 | Main pool | 1 MB | | 256 B chunks |
 
@@ -283,8 +284,9 @@ does not fit once it is actually measured, per
 [docs/guidelines/PERFORMANCE.md](../guidelines/PERFORMANCE.md).
 
 **Left on the table**, in the order to attack it: back-face rejection on world
-geometry, which needs correctly wound content; far-field impostors, which the
-level format budgets for and nothing draws; asynchronous sector recentring.
+geometry, which needs correctly wound content; portal-based visibility in place
+of the fixed-radius LOD1 lists; a per-cell index into the visibility chunk
+instead of walking it every frame.
 The vector-unit batch transform itself is no longer on this list — its
 self-test now passes under emulation (see
 [backlog/performance_findings.md](../backlog/performance_findings.md)) — but
@@ -296,7 +298,6 @@ whether it also passes, and actually helps, on hardware is still unmeasured.
   ps2gl buffer layout leaves. The default backend renders at full height in 32
   bits and has far less, so it reports its own ceiling and the resource manager
   enforces that instead.
-- **Far-field geometry is not drawn by any backend.** The level format
-  describes it and budgets for it; nothing renders it yet.
+- **Only giftag draws the LOD1 tier.** ps2gl draws the full-detail ring alone,
+  so beyond it the world ends on that backend.
 - Sound and font assets are unimplemented, as on every platform.
-- Sector recentring is synchronous and hitches on optical media.

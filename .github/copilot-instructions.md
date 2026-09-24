@@ -79,7 +79,8 @@ packages carrying the executable, assets, worlds and store-front metadata. `dist
 one staged tree — an `EBOOT.PBP` plus loose files for a memory card, and a UMD-shaped `game.iso` — and one binary boots
 from either, resolving its asset root from whichever it was started from.
 
-Remaining: the skybox and far-field paths in both desktop backends. The giftag backend now renders the same scene
+Remaining: the skybox path in both desktop backends, and the LOD1 sector tier everywhere but giftag (the
+billboard far field was replaced by LOD1 sectors; see `docs/formats/LEVEL_FORMAT.md`). The giftag backend now renders the same scene
 as ps2gl — primitives, models, sky, interface and streamed world sectors, textured — verified by capture under
 emulation, not yet on hardware. See `docs/ps2/renderers/GIFTAG.md`.
 
@@ -561,7 +562,9 @@ the change is responsible for updating the relevant file(s) before considering t
     - See `docs/subsystems/RESOURCE.md` for the runtime contract and `docs/formats/ASSET_FORMAT.md` for the `.ps2a` layout.
 - **Engine Arenas** (for internal subsystems only) — sizes below are the PS2 values:
     - `ARENA_CONFIG`: 256 KB, 4 slots — Configuration data, cached reads.
-    - `ARENA_LEVEL_DATA`: 4 MB, 16 slots — level core (slots 0-1), streamed sectors (2-10), prefetch/spare (11-15).
+    - `ARENA_LEVEL_DATA`: 8 MB, 16 slots — level core (slots 0-1), streamed full-detail sectors (2-15).
+    - `ARENA_LEVEL_LOD1`: 8 MB, 64 slots — streamed reduced-detail (LOD1) sectors, one per slot; see
+      `docs/subsystems/SECTOR.md`.
     - `ARENA_RENDERER`: 3 MB, 1 slot — primitive geometry and renderer scratch.
     - Use `Engine_LoadToSlot(ARENA_TYPE, slot, data, size)` for slot replacement.
     - Slots are **16KB aligned** for DMA/VIF performance.

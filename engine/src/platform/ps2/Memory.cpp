@@ -20,7 +20,7 @@ bool Ps2Platform::Ps2Memory::Reserve(EngineMemoryMap* outMap)
     if (!outMap)
         return false;
 
-    const size_t arenaTotal = MEM_BLOCK_CONFIG_SIZE + MEM_BLOCK_LEVEL_DATA_SIZE + MEM_BLOCK_RENDERER_SIZE;
+    const size_t arenaTotal = MEM_BLOCK_CONFIG_SIZE + MEM_BLOCK_LEVEL_DATA_SIZE + MEM_BLOCK_LEVEL_LOD1_SIZE + MEM_BLOCK_RENDERER_SIZE;
     const size_t required = arenaTotal + MEM_POOL_MAIN_SIZE;
 
     // The platform enforces its own ceiling. On a 32MB console, over-committing
@@ -50,14 +50,16 @@ bool Ps2Platform::Ps2Memory::Reserve(EngineMemoryMap* outMap)
     outMap->poolChunkSize = MEM_POOL_CHUNK_SIZE;
     outMap->slotAlignment = MEM_ARENA_SLOT_ALIGNMENT;
 
-    // Order matches ArenaType (ARENA_CONFIG, ARENA_LEVEL_DATA, ARENA_RENDERER).
+    // Order matches ArenaType (ARENA_CONFIG, ARENA_LEVEL_DATA, ARENA_LEVEL_LOD1, ARENA_RENDERER).
     outMap->arenas[0].size = MEM_BLOCK_CONFIG_SIZE;
     outMap->arenas[0].slots = MEM_BLOCK_CONFIG_SLOTS;
     outMap->arenas[1].size = MEM_BLOCK_LEVEL_DATA_SIZE;
     outMap->arenas[1].slots = MEM_BLOCK_LEVEL_DATA_SLOTS;
-    outMap->arenas[2].size = MEM_BLOCK_RENDERER_SIZE;
-    outMap->arenas[2].slots = MEM_BLOCK_RENDERER_SLOTS;
-    outMap->arenaCount = 3;
+    outMap->arenas[2].size = MEM_BLOCK_LEVEL_LOD1_SIZE;
+    outMap->arenas[2].slots = MEM_BLOCK_LEVEL_LOD1_SLOTS;
+    outMap->arenas[3].size = MEM_BLOCK_RENDERER_SIZE;
+    outMap->arenas[3].slots = MEM_BLOCK_RENDERER_SLOTS;
+    outMap->arenaCount = 4;
 
     Engine_LogInfo("%s: reserved %zu KB arenas + %d KB pool", m_owner->GetName(), arenaTotal / 1024, MEM_POOL_MAIN_SIZE / 1024);
     return true;
