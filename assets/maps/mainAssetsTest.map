@@ -550,7 +550,7 @@
 {
 "classname" "light"
 "origin" "0 0 400"
-"angles" "-50 30 0"
+"angles" "50 30 0"
 "light_type" "0"
 "color" "190 205 255"
 "intensity" "0.7"

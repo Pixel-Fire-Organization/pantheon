@@ -146,6 +146,9 @@
 #ifndef LEVEL_SECTOR_SLOT_BASE
     #error "platform must define LEVEL_SECTOR_SLOT_BASE in its PlatformConstants.h"
 #endif
+#ifndef LEVEL_RING_RADIUS_CELLS
+    #error "platform must define LEVEL_RING_RADIUS_CELLS in its PlatformConstants.h"
+#endif
 #ifndef LEVEL_RESIDENT_SECTORS
     #error "platform must define LEVEL_RESIDENT_SECTORS in its PlatformConstants.h"
 #endif
@@ -223,6 +226,10 @@ static_assert(MEM_BLOCK_LEVEL_DATA_SIZE / MEM_BLOCK_LEVEL_DATA_SLOTS >= LEVEL_SE
 static_assert(LEVEL_SECTOR_SLOT_BASE >= LEVEL_CORE_SLOTS, "sector slots would overlap the resident level core");
 static_assert(LEVEL_SECTOR_SLOT_BASE + LEVEL_RESIDENT_SECTORS <= MEM_BLOCK_LEVEL_DATA_SLOTS, "core slots plus the resident sector ring exceed MEM_BLOCK_LEVEL_DATA_SLOTS");
 static_assert(MEM_BLOCK_LEVEL_DATA_SLOTS <= MEM_ARENA_MAX_SLOTS, "level-data segment declares more slots than MEM_ARENA_MAX_SLOTS allows");
+
+// The ring is a square of (2R+1)^2 cells, and every one of them must be resident at once.
+static_assert(LEVEL_RING_RADIUS_CELLS >= 1, "LEVEL_RING_RADIUS_CELLS must be at least one cell");
+static_assert(LEVEL_RESIDENT_SECTORS >= (2 * LEVEL_RING_RADIUS_CELLS + 1) * (2 * LEVEL_RING_RADIUS_CELLS + 1), "LEVEL_RESIDENT_SECTORS cannot hold the whole resident ring");
 
 // A read that cannot hold a sector cannot stream a level.
 static_assert(IO_READ_BUFFER_SIZE >= LEVEL_SECTOR_MAX_BYTES, "IO_READ_BUFFER_SIZE is smaller than LEVEL_SECTOR_MAX_BYTES - sectors could never be read");

@@ -71,7 +71,8 @@ game draws directly is missing.
 
 **What cannot be drawn is rejected before it is built, not after.** A backend
 declares what it can accept for the coming frame; staging then refuses whole
-entries that fall outside the view or will not fit, and reports them as culled.
+entries that fall outside the view or will not fit, and reports them as culled. A
+resident sector is such an entry, tested by the bounds its header carries.
 Building geometry and discarding it at upload time costs the full price of work
 that was never going to be shown, and it discards at an arbitrary point — mid
 object, and mid triangle. Rejection is by whole entry for that reason.

@@ -104,6 +104,17 @@ namespace game
     // Colour components are 0..255.
     void DrawGrid(int slices, float spacing);
     void DrawCube(float x, float y, float z, float size, int r, int g, int b);
+    /// Draw an axis-aligned box, centred on a point, with a separate extent on each axis.
+    /// @param x Centre X.
+    /// @param y Centre Y.
+    /// @param z Centre Z.
+    /// @param sizeX Extent along X.
+    /// @param sizeY Extent along Y.
+    /// @param sizeZ Extent along Z.
+    /// @param r Red, 0 to 255.
+    /// @param g Green, 0 to 255.
+    /// @param b Blue, 0 to 255.
+    void DrawBox(float x, float y, float z, float sizeX, float sizeY, float sizeZ, int r, int g, int b);
     void DrawSphere(float x, float y, float z, float size, int r, int g, int b);
     void DrawCylinder(float x, float y, float z, float size, int r, int g, int b);
     void DrawCubeTextured(float x, float y, float z, float size, int textureId);
@@ -243,9 +254,39 @@ namespace game
     bool LoadLevel(const char* name);
     void UnloadLevel();
 
-    // Set the streaming centre (world position) — the resident 3x3 sector ring
+    // Set the streaming centre (world position) — the resident sector ring
     // recenters to follow it. Call each frame with the camera/player position.
     void SetStreamingCenter(float x, float y, float z);
+
+    const int CELL_GEOMETRY = 0x01;
+    const int CELL_LOD0_LOADING = 0x02;
+    const int CELL_LOD0_READY = 0x04;
+    const int CELL_LOD1_LOADING = 0x08;
+    const int CELL_LOD1_READY = 0x10;
+
+    /// The streaming grid of the loaded level.
+    struct LevelGrid
+    {
+        float originX;
+        float originZ;
+        float cellSize;
+        int cellsX;
+        int cellsZ;
+        int centreCellX;
+        int centreCellZ;
+    };
+
+    /// Describe the loaded level's streaming grid.
+    /// @param outGrid Filled with the grid and the cell the resident ring is centred on.
+    /// @return False when no level is loaded or the ring has not been centred yet.
+    bool GetLevelGrid(LevelGrid* outGrid);
+
+    /// What one cell of the loaded level holds right now.
+    /// @param cellX Grid cell X.
+    /// @param cellZ Grid cell Z.
+    /// @return A mask of the CELL_* bits: whether the cell has geometry, and whether each
+    /// tier is loading or ready for it. Zero outside the grid or with no level loaded.
+    int GetCellResidency(int cellX, int cellZ);
 
     // --- Scenes -------------------------------------------------------------
     // One thing runs at a time, and the engine — not GameUpdate — decides when

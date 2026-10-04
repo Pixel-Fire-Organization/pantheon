@@ -436,6 +436,15 @@ void StagedGeometry::AppendLevelSectors(const Vector3& camera)
             continue;
         if (sector.isLod1 ? (Engine_Sector_Lod1Opacity(&sector, camera.x, camera.z, false) <= 0.0f) : !Engine_Sector_IsResidentReady(&sector))
             continue;
+        if (sector.meshCount == 0)
+            continue;
+
+        if (m_frustumValid && !Frustum_AabbVisible(&m_frustum, sector.bounds))
+        {
+            if (m_stats)
+                ++m_stats->entriesCulled;
+            continue;
+        }
 
         for (uint32_t m = 0; m < sector.meshCount && m < LEVEL_MAX_MESHES_PER_SECTOR; ++m)
         {

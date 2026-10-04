@@ -53,16 +53,19 @@ def aabb(positions):
     return (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))
 
 
-def decimate_soup(out_v, out_n, out_t, grid_size, out_c=None):
-    """Grid-based vertex clustering for crude LOD decimation.
-    Snaps positions to `grid_size` and drops triangles that collapse to fewer
-    than three distinct corners; surviving corners keep their own normal, UV
-    and (when given) baked colour. Returns (v, n, t, c), c None without out_c."""
+def decimate_soup(out_v, out_n, out_t, grid_size, out_c=None, origin=(0.0, 0.0)):
+    """Grid-based vertex clustering for crude LOD decimation. Snaps X and Z to
+    `grid_size` lines anchored at `origin` (X, Z) and leaves Y exact, so a floor
+    keeps its height and a thin slab keeps its thickness. Drops triangles that
+    collapse to fewer than three distinct corners; surviving corners keep their
+    own normal, UV and (when given) baked colour. Returns (v, n, t, c), c None
+    without out_c."""
+    ox, oz = origin
     snapped = []
     for v in out_v:
-        snapped.append((round(v[0] / grid_size) * grid_size,
-                        round(v[1] / grid_size) * grid_size,
-                        round(v[2] / grid_size) * grid_size))
+        snapped.append((round((v[0] - ox) / grid_size) * grid_size + ox,
+                        v[1],
+                        round((v[2] - oz) / grid_size) * grid_size + oz))
 
     new_v, new_n, new_t = [], [], []
     new_c = [] if out_c is not None else None
@@ -285,26 +288,18 @@ def parse_obj(source_path):
     return out_v, out_n, out_t
 
 
-def bake_mesh(out_v, out_n, out_t, out_c=None, decimate_grid=None, max_edge=None):
+def bake_mesh(out_v, out_n, out_t, out_c=None):
     """Core mesh baker. Dedups corners, stripifies (verified) when it is a win,
     else emits an unindexed list. Returns a dict with the emitted vec4/vec3/vec2
-    byte blobs, topology, vertex count and object-space bounding sphere. Shared by
-    bake_obj_model and the level compiler's sector meshing.
+    byte blobs, topology, vertex count, the object-space bounding sphere and the
+    exact axis-aligned extent of the vertices. Shared by bake_obj_model and the
+    level compiler's sector meshing.
 
     `out_c`, when given, is a baked per-corner RGBA colour list (the level
     compiler's static lighting bake -- see docs/formats/MATERIAL_FORMAT.md)
     carried through the same dedup/stripify remapping as position/normal/uv;
     the result then carries a "cbytes" entry alongside vbytes/nbytes/tbytes.
-
-    `decimate_grid`, when positive, first snaps the soup to that grid (see
-    decimate_soup) -- the level compiler's LOD1 sectors. Snapping can lengthen
-    edges, so `max_edge`, when positive, then splits any edge longer than it
-    again (see split_long_edges). Returns None when nothing survives."""
-    if decimate_grid is not None and decimate_grid > 0.0:
-        out_v, out_n, out_t, out_c = decimate_soup(out_v, out_n, out_t, decimate_grid, out_c)
-        if max_edge is not None and max_edge > 0.0:
-            out_v, out_n, out_t, out_c = split_long_edges(out_v, out_n, out_t, max_edge, out_c)
-
+    Returns None when nothing survives."""
     count = len(out_v)
     if count == 0:
         return None
@@ -348,6 +343,7 @@ def bake_mesh(out_v, out_n, out_t, out_c=None, decimate_grid=None, max_edge=None
         "tbytes": tbytes,
         "center": (cx, cy, cz),
         "radius": radius,
+        "aabb": aabb(emit_v),
     }
     if out_c is not None:
         result["cbytes"] = b"".join(struct.pack("<ffff", *c) for c in emit_c)

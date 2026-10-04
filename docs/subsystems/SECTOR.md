@@ -12,18 +12,45 @@ centre moves.
 ## Contract
 
 **A fixed ring of residents.** A small, constant number of grid cells around the
-centre are resident at once. The count is fixed per platform and does not grow
-with world size — that is the property that makes an arbitrarily large world fit
-a fixed budget.
+centre are resident at once: a square whose radius, in cells, is a platform
+constant. The count is fixed per platform and does not grow with world size —
+that is the property that makes an arbitrarily large world fit a fixed budget. A
+wider ring moves the boundary between the two tiers away from the centre, at the
+cost of more resident sectors, so a platform sets the radius its memory and its
+read bandwidth can afford.
 
 **A second, reduced-detail tier covers what the ring does not.** Beyond the
 full-detail ring, the level's visibility list for the centre's cell names the
 cells whose reduced-detail (LOD1) sectors should be resident. They occupy their
 own arena and their own fixed-capacity array, so neither tier can starve the
-other. A LOD1 sector is never streamed for a cell inside the full-detail ring.
-A few are requested per frame, so the tier fills over several frames rather
-than in one burst; when the centre's cell changes, those the new list no longer
-names are evicted.
+other. The tier wants the nearest cells of that list that lie outside the ring,
+as many as it has slots, and nothing else: a LOD1 sector is never requested for
+a cell inside the full-detail ring. The wanted set is recomputed when the
+centre's cell changes and whenever a slot frees; a resident outside it is
+evicted, which is not the same as a resident the list no longer names — a list
+can name more cells than the tier holds, and the cells it names stay wanted only
+while they are among the nearest. Missing cells are requested nearest first, a
+few per frame, so the tier fills over several frames rather than in one burst.
+A list longer than the slots leaves its farthest cells unstreamed, and that is
+reported once each time its size changes. A centre outside the grid reads the list of
+the nearest cell inside it, so the tier keeps covering the edge of the world the player
+is looking at; the ring stays centred on the true position, so with no cell of it inside
+the grid no full-detail sector is resident and the tier alone has to cover the world,
+which a world with more cells than slots cannot do.
+
+**Neither tier opens a hole when the ring moves.** A LOD1 sector already
+resident for a cell that has just entered the ring is kept until that cell's
+full-detail sector is fully resolvable, then released and its slot reused. A
+full-detail sector for a cell that has just left the ring is kept until the LOD1
+sector for that cell is fully resolvable, then released. It is released at once
+instead when the cell has no LOD1 sector in reach, and it is the first thing
+given up when the ring itself needs a slot. The platform's spare full-detail
+slots — the resident count less the ring's cells — bound how many cells can be
+handed over this way at once; a platform with fewer spare slots than cells
+leaving the ring accepts a brief hole for the rest rather than refusing to load
+the ring. With every LOD1 slot in use, one far cell is swapped for another at
+each recentre, because the cells that just entered the ring hold slots until
+their full-detail sectors resolve.
 
 **A full-detail sector draws only once it is fully resolvable.** Until every
 mesh's material and that material's albedo texture are resident, the renderer
@@ -68,6 +95,23 @@ when the sector becomes ready and unpinned when it is evicted. Pins are
 counted, so a material two resident sectors share survives either one being
 evicted.
 
+**Unloading releases both tiers, and a read that outlives it is discarded.**
+Ending the subsystem releases every resident of both tiers — each mesh's
+material is unpinned and the resident's generation advances before it is
+cleared — and the level's unload then clears both sector arenas. A scene switch
+unloads the level before the runtime reset drains IO, so a sector read that was
+in flight completes afterwards; its completion finds the generation moved, or no
+level at all, and is dropped. Beginning a level releases anything still
+resident and never rewinds a generation, so a completion from the previous level
+cannot match a resident of the next.
+
+**Residency can be read back per cell.** The cell the ring is centred on, and
+for any cell whether it has geometry at all and whether each tier is loading or
+ready for it, can be queried; the game surface wraps both. A tier counts as
+ready only when its sector is fully resolvable, the same test the renderer
+applies before drawing it. The query is for tooling and debug overlays and never
+influences streaming.
+
 ## Depends on
 
 - [Level](LEVEL.md) — the spatial grid, and the level name the geometry's
@@ -81,6 +125,7 @@ evicted.
 ## Depended on by
 
 - [Renderer](RENDERER.md) — the resident set is the world geometry to draw.
+- Game debug overlays — through the per-cell residency query.
 
 ## Lifecycle
 
@@ -100,11 +145,15 @@ draws nothing.
 - **Sector exceeds its arena slot** — refused and logged. The format caps sector
   size and every platform slot is checked against that cap when the engine is
   built, so this is a build-time guarantee rather than a runtime risk.
-- **Slot exhaustion during recentre** — the incoming sector is skipped and
-  logged; the ring stays partially populated and geometry is missing rather than
-  wrong.
-- **Read failure** — the sector returns to empty and is retried on a later
-  recentre (full detail) or a later frame (LOD1).
+- **The ring needs a slot and none is empty** — a full-detail sector kept from
+  the previous ring position is released to make room, farthest first, so the
+  ring is never left short while one exists. The resident count is checked
+  against the ring's size when the engine is built.
+- **Read failure** — the sector returns to empty. A full-detail cell is
+  requested again on the next update; a LOD1 cell is requested again on the next
+  recentre or when a slot frees.
+- **A completion for a released resident, or after the level was unloaded** —
+  dropped without writing anything.
 - **A LOD1 sector larger than a LOD1 slot** — refused and logged. LOD1 slots
   are much smaller than full-detail ones on the smaller targets, and the cooker
   does not yet check against them.
@@ -126,8 +175,11 @@ draws nothing.
 - The LOD1 tier's reach is whatever the visibility list names, bounded by the
   LOD1 slot count; a list longer than the slots leaves its farthest cells
   unstreamed.
-- The streamer walks the visibility chunk from its start every frame to reach
-  the centre cell's list, so its per-frame cost grows with the grid.
+- The centre cell's visibility list is read directly through the chunk's offset
+  table and walked only when the wanted set is recomputed — on a recentre, and on
+  the frames after one while loads are outstanding or a slot frees. Every other
+  frame the streamer does a fixed scan of the two resident arrays, bounded by the
+  platform's slot counts and independent of the grid.
 - A resident's generation is eight bits; a completion that stays in flight
   across 256 evictions of the same resident would be taken as current.
 - Streaming is horizontal, following the two-dimensional grid in the level

@@ -181,7 +181,7 @@ whole. Never log per frame: every line crosses to the IO processor.
 Memory bandwidth and the main processor bind first; the vector unit is unused
 and the graphics engine is idle while the processor stages, because the frame
 is serialised. Every vertex is touched three times on its way to the hardware.
-Reach for: culling sectors and models before staging; a staging layout that is
+Reach for: culling models before staging; a staging layout that is
 the hardware's; overlapping the list in flight with the next build; swizzled
 textures. Every log line is a synchronous memory-card write.
 
@@ -190,7 +190,7 @@ The processor is the weakest in the family and stages every vertex every
 frame, normals included, for a shader that does not read them; textures are
 32-bit uncompressed. The display queue lets it run a frame ahead, which is what
 keeps it comfortable today. Reach for: dropping the unused attribute; culling
-sectors and models; a compressed texture vocabulary in the cook list. Every
+models; a compressed texture vocabulary in the cook list. Every
 log line is a synchronous memory-card write, and the worker thread has not been
 given the priority rule the other consoles use.
 
@@ -208,7 +208,7 @@ processor's single core staging every vertex binds first, and docked 1080p fill
 rate binds second. The default backend double-buffers its vertex and command
 memory so staging overlaps drawing by a frame. Reach for: moving static world
 geometry's transform onto the graphics processor; a compressed texture
-vocabulary; culling before staging. Every log line is a synchronous write to the
+vocabulary; culling models before staging. Every log line is a synchronous write to the
 SD card through a system service, and the memory that matters is the smaller
 allowance a title launched as an applet receives.
 

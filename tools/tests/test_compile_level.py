@@ -128,6 +128,45 @@ def test_uv_tile_clipping_keeps_area_and_confines_every_triangle_to_one_tile():
     assert all(n == (0.0, 1.0, 0.0) for n in cn)
 
 
+def _piece_area(piece):
+    return sum(compile_level._triangle_area(piece[0][0], piece[i][0], piece[i + 1][0]) for i in range(1, len(piece) - 1))
+
+
+def test_cell_clipping_keeps_area_and_confines_every_piece_to_its_cell():
+    """A triangle spanning several sector cells is cut along every border it
+    crosses: the pieces' areas add up to the triangle's, and each piece lies
+    inside the cell it is assigned to, with cut corners exactly on a border."""
+    n = (0.0, 1.0, 0.0)
+    tri = [((1.0, 0.0, 1.0), n, (0.0, 0.0)), ((39.0, 0.0, 1.0), n, (1.0, 0.0)), ((1.0, 0.0, 39.0), n, (0.0, 1.0))]
+    cells = compile_level._split_poly_to_cells(tri, 0.0, 0.0, 16.0, 3, 3)
+    assert len({cell for cell, _piece in cells}) >= 4
+    assert abs(sum(_piece_area(piece) for _cell, piece in cells) - _piece_area(tri)) < 1e-6
+    for (cx, cz), piece in cells:
+        for pos, _normal, _uv in piece:
+            assert cx * 16.0 - 1e-9 <= pos[0] <= (cx + 1) * 16.0 + 1e-9
+            assert cz * 16.0 - 1e-9 <= pos[2] <= (cz + 1) * 16.0 + 1e-9
+
+
+def test_cell_clipping_makes_identical_corners_on_an_edge_two_triangles_share():
+    """Two triangles sharing an edge that crosses a border cut it at the same
+    point whichever way each one traverses the edge, so no crack opens there."""
+    n = (0.0, 1.0, 0.0)
+    a, b = ((4.0, 0.0, 3.0), n, (0.0, 0.0)), ((28.0, 0.0, 9.0), n, (1.0, 0.0))
+    upper = [a, b, ((10.0, 0.0, 30.0), n, (0.0, 1.0))]
+    lower = [b, a, ((30.0, 0.0, -20.0), n, (1.0, 1.0))]
+    on_border = lambda cells: {corner[0] for _cell, piece in cells for corner in piece if corner[0][0] == 16.0 or corner[0][2] == 16.0}
+    shared = on_border(compile_level._split_poly_to_cells(upper, 0.0, 0.0, 16.0, 4, 4)) & \
+        on_border(compile_level._split_poly_to_cells(lower, 0.0, -32.0, 16.0, 4, 4))
+    assert any(abs(pos[0] - 16.0) < 1e-12 for pos in shared)
+
+
+def test_polygon_lying_on_a_cell_border_is_assigned_to_one_cell_only():
+    n = (1.0, 0.0, 0.0)
+    wall = [((16.0, 0.0, 2.0), n, (0.0, 0.0)), ((16.0, 0.0, 10.0), n, (1.0, 0.0)), ((16.0, 5.0, 6.0), n, (0.5, 1.0))]
+    cells = compile_level._split_poly_to_cells(wall, 0.0, 0.0, 16.0, 3, 3)
+    assert len(cells) == 1
+
+
 def test_split_long_edges_bounds_every_edge_and_keeps_area():
     verts = [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (0.0, 0.0, 7.0)]
     norms = [(0.0, 1.0, 0.0)] * 3
@@ -140,6 +179,19 @@ def test_split_long_edges_bounds_every_edge_and_keeps_area():
         for j in range(3):
             a, b = sv[k + j], sv[k + (j + 1) % 3]
             assert sum((a[i] - b[i]) ** 2 for i in range(3)) ** 0.5 <= 4.0 + 1e-6
+
+
+def test_clustering_keeps_height_and_leaves_cell_borders_on_the_grid():
+    """LOD1 clustering snaps X and Z only: a floor keeps its height, a thin slab
+    keeps its thickness, and a vertex on a sector border stays on it."""
+    n = (0.0, 1.0, 0.0)
+    verts = [(15.2, 0.5, 3.1), (16.0, 0.5, 9.4), (21.9, 0.5, 3.1), (15.2, 0.0, 3.1), (16.0, 0.0, 9.4), (21.9, 0.0, 3.1)]
+    norms = [n] * 6
+    uvs = [(0.0, 0.0)] * 6
+    cv, _cn, _ct, _cc = meshlib.decimate_soup(verts, norms, uvs, 2.0, None, (0.0, 0.0))
+    assert {p[1] for p in cv} <= {0.5, 0.0}
+    assert any(p[0] == 16.0 for p in cv)
+    assert all(p[0] % 2.0 == 0.0 and p[2] % 2.0 == 0.0 for p in cv)
 
 
 def test_bake_material_respects_the_level_texture_dimension_cap(tmp_path):
@@ -371,3 +423,185 @@ def test_entities_present(compiled):
                    ents_chunk["offset"] + strings_offset + strings_size]
     assert b"prop_model" in strings
     assert b"light" in strings
+
+
+# --- sector and lighting invariants on a purpose-built map --------------------
+
+_AXES = {
+    "minx": ("0 1 0", "0 0 -1"), "miny": ("1 0 0", "0 0 -1"), "bottom": ("1 0 0", "0 -1 0"),
+    "top": ("1 0 0", "0 -1 0"), "maxy": ("1 0 0", "0 0 -1"), "maxx": ("0 1 0", "0 0 -1"),
+}
+
+
+def _box_brush(x0, x1, y0, y1, z0, z1, texture="utils/missing", scale=1.0):
+    corners = {
+        "minx": ((x0, y1, z1), (x0, y0, z1), (x0, y0, z0)),
+        "miny": ((x0, y0, z1), (x1, y0, z1), (x1, y0, z0)),
+        "bottom": ((x1, y0, z0), (x1, y1, z0), (x0, y1, z0)),
+        "top": ((x0, y1, z1), (x1, y1, z1), (x1, y0, z1)),
+        "maxy": ((x1, y1, z0), (x1, y1, z1), (x0, y1, z1)),
+        "maxx": ((x1, y0, z1), (x1, y1, z1), (x1, y1, z0)),
+    }
+    lines = ["{"]
+    for name, pts in corners.items():
+        u, v = _AXES[name]
+        plane = " ".join("( %d %d %d )" % p for p in pts)
+        lines.append(f"{plane} {texture} [ {u} 0 ] [ {v} 0 ] 0 {scale} {scale}")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _synthetic_map(extra_world="", extra_brushes=""):
+    """Three-by-three cells of 4 world units: a thin floor, and a tall box that
+    straddles the border between two cells and shadows the floor beyond it."""
+    brushes = [_box_brush(0, 384, 0, 384, -16, 0), _box_brush(96, 160, 160, 224, 0, 96)]
+    return "\n".join([
+        "// entity 0", "{", '"mapversion" "220"', '"classname" "worldspawn"', '"_sector_size" "4"', '"_max_edge" "2"', extra_world,
+        *brushes, extra_brushes, "}",
+        "// entity 1", "{", '"classname" "light"', '"origin" "200 100 200"', '"light_type" "1"', '"color" "255 255 255"', '"intensity" "2.0"', '"range" "60"', "}",
+        "// entity 2", "{", '"classname" "light"', '"origin" "0 0 400"', '"angles" "-50 30 0"', '"light_type" "0"', '"color" "255 255 255"', '"intensity" "0.8"', "}",
+    ]) + "\n"
+
+
+def _compile_synthetic(tmp_path, platform, name="synth", **kwargs):
+    map_path = tmp_path / f"{name}.map"
+    map_path.write_text(_synthetic_map(**kwargs))
+    out = tmp_path / f"levels_{platform}_{name}"
+    path = compile_level.compile_level(str(map_path), str(out), str(ROOT / "assets" / "textures"), str(ROOT / "assets" / "models"), platform=platform)
+    return path, name.upper()
+
+
+def _read_sectors(path, name):
+    """{(tier, cx, cz): {"aabb": (min, max), "tris": [(corners, normals, colours)]}} for every sector of a level."""
+    toc = pack_archive.read_toc(path)
+    sectors = {}
+    for e in toc["entries"]:
+        key = e["key"]
+        if not key.endswith(".SEC"):
+            continue
+        base = key.split("/")[-1]
+        tier = "LOD0" if base[0] == "S" else "LOD1"
+        cx, cz = int(base[1:4]), int(base[5:8])
+        blob = pack_archive.read_payload(path, e)
+        sec = levelfmt.parse_sector(blob)
+        tris = []
+        for m in sec["meshes"]:
+            n = m["vert_count"]
+            pos = [struct.unpack_from("<4f", blob, m["verts_offset"] + 16 * i)[:3] for i in range(n)]
+            nrm = [struct.unpack_from("<3f", blob, m["norms_offset"] + 12 * i) for i in range(n)]
+            col = [struct.unpack_from("<4f", blob, m["colors_offset"] + 16 * i) for i in range(n)] if m["colors_offset"] else None
+            if m["topology"] == 1:
+                idx = [(i, i + 1, i + 2) for i in range(n - 2) if len({pos[i], pos[i + 1], pos[i + 2]}) == 3]
+            else:
+                idx = [(i, i + 1, i + 2) for i in range(0, n - 2, 3)]
+            for (a, b, c) in idx:
+                tris.append(((pos[a], pos[b], pos[c]), (nrm[a], nrm[b], nrm[c]), None if col is None else (col[a], col[b], col[c])))
+        sectors[(tier, cx, cz)] = {"aabb": (sec["aabb_min"], sec["aabb_max"]), "tris": tris}
+    core_entry = next(e for e in toc["entries"] if e["key"] == f"{name}.PS2L")
+    core = pack_archive.read_payload(path, core_entry)
+    info = levelfmt.parse_info(core, next(c for c in levelfmt.parse_ps2l(core)["chunks"] if c["name"] == "INFO"))
+    return sectors, info
+
+
+@pytest.fixture(scope="module", params=[None, "ps2", "macos"], ids=["no-platform", "ps2", "macos"])
+def synthetic(request, tmp_path_factory):
+    path, name = _compile_synthetic(tmp_path_factory.mktemp("synthetic"), request.param)
+    sectors, info = _read_sectors(path, name)
+    return request.param, sectors, info
+
+
+def test_every_triangle_lies_inside_its_sector_cell(synthetic):
+    _platform, sectors, info = synthetic
+    size = info["cell_size"]
+    for (tier, cx, cz), sector in sectors.items():
+        x0, z0 = info["origin_x"] + cx * size, info["origin_z"] + cz * size
+        for corners, _n, _c in sector["tris"]:
+            for p in corners:
+                assert x0 - 1e-4 <= p[0] <= x0 + size + 1e-4, f"{tier} {cx},{cz}: x {p[0]} outside [{x0}, {x0 + size}]"
+                assert z0 - 1e-4 <= p[2] <= z0 + size + 1e-4, f"{tier} {cx},{cz}: z {p[2]} outside [{z0}, {z0 + size}]"
+
+
+def test_sector_aabb_is_the_exact_vertex_extent(synthetic):
+    _platform, sectors, _info = synthetic
+    for key, sector in sectors.items():
+        pts = [p for corners, _n, _c in sector["tris"] for p in corners]
+        lo, hi = sector["aabb"]
+        for k in range(3):
+            assert abs(lo[k] - min(p[k] for p in pts)) < 1e-5, key
+            assert abs(hi[k] - max(p[k] for p in pts)) < 1e-5, key
+
+
+def test_a_vertex_has_one_baked_colour_in_every_sector_and_tier(synthetic):
+    _platform, sectors, _info = synthetic
+    seen = {}
+    shared = 0
+    for key, sector in sectors.items():
+        for corners, normals, colours in sector["tris"]:
+            assert colours is not None
+            for p, n, c in zip(corners, normals, colours):
+                k = (round(p[0], 3), round(p[1], 3), round(p[2], 3), round(n[0], 2), round(n[1], 2), round(n[2], 2))
+                if k in seen and seen[k][0] != key:
+                    shared += 1
+                    assert max(abs(a - b) for a, b in zip(seen[k][1], c)) < 1e-6, f"{k}: {seen[k][0]} vs {key}"
+                seen.setdefault(k, (key, c))
+    assert shared > 0
+
+
+def test_the_bake_shadows_the_floor_beside_the_box(synthetic):
+    _platform, sectors, _info = synthetic
+    lum = [sum(c[:3]) / 3 for sector in sectors.values() for _p, n, cols in sector["tris"] for c in cols]
+    ambient = compile_level.BAKE_AMBIENT[0]
+    assert min(lum) == pytest.approx(ambient, abs=1e-6)
+    assert max(lum) > ambient + 0.2
+    assert sum(1 for v in lum if abs(v - ambient) < 1e-6) > len(lum) // 50
+
+
+def test_lod1_keeps_every_height_lod0_has(synthetic):
+    _platform, sectors, _info = synthetic
+    def levels(tier):
+        return {round(corners[0][1], 2) for (t, _cx, _cz), s in sectors.items() if t == tier
+                for corners, _n, _c in s["tris"] if abs(corners[0][1] - corners[1][1]) < 1e-4 and abs(corners[1][1] - corners[2][1]) < 1e-4}
+    assert levels("LOD1") <= levels("LOD0")
+
+
+def test_hardware_clipping_platforms_cover_the_same_floor_with_fewer_triangles(synthetic):
+    platform, sectors, _info = synthetic
+    if platform != "macos":
+        pytest.skip("only platforms that clip in hardware take coarse LOD1 faces")
+    def floor_area(tier):
+        total = 0.0
+        for (t, _cx, _cz), s in sectors.items():
+            if t != tier:
+                continue
+            for corners, normals, _c in s["tris"]:
+                if normals[0][1] > 0.5 and all(abs(p[1]) < 1e-4 for p in corners):
+                    total += compile_level._triangle_area(*corners)
+        return total
+    count = lambda tier: sum(len(s["tris"]) for (t, _a, _b), s in sectors.items() if t == tier)
+    assert floor_area("LOD1") == pytest.approx(floor_area("LOD0"), rel=1e-6)
+    assert count("LOD1") < count("LOD0")
+
+
+def test_ps2_lod1_edges_stay_within_the_guard_band_limit(synthetic):
+    platform, sectors, _info = synthetic
+    if platform == "macos":
+        pytest.skip("a platform that clips in hardware is not bound by the guard band")
+    limit = 2.0 + 1e-3
+    for key, s in sectors.items():
+        for corners, _n, _c in s["tris"]:
+            for p, q in ((corners[0], corners[1]), (corners[1], corners[2]), (corners[2], corners[0])):
+                assert sum((p[k] - q[k]) ** 2 for k in range(3)) ** 0.5 <= limit, key
+
+
+def test_the_bake_ambient_key_raises_the_floor_of_the_lighting(tmp_path):
+    path, name = _compile_synthetic(tmp_path, "macos", name="bright", extra_world='"_bake_ambient" "0.5"')
+    sectors, _info = _read_sectors(path, name)
+    lum = [sum(c[:3]) / 3 for s in sectors.values() for _p, _n, cols in s["tris"] for c in cols]
+    assert min(lum) == pytest.approx(0.5, abs=1e-6)
+
+
+def test_a_face_covering_a_sliver_of_its_texture_is_reported(tmp_path, capsys):
+    extra = _box_brush(300, 332, 300, 332, 0, 32, scale=100.0)
+    _compile_synthetic(tmp_path, "macos", name="sliver", extra_brushes=extra)
+    out = capsys.readouterr().out
+    assert "utils/missing" in out and "draw as one flat colour" in out

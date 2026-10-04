@@ -63,11 +63,17 @@ budget exists.
 |---|---|---|---|
 | Engine budget | 512 MB | | A policy ceiling, not a hardware one |
 | Config arena | 1 MB | 4 | 256 KB |
-| Level-data arena | 32 MB | 16 | 2 MB |
+| Level-data arena | 72 MB | 36 | 2 MB |
 | Level LOD1 arena | 16 MB | 32 | 512 KB |
 | Renderer arena | 16 MB | 1 | 16 MB |
 | Main pool | 4 MB | | 256 B chunks |
 | Texture budget | 256 MB | | Charged at 32-bit colour, the whole mip chain |
+
+The level-data arena holds two core slots and the resident sectors: a ring of radius two,
+25 cells, and nine spare slots for the cells being handed from one tier to the other when
+the ring moves one cell diagonally. That is one cell more than the consoles keep, and the
+budget affords it; it puts the boundary between full-detail and reduced-detail geometry two
+cells from the centre rather than one.
 
 Aligned allocations come from the C allocator's aligned entry point and are released
 with the ordinary free; there is one heap here, so crossing allocators cannot corrupt a
@@ -253,7 +259,7 @@ unshippable on every console.
 | Interface quads | 16384, plus 2048 overlay quads |
 | Draw runs | 1024 world, 256 screen-space |
 | Staged vertices | grows on demand from the heap — a gap against the fixed-budget rule, see [backlog/performance_findings.md](../backlog/performance_findings.md) |
-| Resident sectors | 14 |
+| Resident sectors | 34 — the 25-cell ring and nine spare for the hand-over |
 
 **Clock.** The monotonic tick counter, converted by the system's own timebase to seconds from
 the first call: sub-microsecond, and it does not wrap within a session. The C library clock is
@@ -282,6 +288,12 @@ interface — about twenty seconds per renderer, read from the heartbeat:
 | `webgpu` | 60.5 median, 58.5 to 62.5, locked to the display | 70656 KB, constant |
 | `opengl` | 59.6 median, 57.1 to 61.5, paced by the swap's own cap | 70656 KB, constant |
 | `null` | about 51000 — the engine tick alone, about 20 us | 70656 KB, constant |
+
+**Since 2026-10-04** the level-data arena is 72 MB rather than 32, so the engine's heap reads
+111616 KB on every renderer — the reservation, by arithmetic, not a growth. The `webgpu` renderer
+was re-measured on the same machine and build type over a 38-second scripted walk across the
+level: 62.3 frames per second on average, 55.6 at the lowest, with the heap constant; the
+`opengl` and `null` figures above were not re-measured.
 
 The process's resident memory, sampled every fifteen seconds for three minutes, was flat on `opengl`
 (113.4 MB from the first minute) and rose slowly on `webgpu`, from 73.1 MB to 73.9 MB, while the engine's

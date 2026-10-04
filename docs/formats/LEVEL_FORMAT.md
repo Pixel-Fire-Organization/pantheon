@@ -3,7 +3,7 @@
 Levels are authored in TrenchBroom (Valve-220 `.map`) and compiled offline into a
 sectorized runtime format, whose entries ship folded into the one master archive
 every asset the game owns lives in (see [subsystems/ARCHIVE.md](../subsystems/ARCHIVE.md)).
-The runtime streams a 3×3 ring of full-detail (LOD0) sectors around the camera
+The runtime streams a square ring of full-detail (LOD0) sectors around the camera
 and, beyond it, the reduced-detail (LOD1) sectors the core's visibility lists
 name for the camera's cell (see [subsystems/SECTOR.md](../subsystems/SECTOR.md)).
 
@@ -22,7 +22,9 @@ the untransformed Quake vertices, because the Valve-220 U/V axes live in map spa
 
 Worldspawn keys: `_map_scale` (default 1/32), `_sector_size` (world units per
 grid cell, default 64), `_max_edge` (max triangle edge after tessellation,
-default 4 — see the compiler pipeline below for why this is mandatory on PS2).
+default 4 — see the compiler pipeline below for why this is mandatory on PS2),
+and `_bake_ambient` (the ambient term of the static lighting bake, 0 to 1,
+default 0.12 — see "Static lighting").
 
 ## On-disc layout
 
@@ -74,8 +76,9 @@ another (see [subsystems/LEVEL.md](../subsystems/LEVEL.md)).
   as string-table offsets). The engine hands these to the game's generated
   `Ecs_SpawnDispatch` (see [the ECS pipeline](../../tools/ECS/generate_ecs.py)).
 - **VISI** — one visibility list per grid cell, row-major: a cell count equal
-  to `cellsX * cellsZ`, then per cell a count followed by that many (x, z)
-  cell pairs, nearest first. A list names only cells that have a LOD1 sector;
+  to `cellsX * cellsZ`, then a table of that many byte offsets, from the start of
+  the chunk, to each cell's list, then the lists: a count followed by that many
+  (x, z) cell pairs, nearest first. A list names only cells that have a LOD1 sector;
   it is what the runtime streams LOD1 geometry from.
 - **FARF** — reserved chunk type, no longer emitted: the billboard far field
   was replaced by LOD1 sectors. A reader skips it.
@@ -84,7 +87,7 @@ another (see [subsystems/LEVEL.md](../subsystems/LEVEL.md)).
 
 ### Sector payload (PSEC)
 
-`SectorHeader` (version 3) + `BakedMeshEntry[]` (reusing the BKM2 v4 mesh entry;
+`SectorHeader` (version 2) + `BakedMeshEntry[]` (reusing the BKM2 v3 mesh entry;
 `materialIndex` indexes the level MATL table) + 16-byte-aligned vec4/vec3/vec2
 (/vec4 colour) geometry. The runtime builds `Mesh` views straight into the
 arena slot — zero copy into the existing render path. Meshes are
@@ -96,13 +99,14 @@ A mesh's `colorsOffset` is populated when the map places any static light
 the runtime then leaves every vertex at its default white tint, identical to
 the format's behaviour before static baking existed.
 
-A mesh's clamp region (`minU`/`maxU`/`minV`/`maxV`) is non-zero only for a
-mesh drawn from a per-cell atlas. It is expressed the way the PS2 GS's
-region-repeat wrap mode takes it: `minU`/`minV` are a texel mask (the cell
-size less one) and `maxU`/`maxV` the cell's texel offset, so a tiled material
-keeps wrapping inside its own atlas cell. An atlas cell is therefore always a
-power of two. Backends without such a wrap mode ignore it (see "LOD1 sectors
-and atlases" below).
+The header's AABB is the exact extent of the sector's vertices, and every vertex
+lies inside the sector's own grid cell (compiler step 3), so a sector's bounds
+are its cell's bounds or smaller and two neighbouring sectors never overlap.
+
+An atlased mesh carries UVs already confined to its atlas cell: the compiler
+splits every triangle along texture-tile boundaries and insets each piece half
+a texel inside its cell (see "LOD1 sectors and atlases" below), so no backend
+needs a wrap or clamp mode to sample one.
 
 ### What a reader must establish before it trusts a chunk
 
@@ -130,8 +134,9 @@ belonging to something else.
   and every `classnameOffset`, `keyOffset`, `valueOffset` and
   `propFirst + propCount` stays inside its table.
 - **VISI is internally consistent**: its cell count equals `cellsX * cellsZ`,
-  every per-cell list fits the chunk, and every pair it names is inside the
-  grid. The streamer walks it every frame with no further checking.
+  every offset in the table and every per-cell list fits the chunk, and every
+  pair it names is inside the grid. The streamer reads a list through the table
+  with no further checking.
 - **A PSEC mesh names a material inside the material table**: its
   `materialIndex` is below `materialCount`, not merely below
   `LEVEL_MAX_MATERIALS`, since MATL holds only `materialCount` entries.
@@ -151,27 +156,30 @@ property of what it loaded rather than of what it was given.
    clipping. Faces named `skip`/`nodraw`/`clip`/`trigger*`/`hint`/`origin` are
    culled from render geometry.
 2. Convert + scale vertices to engine space.
-3. Grid from the world AABB. Per face, fan-triangulate then **tessellate** so no
-   triangle edge exceeds `_max_edge` (default 4.0 world units) — mandatory on
-   PS2: ps2gl's VU1 renderers never truly clip, any triangle with a vertex
-   outside the ±2048 guard band or behind the near plane is ADC-dropped
-   **whole** (`external/ps2gl/vu1/clip_cull.i`), so giant brush faces vanish
-   piecewise as the camera moves. Splitting always halves the longest edge;
+3. Grid from the world AABB. Per face, fan-triangulate, then **cut** every
+   triangle along each sector border it crosses, so a cell holds exactly the
+   geometry inside it: no triangle spans two cells, and two neighbouring sectors
+   meet on a straight line. A corner made by a cut lies exactly on the border and
+   is computed from its edge's endpoints in a fixed order, so the two sides of the
+   cut, and any other triangle sharing that edge, get the same corner. A polygon
+   lying on a border goes to one cell only, and a sliver too small to see is
+   dropped.
+4. **Tessellate** each piece so no triangle edge exceeds `_max_edge` (default 4.0
+   world units) — mandatory on PS2: ps2gl's VU1 renderers never truly clip, any
+   triangle with a vertex outside the ±2048 guard band or behind the near plane is
+   ADC-dropped **whole** (`external/ps2gl/vu1/clip_cull.i`), so giant brush faces
+   vanish piecewise as the camera moves. Splitting always halves the longest edge;
    shared edges may split differently on either side (T-junctions), which is
-   invisible on coplanar faces but a known v2 refinement.
-4. Each resulting **triangle** — not the whole face — is assigned to a cell by
-   its own centroid: a face's footprint can span many cells (a large floor or
-   a skybox wall), and binning by the whole face would dump every one of its
-   tessellated triangles into a single cell regardless of how far apart they
-   end up, defeating `_sector_size` entirely for anything but small faces. Per
-   cell, group by material and bake one mesh each into a PSEC blob. Enforces
+   invisible on coplanar faces but a known v2 refinement. The cut comes first so
+   the tessellation lines up with the borders instead of being sliced by them.
+5. Per cell, group by material and bake one mesh each into a PSEC blob. Enforces
    `LEVEL_MAX_MESHES_PER_SECTOR` (32) and `LEVEL_SECTOR_MAX_BYTES` (512KB → one
    arena slot); over-budget is a hard error — shrink `_sector_size` or reduce
    geometry density in the offending cell. Every cell is also built a second
    time, at reduced detail, into a LOD1 sector, and per cell the meshes whose
    textures tile within a small range are packed into one atlas (see "LOD1
    sectors and atlases" below).
-5. Bake each brush material and each point-entity `.obj` to BKM2. Missing
+6. Bake each brush material and each point-entity `.obj` to BKM2. Missing
    sources warn and fall back (magenta texture / kept raw model reference).
    A brush texture with a material authored under `assets/materials/`,
    mirroring its own relative path under `assets/textures/` (the same
@@ -194,39 +202,71 @@ property of what it loaded rather than of what it was given.
    the `assets.TEXTURE` ceiling), then downscaled further if it still would not fit that
    platform's `IO_READ_BUFFER_SIZE`. This is why a level compiles **per
    platform** — see [PIPELINE.md](../PIPELINE.md).
-6. Bake static lighting: for every entity the map places that carries
+7. Bake static lighting: for every entity the map places that carries
    `LightComponent` (discovered generically from `tools/ECS/ECS.json`, never
    by a hardcoded classname — see "Static lighting" below), evaluate ambient
    plus that light at every static vertex, including a shadow-ray occlusion
-   test, and bake the sum into that vertex's colour. Skipped entirely (zero
+   test against every rendered triangle of the map, and bake the sum into that
+   vertex's colour. Skipped entirely (zero
    cost) when a map places no such entity.
-7. Build the per-cell visibility lists and assemble the archive.
+8. Build the per-cell visibility lists and assemble the archive.
 
-## LOD1 sectors and atlases (v1 limitations)
+## LOD1 sectors and atlases
 
-Every cell with geometry gets a second, reduced-detail sector. It is built from
-every brush except `func_detail` brushwork (unless that entity sets
-`include_in_lod1`), drops triangles whose centroid lies inside another LOD1
-brush, snaps the remainder to a coarse grid and discards whatever collapses.
+Every cell with geometry gets a second, reduced-detail sector, built from every
+brush except `func_detail` brushwork (unless that entity sets
+`include_in_lod1`). It is cut at the same sector borders as the full-detail
+tier and keeps every height exactly: a LOD1 floor is the full-detail floor, not
+a lowered or snapped copy of it, so the two tiers meet without a step.
+
+How the tier is reduced depends on whether the target's renderer clips in
+hardware.
+
+- **Platforms that clip (every platform but PS2).** A face none of whose fine
+  triangles lies inside another LOD1 brush — a triangle is hidden when its
+  centroid, pushed a little into its own brush, lies inside another one — is
+  tessellated at `LOD1_MAX_EDGE` (8 world units) instead of `_max_edge`, so a
+  floor cell is a handful of triangles rather than dozens. A face with a
+  hidden triangle keeps its fine triangles minus the hidden ones.
+- **PS2, and a compile that names no platform.** The guard-band rule forbids
+  large triangles, so the fine triangles are kept, minus the hidden ones, and
+  their vertices are clustered onto a grid in X and Z only. The grid is chosen
+  so a whole number of its steps lie across a sector and a sector border stays
+  on a grid line; Y is untouched, so a floor keeps its height and a thin slab
+  keeps its thickness. Triangles that collapse are dropped, and an edge made
+  longer than `_max_edge` is split again.
+
+Vertices are lit after any clustering, at their final positions (see "Static
+lighting").
+
 All of a LOD1 cell's textures are packed into one atlas; a full-detail cell
 packs only the textures whose UVs stay within a small tiling range and keeps
 the rest as separate meshes. Atlas textures are baked outside the platform's
 `level_textures` cap.
 
 Visibility is a fixed radius today: every cell lists every LOD1 cell within
-eight cells of it. Portal-based lists are the intended replacement (see
-`docs/backlog/Rework Level System.md`).
+twelve cells of it, nearest first. Portal-based lists are the intended
+replacement (see `docs/backlog/Rework Level System.md`).
 
 Known limitations:
 
-- Grid snapping runs **after** tessellation, so a LOD1 triangle can exceed
-  `_max_edge`, the guarantee step 3 makes for the PS2 guard band. The level
-  compiler's own test reports it.
 - A LOD1 sector streams into an `ARENA_LEVEL_LOD1` slot, which on the smaller
-  targets is far smaller than `LEVEL_SECTOR_MAX_BYTES`; the compiler checks
-  only the latter.
-- Only the giftag backend applies the clamp region; on every other backend an
-  atlased mesh whose UVs tile past its cell samples its neighbour.
+  targets is far smaller than `LEVEL_SECTOR_MAX_BYTES`. The compiler checks each
+  LOD1 sector against its platform's slot size and the cook fails when one does
+  not fit; the remedy is a smaller `_sector_size`, or `func_detail` on the
+  offending brushes.
+- Clustering moves a LOD1 vertex up to half a grid step horizontally, so on PS2
+  the far field can stand slightly proud of the full-detail floor at its outer
+  edges, and a feature thinner than a grid step can collapse.
+
+## Authoring checks the compiler reports
+
+A face whose UVs cover under 4% of its texture on both axes draws as one flat
+colour, because it samples a window a few texels wide. The compiler names each
+such texture with a count of faces. It is almost always a face scale left at the
+editor's default on a very large texture, or a texture made for a model's own UV
+layout — a photoscan albedo with a black border, say, which then paints the
+border. The check is a warning, not a refusal.
 
 ## Static lighting
 
@@ -245,14 +285,23 @@ generic `TransformComponent.position`/`.angles` runtime convenience
 properties. Its own properties are `light_type` (Directional or Point),
 `color`, `intensity`, and `range` (point lights only).
 
-The bake evaluates ambient plus every light against a cell's own static
-geometry only — a bounded, sector-local approximation that keeps the
-shadow-ray test affordable (measured at under a second for an ~18,000
-triangle test level with two lights) at the cost of not seeing an occluder
-in a neighbouring cell. LOD1 sectors are lit the same way, before their
-decimation, so the two tiers agree where one fades into the other. The result
-is written into the
-affected sector meshes' `colorsOffset` array (see "Sector payload" above).
+The bake evaluates ambient plus every light at each static vertex against every
+rendered triangle of the map — `func_detail` brushwork included, and geometry
+in other cells included — through a uniform grid over the sector cells that the
+shadow ray walks. A vertex's colour is therefore a function of its position and
+normal alone: a vertex on a sector border has the same colour in both sectors,
+a vertex the two tiers share has the same colour in both, and a shadow does not
+stop at a cell border. The result is written into the affected sector meshes'
+`colorsOffset` array (see "Sector payload" above).
+
+The ambient term is `_bake_ambient`, 0.12 unless the map sets it. It is also the
+whole colour of any face no light reaches — a face turned away from every light,
+the underside of a floor, a surface in every light's shadow — so a scene whose
+lights are all occluded or turned away reads as near-black, and raising
+`_bake_ambient` is the way to lift it. A directional light's `angles` pitch
+follows Quake's convention, in which a positive pitch looks down: a directional
+light meant to shine from above takes a positive pitch, and a negative one
+points it up, where it reaches only faces that point downward.
 
 A light-bearing entity is also spawned through the ordinary entity path
 unchanged (`docs/subsystems/LEVEL.md`), so a game wanting a *live*,

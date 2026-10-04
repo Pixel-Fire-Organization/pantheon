@@ -101,7 +101,11 @@ ATLAS_UV_MIN = -2.0               # a mesh is atlased only if every UV lies in
 ATLAS_UV_MAX = 3.0                #   [ATLAS_UV_MIN, ATLAS_UV_MAX] on both axes
 ATLAS_TEXEL_INSET = 0.5           # texels kept clear inside each atlas cell edge
 ATLAS_MAX_TRI_GROWTH = 1.5        # a mesh whose tile clipping grows it more stays unatlased
-LOD1_DECIMATE_GRID = 2.0          # world units LOD1 vertices snap to
+LOD1_MAX_EDGE = 8.0               # longest LOD1 triangle edge on a platform whose hardware clips
+LOD1_CLUSTER_GRID = 2.0           # target X/Z grid LOD1 vertices cluster onto where the renderer cannot take large triangles
+GUARD_BAND_PLATFORMS = ("ps2",)   # renderers that drop a whole triangle leaving the guard band
+UV_WINDOW_WARN = 0.04             # a face covering less of a texture than this on both axes is one flat colour
+MIN_PIECE_AREA = 1e-9             # clipped slivers below this world-unit area are dropped
 VISI_RADIUS_CELLS = 12            # cells a visibility list reaches in each axis
 
 # Texture names that never produce render geometry.
@@ -256,17 +260,92 @@ def _ray_triangle_hit(origin, direction, v0, v1, v2, max_dist):
     return eps < t < max_dist
 
 
-def _evaluate_vertex_light(pos, normal, lights, shadow_tris):
+class _Occluders:
+    """Every rendered triangle of the map in a uniform grid over the sector
+    cells, for shadow rays. The set is the whole map, not one cell, so a vertex
+    gets the same colour whichever sector holds it and whichever tier is baked."""
+
+    def __init__(self, tris, origin_x, origin_z, cell_size, cells_x, cells_z):
+        self.tris = tris
+        self.origin_x = origin_x
+        self.origin_z = origin_z
+        self.cell_size = cell_size
+        self.cells_x = cells_x
+        self.cells_z = cells_z
+        self.cells = {}
+        low = [1e30, 1e30, 1e30]
+        high = [-1e30, -1e30, -1e30]
+        for index, tri in enumerate(tris):
+            for corner in tri:
+                for k in range(3):
+                    low[k] = min(low[k], corner[k])
+                    high[k] = max(high[k], corner[k])
+            cx0 = self._clamp(math.floor((min(c[0] for c in tri) - origin_x) / cell_size), cells_x)
+            cx1 = self._clamp(math.floor((max(c[0] for c in tri) - origin_x) / cell_size), cells_x)
+            cz0 = self._clamp(math.floor((min(c[2] for c in tri) - origin_z) / cell_size), cells_z)
+            cz1 = self._clamp(math.floor((max(c[2] for c in tri) - origin_z) / cell_size), cells_z)
+            for cz in range(cz0, cz1 + 1):
+                for cx in range(cx0, cx1 + 1):
+                    self.cells.setdefault((cx, cz), []).append(index)
+        self.reach = math.sqrt(sum((high[k] - low[k]) ** 2 for k in range(3))) + 1.0 if tris else 1.0
+
+    @staticmethod
+    def _clamp(cell, count):
+        return min(max(int(cell), 0), count - 1)
+
+    def _walk(self, origin, direction, max_dist):
+        """The sector cells a ray crosses, nearest first (a two-dimensional grid walk)."""
+        size = self.cell_size
+        px = (origin[0] - self.origin_x) / size
+        pz = (origin[2] - self.origin_z) / size
+        cx = self._clamp(math.floor(px), self.cells_x)
+        cz = self._clamp(math.floor(pz), self.cells_z)
+        dx, dz = direction[0], direction[2]
+        inf = float("inf")
+        step_x = 1 if dx > 0.0 else -1
+        step_z = 1 if dz > 0.0 else -1
+        t_max_x = ((cx + (1 if dx > 0.0 else 0) - px) * size / dx) if dx != 0.0 else inf
+        t_max_z = ((cz + (1 if dz > 0.0 else 0) - pz) * size / dz) if dz != 0.0 else inf
+        t_delta_x = size / abs(dx) if dx != 0.0 else inf
+        t_delta_z = size / abs(dz) if dz != 0.0 else inf
+        while True:
+            yield (cx, cz)
+            if t_max_x < t_max_z:
+                travelled = t_max_x
+                t_max_x += t_delta_x
+                cx += step_x
+            else:
+                travelled = t_max_z
+                t_max_z += t_delta_z
+                cz += step_z
+            if travelled > max_dist or not (0 <= cx < self.cells_x and 0 <= cz < self.cells_z):
+                return
+
+    def hit(self, origin, direction, max_dist):
+        """True if the ray from `origin` along the normalized `direction` meets any triangle within `max_dist`."""
+        seen = set()
+        for cell in self._walk(origin, direction, max_dist):
+            for index in self.cells.get(cell, ()):
+                if index in seen:
+                    continue
+                seen.add(index)
+                a, b, c = self.tris[index]
+                if _ray_triangle_hit(origin, direction, a, b, c, max_dist):
+                    return True
+        return False
+
+
+def _evaluate_vertex_light(pos, normal, lights, occluders, ambient=BAKE_AMBIENT):
     """Ambient + every active light's Lambertian contribution at one static
     vertex, each light's contribution zeroed if a shadow ray toward it hits
-    `shadow_tris` first. Returns (r, g, b, a) in [0, 1]."""
-    r, g, b = BAKE_AMBIENT
+    `occluders` first. Returns (r, g, b, a) in [0, 1]."""
+    r, g, b = ambient
     origin = (pos[0] + normal[0] * BAKE_SHADOW_BIAS, pos[1] + normal[1] * BAKE_SHADOW_BIAS, pos[2] + normal[2] * BAKE_SHADOW_BIAS)
 
     for light in lights:
         if light.light_type == LIGHT_TYPE_DIRECTIONAL:
             to_light = (-light.direction[0], -light.direction[1], -light.direction[2])
-            dist = 1e30
+            dist = occluders.reach
             atten = 1.0
         else:
             dx, dy, dz = light.position[0] - pos[0], light.position[1] - pos[1], light.position[2] - pos[2]
@@ -280,13 +359,7 @@ def _evaluate_vertex_light(pos, normal, lights, shadow_tris):
         if ndotl <= 0.0:
             continue
 
-        occluded = False
-        shadow_max = dist - BAKE_SHADOW_BIAS
-        for (t0, t1, t2) in shadow_tris:
-            if _ray_triangle_hit(origin, to_light, t0, t1, t2, shadow_max):
-                occluded = True
-                break
-        if occluded:
+        if occluders.hit(origin, to_light, dist - BAKE_SHADOW_BIAS):
             continue
 
         contribution = ndotl * light.intensity * atten
@@ -602,10 +675,68 @@ def _clip_soup_to_uv_tiles(ov, on, ot):
     return out_v, out_n, out_t
 
 
-def _cell_index(x, z, origin_x, origin_z, cell_size, cells_x):
-    cx = int((x - origin_x) / cell_size)
-    cz = int((z - origin_z) / cell_size)
-    return cx, cz
+def _clip_poly_at(poly, axis, line, keep_below):
+    """One side of a convex polygon of (pos, normal, uv) corners, cut by the
+    plane pos[axis] == line. A corner made by the cut lies exactly on the plane
+    and is computed from its edge's endpoints in a canonical order, so the two
+    sides of the cut, and any other triangle sharing that edge, get the same
+    corner bit for bit. Corners on the plane belong to both sides."""
+    out = []
+    count = len(poly)
+    for i in range(count):
+        a = poly[i]
+        b = poly[(i + 1) % count]
+        da = a[0][axis] - line
+        db = b[0][axis] - line
+        if (da <= 0.0) if keep_below else (da >= 0.0):
+            out.append(a)
+        if (da < 0.0 < db) or (db < 0.0 < da):
+            lo, hi = (a, b) if a[0] <= b[0] else (b, a)
+            t = (line - lo[0][axis]) / (hi[0][axis] - lo[0][axis])
+            cut = tuple(tuple(x + (y - x) * t for x, y in zip(pl, ph)) for pl, ph in zip(lo, hi))
+            pos = list(cut[0])
+            pos[axis] = line
+            out.append((tuple(pos), cut[1], cut[2]))
+    return out
+
+
+def _split_poly_to_cells(poly, origin_x, origin_z, cell_size, cells_x, cells_z):
+    """Cut a convex polygon of (pos, normal, uv) corners along every sector
+    border it crosses. Returns ((cx, cz), piece) pairs; each piece lies inside
+    exactly one cell, and a polygon lying on a border goes to one cell only."""
+    pieces = [poly]
+    for axis, origin in ((0, origin_x), (2, origin_z)):
+        cut = []
+        for piece in pieces:
+            lo = math.floor((min(c[0][axis] for c in piece) - origin) / cell_size)
+            hi = math.ceil((max(c[0][axis] for c in piece) - origin) / cell_size)
+            rest = piece
+            for k in range(lo + 1, hi):
+                line = origin + k * cell_size
+                below = _clip_poly_at(rest, axis, line, True)
+                rest = _clip_poly_at(rest, axis, line, False)
+                if len(below) >= 3:
+                    cut.append(below)
+                if len(rest) < 3:
+                    rest = None
+                    break
+            if rest is not None:
+                cut.append(rest)
+        pieces = cut
+
+    cells = []
+    for piece in pieces:
+        cx = math.floor((sum(c[0][0] for c in piece) / len(piece) - origin_x) / cell_size)
+        cz = math.floor((sum(c[0][2] for c in piece) / len(piece) - origin_z) / cell_size)
+        cells.append(((max(0, min(cells_x - 1, cx)), max(0, min(cells_z - 1, cz))), piece))
+    return cells
+
+
+def _triangle_area(a, b, c):
+    ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
+    vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
+    nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+    return 0.5 * math.sqrt(nx * nx + ny * ny + nz * nz)
 
 
 def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, platform=None, report=False, debug_png=None):
@@ -632,10 +763,17 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, pla
     scale = float(world.props.get("_map_scale", DEFAULT_MAP_SCALE))
     sector_size = float(world.props.get("_sector_size", DEFAULT_SECTOR_SIZE))
     max_edge = float(world.props.get("_max_edge", DEFAULT_MAX_EDGE))
+    ambient_level = min(1.0, max(0.0, float(world.props.get("_bake_ambient", BAKE_AMBIENT[0]))))
+    bake_ambient = (ambient_level, ambient_level, ambient_level)
 
     bake_lights = _collect_bake_lights(entities, scale)
     if bake_lights:
         print(f"  INFO: baking {len(bake_lights)} static light(s) into vertex colour")
+
+    platform_key = cooklist.get("platform", "").lower() if platform else ""
+    hardware_clips = bool(platform_key) and platform_key not in GUARD_BAND_PLATFORMS
+    lod1_edge = max(max_edge, LOD1_MAX_EDGE) if hardware_clips else max_edge
+    lod1_cluster = None if hardware_clips else sector_size / max(1, round(sector_size / LOD1_CLUSTER_GRID))
 
     # --- collect world faces (worldspawn + any solid entities' brushes) -------
     # A face -> (texture, engine polygon verts, engine normal, quake verts for UV).
@@ -685,12 +823,52 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, pla
         return material_order.index(tex_name)
 
     # --- assign faces to cells, group by material -----------------------------
-    # cell_groups[(cx,cz)][mat_idx] = (out_v, out_n, out_t)
-    # Tessellate first, then bin each resulting triangle by its own centroid.
-    # A face's footprint can span many sector cells (a large floor or skybox
-    # wall); binning by the whole face's centroid would dump every one of its
-    # tessellated triangles into a single cell no matter how far apart they
-    # end up, which can blow LEVEL_SECTOR_MAX_BYTES regardless of _sector_size.
+    # Each face is cut along the sector borders it crosses, then each piece is
+    # tessellated, so a cell holds exactly the geometry inside it, two
+    # neighbouring cells meet on a straight line, and the tessellation lines up
+    # with the border instead of being sliced by it. cell_groups[(cx,cz)]
+    # [mat_idx] = (out_v, out_n, out_t).
+    uv_windows = {}
+
+    def _note_uv_window(tex_name, uvs):
+        us = [uv[0] for uv in uvs]
+        vs = [uv[1] for uv in uvs]
+        if max(us) - min(us) < UV_WINDOW_WARN and max(vs) - min(vs) < UV_WINDOW_WARN:
+            uv_windows[tex_name] = uv_windows.get(tex_name, 0) + 1
+
+    def _emit(cgroups, midx, nrm, fans, edge, keep=None):
+        for fan in fans:
+            corners = [(vert, nrm, uv) for (vert, uv) in fan]
+            for cell, piece in _split_poly_to_cells(corners, origin_x, origin_z, sector_size, cells_x, cells_z):
+                ov, on, ot = cgroups.setdefault(cell, {}).setdefault(midx, ([], [], []))
+                for i in range(1, len(piece) - 1):
+                    base = [(piece[j][0], piece[j][2]) for j in (0, i, i + 1)]
+                    if _triangle_area(base[0][0], base[1][0], base[2][0]) < MIN_PIECE_AREA:
+                        continue
+                    for tri in _tessellate_tri(base, edge):
+                        if keep is not None and not keep(tri):
+                            continue
+                        for vert, uv in tri:
+                            ov.append(vert)
+                            on.append(nrm)
+                            ot.append(uv)
+
+    def _lod1_hidden(tri, brush, face):
+        centroid = tuple(sum(v[i] for (v, _uv) in tri) / 3 for i in range(3))
+        cent_q = e2q(centroid, scale)
+        cent_q = (cent_q[0] - face.normal[0] * 0.1, cent_q[1] - face.normal[1] * 0.1, cent_q[2] - face.normal[2] * 0.1)
+        for other_b in lod1_brushes:
+            if other_b is brush:
+                continue
+            inside = True
+            for f in other_b.faces:
+                if f.normal[0] * cent_q[0] + f.normal[1] * cent_q[1] + f.normal[2] * cent_q[2] - f.dist > 0.01:
+                    inside = False
+                    break
+            if inside:
+                return True
+        return False
+
     def _build_cell_groups(face_list, is_lod1=False):
         cgroups = {}
         for item in face_list:
@@ -702,42 +880,25 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, pla
             mat = materials[face.texture]
             nrm = mapparse._normalize(q2e_dir(face.normal))
             uvs = [face.uv(qv, mat.width, mat.height) for qv in poly]
-            for k in range(1, len(poly) - 1):
-                fan_tri = [(everts[idx], uvs[idx]) for idx in (0, k, k + 1)]
-                for tri in _tessellate_tri(fan_tri, max_edge):
-                    centroid = tuple(sum(v[i] for (v, _uv) in tri) / 3 for i in range(3))
-                    
-                    if is_lod1:
-                        cent_q = e2q(centroid, scale)
-                        # Push inwards slightly
-                        cent_q = (cent_q[0] - face.normal[0]*0.1, cent_q[1] - face.normal[1]*0.1, cent_q[2] - face.normal[2]*0.1)
-                        hidden = False
-                        for other_b in lod1_brushes:
-                            if other_b is brush: continue
-                            inside = True
-                            for f in other_b.faces:
-                                if f.normal[0]*cent_q[0] + f.normal[1]*cent_q[1] + f.normal[2]*cent_q[2] - f.dist > 0.01:
-                                    inside = False
-                                    break
-                            if inside:
-                                hidden = True
-                                break
-                        if hidden:
-                            continue
-
-                    cx, cz = _cell_index(centroid[0], centroid[2], origin_x, origin_z, sector_size, cells_x)
-                    cx = max(0, min(cells_x - 1, cx))
-                    cz = max(0, min(cells_z - 1, cz))
-                    groups = cgroups.setdefault((cx, cz), {})
-                    ov, on, ot = groups.setdefault(midx, ([], [], []))
-                    for (vert, uv) in tri:
-                        ov.append(vert)
-                        on.append(nrm)
-                        ot.append(uv)
+            if not is_lod1:
+                _note_uv_window(face.texture, uvs)
+            fans = [[(everts[idx], uvs[idx]) for idx in (0, k, k + 1)] for k in range(1, len(poly) - 1)]
+            if is_lod1:
+                coarse = lod1_edge > max_edge and not any(_lod1_hidden(tri, brush, face) for fan in fans for tri in _tessellate_tri(fan, max_edge))
+                if coarse:
+                    _emit(cgroups, midx, nrm, fans, lod1_edge)
+                else:
+                    _emit(cgroups, midx, nrm, fans, max_edge, lambda tri, brush=brush, face=face: not _lod1_hidden(tri, brush, face))
+            else:
+                _emit(cgroups, midx, nrm, fans, max_edge)
         return cgroups
 
     cell_groups = _build_cell_groups(faces, False)
     cell_groups_lod1 = _build_cell_groups(faces_lod1, True)
+
+    for tex_name, count in sorted(uv_windows.items()):
+        print(f"  WARN: texture '{tex_name}': {count} face(s) cover under {UV_WINDOW_WARN:.0%} of it on both axes, so they draw as one flat colour; "
+              f"check the face scale in the editor, or use a tiling material")
 
     # --- atlasing -------------------------------------------------------------
     # Per cell, every level-local texture whose UVs stay within
@@ -819,34 +980,44 @@ def compile_level(map_path, out_dir, tex_dir, model_dir, materials_dir=None, pla
     new_cell_groups_lod1 = _pack_cell_groups(cell_groups_lod1, True)
 
     # --- bake sectors (PSEC) --------------------------------------------------
-    # Static lighting is baked per cell, against that cell's own geometry only
-    # (see _evaluate_vertex_light) -- a bounded, sector-local approximation
-    # that keeps the shadow-ray test cheap; it does not see occluders in a
-    # neighbouring cell. LOD1 sectors are lit the same way before decimation,
-    # so the two tiers agree where one fades into the other.
+    # Static lighting is evaluated per vertex against every rendered triangle
+    # of the map, so a vertex has one colour whichever sector or tier holds it.
     bake_start = time.time()
     lod1_max_bytes = min(LEVEL_SECTOR_MAX_BYTES, LEVEL_LOD1_SECTOR_MAX_BYTES_BY_PLATFORM.get(
-        cooklist.get("platform", "").lower(), DEFAULT_LEVEL_LOD1_SECTOR_MAX_BYTES))
+        platform_key, DEFAULT_LEVEL_LOD1_SECTOR_MAX_BYTES))
+
+    occluders = None
+    if bake_lights:
+        occluder_tris = []
+        for (_face, _poly, everts) in faces:
+            for k in range(1, len(everts) - 1):
+                occluder_tris.append((everts[0], everts[k], everts[k + 1]))
+        occluders = _Occluders(occluder_tris, origin_x, origin_z, sector_size, cells_x, cells_z)
+    light_cache = {}
+
+    def _vertex_colour(pos, normal):
+        key = (pos, normal)
+        colour = light_cache.get(key)
+        if colour is None:
+            colour = _evaluate_vertex_light(pos, normal, bake_lights, occluders, bake_ambient)
+            light_cache[key] = colour
+        return colour
 
     def _bake_sectors(cgroups, is_lod1=False):
         out_sectors = {}
         out_aabb = {}
         max_bytes = lod1_max_bytes if is_lod1 else LEVEL_SECTOR_MAX_BYTES
         for (cx, cz), groups in cgroups.items():
-            shadow_tris = []
-            if bake_lights:
-                for _midx, (ov, _on, _ot) in groups:
-                    shadow_tris.extend((ov[i], ov[i + 1], ov[i + 2]) for i in range(0, len(ov), 3))
-
             meshes = []
             for midx, (ov, on, ot) in groups:
                 if len(meshes) >= levelfmt.MAX_MESHES_PER_SECTOR:
                     print(f"  WARN: cell {cx},{cz} exceeds {levelfmt.MAX_MESHES_PER_SECTOR} meshes; extra material dropped")
                     break
-                oc = [_evaluate_vertex_light(ov[i], on[i], bake_lights, shadow_tris) for i in range(len(ov))] if bake_lights else None
-                baked = meshlib.bake_mesh(ov, on, ot, oc,
-                                          decimate_grid=LOD1_DECIMATE_GRID if is_lod1 else None,
-                                          max_edge=max_edge)
+                if is_lod1 and lod1_cluster:
+                    ov, on, ot, _ = meshlib.decimate_soup(ov, on, ot, lod1_cluster, None, (origin_x, origin_z))
+                    ov, on, ot, _ = meshlib.split_long_edges(ov, on, ot, max_edge, None)
+                oc = [_vertex_colour(ov[i], on[i]) for i in range(len(ov))] if bake_lights else None
+                baked = meshlib.bake_mesh(ov, on, ot, oc)
                 if not baked:
                     continue
                 baked["material_index"] = midx

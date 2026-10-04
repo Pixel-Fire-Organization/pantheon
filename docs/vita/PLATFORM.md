@@ -314,7 +314,7 @@ existed; the fallback gained a per-vertex CPU lighting pass ahead of upload.
 No hardware or emulator measurement exists yet for either — fold this scene
 into the same baseline pass above rather than measuring it separately.
 
-**Left on the table**, in the order to attack it: culling sectors and models
+**Left on the table**, in the order to attack it: culling models
 before staging; a compressed texture vocabulary in the cook list; the sky;
 asynchronous sector recentring.
 
