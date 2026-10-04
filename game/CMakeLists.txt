@@ -176,6 +176,10 @@ function(game_add_cook_target PLATFORM)
             --src "${ENGINE_ASSETS_SRC_DIR}"
             --themes "${CMAKE_SOURCE_DIR}/game/config/theme.json"
             --dst "${_cooked}/rassets"
+            COMMAND ${PYTHON3_BIN} "${CMAKE_SOURCE_DIR}/tools/cook_shaders.py"
+            --platform "${_lower}"
+            --src "${ENGINE_ASSETS_SRC_DIR}/shaders"
+            --dst "${_cooked}/shaders"
             COMMENT "Cook: engine + game source assets -> dist/cooked/${_lower}/rassets"
             VERBATIM
     )

@@ -257,7 +257,7 @@ def test_reserved_actions_compile_on_every_platform():
         path = _declare(tmp_path, [], with_reserved=False)
         path.write_text(json.dumps({"contexts": [_context("Global")], "actions": path_actions}), encoding="utf-8")
         declaration = act.load_declaration(str(path))
-        for platform in ("ps2pal", "ps2ntsc", "win32", "vita", "vitatv", "psp", "nx"):
+        for platform in ("ps2pal", "ps2ntsc", "win32", "vita", "vitatv", "psp", "nx", "macos"):
             act.compile_for_platform(declaration, str(ROOT), platform, [])
 
 
@@ -361,7 +361,7 @@ def test_shipped_declaration_debug_menu_does_not_collide_with_pause():
     on its own if this regressed; this test names the specific fault so a
     future collision here fails with a description instead of a generic one."""
     declaration = act.load_declaration(str(ROOT / "game" / "config" / "actions.json"))
-    for platform in ("ps2pal", "ps2ntsc", "win32", "vita", "vitatv", "nx"):
+    for platform in ("ps2pal", "ps2ntsc", "win32", "vita", "vitatv", "nx", "macos"):
         act.compile_for_platform(declaration, str(ROOT), platform, [])
 
 
@@ -461,5 +461,5 @@ def test_the_shipped_declaration_is_valid():
     declaration = act.load_declaration(str(ROOT / "game" / "config" / "actions.json"))
     assert declaration["actions"]
     assert [e["id"] for e in declaration["actions"]] == list(range(len(declaration["actions"])))
-    for platform in ("ps2pal", "ps2ntsc", "win32", "vita", "vitatv", "nx", "psp"):
+    for platform in ("ps2pal", "ps2ntsc", "win32", "vita", "vitatv", "nx", "psp", "macos"):
         act.compile_for_platform(declaration, str(ROOT), platform, [])

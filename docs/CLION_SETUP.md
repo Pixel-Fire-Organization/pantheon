@@ -65,11 +65,15 @@ against the active toolchain.
 | `vita-<cfg>-tv` | `VITATV` | `build/vitasdk-<cfg>-tv` |
 | `psp-debug` / `psp-release` | `PSP` | `build/pspdev-<cfg>` |
 | `nx-debug` / `nx-release` | `NX` | `build/devkita64-<cfg>` |
+| `macos-debug` | `MACOS`, the host's architecture only | `build/macos-native-debug` |
+| `macos-release` | `MACOS`, universal | `build/macos-release` |
 
-Each has a `-linux` twin. `<cfg>` is `debug` or `release`.
+Each has a `-linux` twin, except the macOS ones, which run on the Mac itself. `<cfg>` is `debug` or `release`.
 
 Build directories match what `tools/build.py` uses, so a terminal build and an
-IDE build of the same preset share one tree instead of compiling twice.
+IDE build of the same preset share one tree instead of compiling twice. The one
+exception is the macOS debug preset, which builds only the host's architecture and
+so keeps its own directory rather than fight `tools/build.py`'s universal one.
 
 The retired `REGION` option no longer exists: broadcast region is platform
 identity, so `ps2pal` and `ps2ntsc` are separate platforms rather than one
@@ -103,7 +107,7 @@ launched without dropping to a terminal.
 
 The build presets in the preset dropdown cover the same ground: one per
 configure preset targeting `dist`, plus `run-ps2pal`, `run-ps2ntsc`,
-`run-win32`, `run-vita`, `run-vitatv`, `run-psp`, `run-nx` and `test-tools`.
+`run-win32`, `run-vita`, `run-vitatv`, `run-psp`, `run-nx`, `run-macos` and `test-tools`.
 
 ### How launching works
 

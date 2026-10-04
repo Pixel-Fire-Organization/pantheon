@@ -33,6 +33,10 @@
         "max_width": 2048,
         "max_height": 2048
       }
+    },
+    "SHADER": {
+      "enabled": true,
+      "dialects": ["wgsl", "glsl", "glsl_legacy"]
     }
   }
 }

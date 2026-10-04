@@ -30,7 +30,12 @@ TOOLCHAINS = {
     "VITATV": "toolchains/vitasdk.cmake",
     "PSP": "toolchains/pspdev.cmake",
     "NX": "toolchains/devkita64.cmake",
+    "MACOS": "toolchains/macos.cmake",
 }
+
+# Platforms that need none of the repository's submodules. A build asking only for
+# these skips the submodule update, so a Mac never clones the console SDK sources.
+PLATFORMS_WITHOUT_SUBMODULES = {"MACOS"}
 
 REGION_ALIAS = {"pal": "PS2PAL", "ntsc": "PS2NTSC"}
 
@@ -68,7 +73,14 @@ def resolve_platforms(args):
         return [p.strip().upper() for p in args.platforms.split(",") if p.strip()]
     if args.region:
         return [REGION_ALIAS[args.region]]
+    if sys.platform == "darwin":
+        return ["MACOS"]  # the only platform a Mac builds; the PS2 toolchain is not installed here
     return []  # let CMake use its default list, filtered by the toolchain
+
+
+def needs_submodules(platforms):
+    """@return Whether any requested platform builds from a submodule."""
+    return not platforms or not set(platforms) <= PLATFORMS_WITHOUT_SUBMODULES
 
 
 def group_by_toolchain(platforms):
@@ -177,7 +189,8 @@ def build_native(root, args, groups):
 def main():
     args = parse_args()
     root = Path(__file__).resolve().parent.parent
-    groups = group_by_toolchain(resolve_platforms(args))
+    platforms = resolve_platforms(args)
+    groups = group_by_toolchain(platforms)
 
     is_windows = sys.platform == "win32"
     is_wsl = False
@@ -185,7 +198,8 @@ def main():
         with open("/proc/version", "r") as f:
             is_wsl = "microsoft" in f.read().lower()
 
-    print("=== Initialising git submodules ===")
+    if needs_submodules(platforms):
+        print("=== Initialising git submodules ===")
 
     if is_windows and not is_wsl:
         # The PS2 toolchain and the MinGW cross-compiler both live in WSL, so a
@@ -222,7 +236,8 @@ def main():
         return
 
     try:
-        subprocess.run(["git", "submodule", "update", "--init", "--recursive"], cwd=root, check=True)
+        if needs_submodules(platforms):
+            subprocess.run(["git", "submodule", "update", "--init", "--recursive"], cwd=root, check=True)
         build_native(root, args, groups)
     except subprocess.CalledProcessError as e:
         print("=== Build Failed ===")

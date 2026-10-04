@@ -255,7 +255,7 @@ def test_font_is_rejected_where_the_cook_list_disables_it(tmp_path):
 
 
 def test_shipped_cooklists_enable_fonts_on_every_platform():
-    for name in ("ps2", "win32", "vita", "psp", "nx"):
+    for name in ("ps2", "win32", "vita", "psp", "nx", "macos"):
         path = os.path.join(ROOT, "engine", "config", name, "cooklist.json")
         import json
         with open(path, "r", encoding="utf-8") as fh:

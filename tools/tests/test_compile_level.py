@@ -53,6 +53,7 @@ _PLATFORM_HEADERS = {
     "win32": ROOT / "engine" / "include" / "platform" / "win32" / "PlatformConstants.h",
     "psp": ROOT / "engine" / "include" / "platform" / "psp" / "PlatformConstants.h",
     "nx": ROOT / "engine" / "include" / "platform" / "nx" / "PlatformConstants.h",
+    "macos": ROOT / "engine" / "include" / "platform" / "macos" / "PlatformConstants.h",
 }
 
 

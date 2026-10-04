@@ -14,7 +14,7 @@
 # so a PAL disc image can never be handed to a Win32 build.
 # ---------------------------------------------------------------------------
 
-set(ENGINE_KNOWN_PLATFORMS PS2PAL PS2NTSC WIN32 VITA VITATV PSP NX)
+set(ENGINE_KNOWN_PLATFORMS PS2PAL PS2NTSC WIN32 VITA VITATV PSP NX MACOS)
 
 # Per-platform metadata. Keep these together: adding a platform should be one
 # block here plus one <dir> subdirectory under each of engine/include/platform/,
@@ -65,6 +65,12 @@ set(PLATFORM_NX_BASE           "")
 set(PLATFORM_NX_TOOLCHAIN      "devkita64")
 set(PLATFORM_NX_EXE            "main.elf")
 set(PLATFORM_NX_DIST           "nx")
+
+set(PLATFORM_MACOS_DIR         "macos")
+set(PLATFORM_MACOS_BASE        "")
+set(PLATFORM_MACOS_TOOLCHAIN   "macos")
+set(PLATFORM_MACOS_EXE         "game")
+set(PLATFORM_MACOS_DIST        "macos")
 
 set(PLATFORMS_TO_SUPPORT "${ENGINE_KNOWN_PLATFORMS}"
     CACHE STRING "Platforms to build. Defaults to every known platform, filtered by the active toolchain.")

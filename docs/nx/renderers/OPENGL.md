@@ -59,7 +59,7 @@ below.
 - **A per-run material uniform, one 256-byte-strided slot per draw run in one
   buffer**, written with `glBufferSubData` and bound with
   `glBindBufferRange` at that run's offset — the same dynamic-offset shape
-  [WebGpu](../../win32/renderers/WEBGPU.md)'s material buffer uses, at the
+  [WebGpu](../../renderers/WEBGPU.md)'s material buffer uses, at the
   same conservative 256-byte stride every desktop/Vulkan-class driver
   guarantees for it.
 - **The PBR pass repoints uniform-buffer binding point 0 away from the flat
@@ -69,7 +69,7 @@ below.
   program switch untouched.
 - **Baked and dynamic lighting compose by addition, not replacement** — the
   same formula and reasoning as
-  [WEBGPU.md](../../win32/renderers/WEBGPU.md)'s Materials & lighting
+  [WEBGPU.md](../../renderers/WEBGPU.md)'s Materials & lighting
   section.
 - **One real-time shadow caster, dynamic geometry only**, `GFX_SHADOW_MAP_SIZE`
   square. As on [deko3d](DEKO3D.md), depth is written into an ordinary RGBA8

@@ -43,6 +43,7 @@ DEADZONE_HEADER = {
     "vitatv": os.path.join("engine", "include", "platform", "vita", "PlatformConstantsVita.h"),
     "psp": os.path.join("engine", "include", "platform", "psp", "PlatformConstants.h"),
     "nx": os.path.join("engine", "include", "platform", "nx", "PlatformConstants.h"),
+    "macos": os.path.join("engine", "include", "platform", "macos", "PlatformConstants.h"),
 }
 
 CAPABILITIES_PATH = {
@@ -53,6 +54,7 @@ CAPABILITIES_PATH = {
     "vitatv": os.path.join("engine", "config", "vita", "tv", "input_capabilities.json"),
     "psp": os.path.join("engine", "config", "psp", "input_capabilities.json"),
     "nx": os.path.join("engine", "config", "nx", "input_capabilities.json"),
+    "macos": os.path.join("engine", "config", "macos", "input_capabilities.json"),
 }
 
 # --- Source name grammar -----------------------------------------------------

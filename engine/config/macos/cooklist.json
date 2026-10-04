@@ -1,0 +1,42 @@
+{
+  "platform": "macos",
+  "description": "An ordinary graphics processor has no reason to carry the console storage modes, and expanding them at load time is wasted work. Textures are cooked directly uploadable. The ceiling is a policy budget, not hardware. level_textures (brush materials baked by the level compiler) is intentionally absent: desktop memory has no reason to cap what a level can pin. Shaders ship as loose files beside the archive, for the two dialects this platform's renderers load: WGSL for the Metal backend and core GLSL for the OpenGL fallback. The legacy GLSL path exists only on Win32.",
+  "assets": {
+    "TEXTURE": {
+      "enabled": true,
+      "format": "rgba32",
+      "max_width": 4096,
+      "max_height": 4096,
+      "budget_bytes": 268435456
+    },
+    "MODEL": {
+      "enabled": true
+    },
+    "SOUND": {
+      "enabled": false
+    },
+    "FONT": {
+      "enabled": true
+    },
+    "THEME": {
+      "enabled": true
+    },
+    "MATERIAL": {
+      "enabled": true,
+      "bake_normal": true,
+      "bake_orm": true,
+      "normal_max_dimensions": {
+        "max_width": 2048,
+        "max_height": 2048
+      },
+      "orm_max_dimensions": {
+        "max_width": 2048,
+        "max_height": 2048
+      }
+    },
+    "SHADER": {
+      "enabled": true,
+      "dialects": ["wgsl", "glsl"]
+    }
+  }
+}

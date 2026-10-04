@@ -159,7 +159,7 @@ def test_regional_variants_share_their_base_cooklist():
 def test_shipped_cooklists_match_the_schema():
     schema = json.loads((ROOT / "tools/schemas/cooklist.schema.json").read_text())
     allowed_classes = set(schema["properties"]["assets"]["properties"])
-    for name in ("ps2", "win32", "vita", "psp", "nx"):
+    for name in ("ps2", "win32", "vita", "psp", "nx", "macos"):
         data = json.loads((ROOT / "engine/config" / name / "cooklist.json").read_text())
         assert data["platform"] == name
         assert set(data["assets"]) <= allowed_classes
@@ -181,6 +181,7 @@ _PLATFORM_HEADERS_FOR_IO_BUFFER = {
     "win32": ROOT / "engine" / "include" / "platform" / "win32" / "PlatformConstants.h",
     "psp": ROOT / "engine" / "include" / "platform" / "psp" / "PlatformConstants.h",
     "nx": ROOT / "engine" / "include" / "platform" / "nx" / "PlatformConstants.h",
+    "macos": ROOT / "engine" / "include" / "platform" / "macos" / "PlatformConstants.h",
 }
 
 

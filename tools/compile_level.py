@@ -77,6 +77,7 @@ LEVEL_TEXTURE_MAX_BYTES_BY_PLATFORM = {
     "win32": 4 * 1024 * 1024,
     "psp": 512 * 1024,
     "nx": 4 * 1024 * 1024,
+    "macos": 4 * 1024 * 1024,
 }
 DEFAULT_LEVEL_TEXTURE_MAX_BYTES = 512 * 1024  # conservative fallback with no --platform
 
@@ -89,6 +90,7 @@ LEVEL_LOD1_SECTOR_MAX_BYTES_BY_PLATFORM = {
     "win32": 512 * 1024,
     "psp": 336 * 1024,
     "nx": 512 * 1024,
+    "macos": 512 * 1024,
 }
 DEFAULT_LEVEL_LOD1_SECTOR_MAX_BYTES = 160 * 1024  # the smallest target, with no --platform
 

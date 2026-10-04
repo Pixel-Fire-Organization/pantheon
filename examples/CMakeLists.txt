@@ -139,6 +139,10 @@ function(example_add_cook_target NAME PLATFORM)
             --src "${ENGINE_ASSETS_SRC_DIR}"
             --themes "${CMAKE_SOURCE_DIR}/game/config/theme.json"
             --dst "${_cooked}/rassets"
+            COMMAND ${PYTHON3_BIN} "${CMAKE_SOURCE_DIR}/tools/cook_shaders.py"
+            --platform "${_lower}"
+            --src "${ENGINE_ASSETS_SRC_DIR}/shaders"
+            --dst "${_cooked}/shaders"
             COMMENT "Cook: examples/${NAME} assets -> examples/dist/${NAME}/${_lower}/cooked/rassets"
             VERBATIM
     )
@@ -264,13 +268,6 @@ function(example_stage PLATFORM NAME EXE_TARGET DIST_DIR)
     string(TOLOWER "${PLATFORM}" _lower)
     set(_cooked "${CMAKE_SOURCE_DIR}/examples/dist/${NAME}/${_lower}/cooked")
 
-    set(_extraCommand "")
-    if("${PLATFORM}" STREQUAL "WIN32")
-        set(_extraCommand
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${WGPU_NATIVE_DIR}/lib/wgpu_native.dll" "${DIST_DIR}/wgpu_native.dll")
-    endif()
-
     add_custom_target(stage-example-${NAME}-${_lower}
             COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}"
             COMMAND ${PYTHON3_BIN} "${CMAKE_SOURCE_DIR}/tools/pack_master_archive.py"
@@ -278,7 +275,6 @@ function(example_stage PLATFORM NAME EXE_TARGET DIST_DIR)
             --prefix RASSETS
             --levels "${_cooked}/levels"
             --dst "${DIST_DIR}/RASSETS.PS2R"
-            ${_extraCommand}
             COMMENT "Staging examples/dist/${NAME}/${_lower}/ (exe + assets)"
             VERBATIM
     )

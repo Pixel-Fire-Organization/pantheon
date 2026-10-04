@@ -19,7 +19,6 @@ namespace
     Toast s_Toasts[UI_MAX_TOASTS];
     uint32_t s_ToastCount = 0;
 
-    int s_ModalSavedClip = 0;
 } // namespace
 
 void Ui_BeginOverlay()
@@ -55,7 +54,6 @@ bool Ui_BeginModal(const char* title, int w, int h)
     const int x = (Ui_ScreenWidth() - w) / 2;
     const int y = (Ui_ScreenHeight() - h) / 2;
     state.modalOpen = true;
-    s_ModalSavedClip = 0;
 
     Ui_BeginPanel(title, x, y, w, h);
     return true;

@@ -86,7 +86,7 @@ namespace
     void ForceAllocArena()
     {
         const ArenaType type = TargetArenaType();
-        const int targetIdx = (s_Target == TARGET_CONFIG) ? 0 : 1;
+        const int targetIdx = (s_Target == TARGET_CONFIG) ? TARGET_CONFIG : TARGET_LEVEL_DATA;
         const uint32_t slots = ArenaSlotCount(type);
         if (slots == 0)
         {
@@ -148,7 +148,7 @@ namespace
         else
         {
             Engine_ResetArena(TargetArenaType());
-            s_NextSlot[(s_Target == TARGET_CONFIG) ? 0 : 1] = 0;
+            s_NextSlot[(s_Target == TARGET_CONFIG) ? TARGET_CONFIG : TARGET_LEVEL_DATA] = 0;
         }
         RecordAction("FORCE RESET", before, TargetUsedBytes(), false);
     }

@@ -77,15 +77,19 @@ last is a console format one platform is obliged to produce.
 - [ACTION_OVERLAY.md](formats/ACTION_OVERLAY.md) — a player's rebindings
 - [TROPHY_PACK.md](formats/TROPHY_PACK.md) — Vita trophy container
 
+**Source**
+
+- [SHADER_ASSETS.md](formats/SHADER_ASSETS.md) — the shader sources the desktop renderers read; plain text, not a binary layout
+
 ## Platforms
 
-| | PlayStation 2 | Win32 | PlayStation Vita | PlayStation Portable | Nintendo Switch |
-|---|---|---|---|---|---|
-| Spec | [ps2/PLATFORM.md](ps2/PLATFORM.md) | [win32/PLATFORM.md](win32/PLATFORM.md) | [vita/PLATFORM.md](vita/PLATFORM.md) | [psp/PLATFORM.md](psp/PLATFORM.md) | [nx/PLATFORM.md](nx/PLATFORM.md) |
-| Building | [ps2/BUILD.md](ps2/BUILD.md) | [win32/BUILD.md](win32/BUILD.md) | [vita/BUILD.md](vita/BUILD.md) | [psp/BUILD.md](psp/BUILD.md) | [nx/BUILD.md](nx/BUILD.md) |
-| Selectable as | `ps2pal`, `ps2ntsc` | `win32` | `vita`, `vitatv` | `psp` | `nx` |
-| Default renderer | [giftag](ps2/renderers/GIFTAG.md) | [webgpu](win32/renderers/WEBGPU.md) | [gxm](vita/renderers/GXM.md) | [gu](psp/renderers/GU.md) | [deko3d](nx/renderers/DEKO3D.md) |
-| Fallback | [ps2gl](ps2/renderers/PS2GL.md), then null | [opengl](win32/renderers/OPENGL.md), then null | [vitagl](vita/renderers/VITAGL.md), then null | [pspgl](psp/renderers/PSPGL.md), then null | [opengl](nx/renderers/OPENGL.md), then null |
+| | PlayStation 2 | Win32 | PlayStation Vita | PlayStation Portable | Nintendo Switch | macOS |
+|---|---|---|---|---|---|---|
+| Spec | [ps2/PLATFORM.md](ps2/PLATFORM.md) | [win32/PLATFORM.md](win32/PLATFORM.md) | [vita/PLATFORM.md](vita/PLATFORM.md) | [psp/PLATFORM.md](psp/PLATFORM.md) | [nx/PLATFORM.md](nx/PLATFORM.md) | [macos/PLATFORM.md](macos/PLATFORM.md) |
+| Building | [ps2/BUILD.md](ps2/BUILD.md) | [win32/BUILD.md](win32/BUILD.md) | [vita/BUILD.md](vita/BUILD.md) | [psp/BUILD.md](psp/BUILD.md) | [nx/BUILD.md](nx/BUILD.md) | [macos/BUILD.md](macos/BUILD.md) |
+| Selectable as | `ps2pal`, `ps2ntsc` | `win32` | `vita`, `vitatv` | `psp` | `nx` | `macos` |
+| Default renderer | [giftag](ps2/renderers/GIFTAG.md) | [webgpu](renderers/WEBGPU.md) | [gxm](vita/renderers/GXM.md) | [gu](psp/renderers/GU.md) | [deko3d](nx/renderers/DEKO3D.md) | [webgpu](macos/renderers/WEBGPU.md), on Metal |
+| Fallback | [ps2gl](ps2/renderers/PS2GL.md), then null | [opengl](win32/renderers/OPENGL.md), then null | [vitagl](vita/renderers/VITAGL.md), then null | [pspgl](psp/renderers/PSPGL.md), then null | [opengl](nx/renderers/OPENGL.md), then null | [opengl](macos/renderers/OPENGL.md), then null |
 
 PS2 extras: [MASP.md](ps2/MASP.md),
 [TEXTURE_BUDGET.md](ps2/TEXTURE_BUDGET.md),
@@ -102,6 +106,11 @@ why both ship, and what each slot holds.
 
 nx extras: [PACKAGING.md](nx/PACKAGING.md) — the single executable container, its
 icon, and how the examples are packaged.
+
+Desktop extras: the WebGPU renderer is one implementation shared by Win32 and macOS,
+specified in [renderers/WEBGPU.md](renderers/WEBGPU.md), and both desktop renderers
+read their shaders as cooked assets, specified in
+[formats/SHADER_ASSETS.md](formats/SHADER_ASSETS.md).
 
 Editor setup: [CLION_SETUP.md](CLION_SETUP.md).
 

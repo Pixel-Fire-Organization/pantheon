@@ -83,6 +83,11 @@
       }
     },
     {
+      "name": "tc-macos",
+      "hidden": true,
+      "toolchainFile": "${sourceDir}/toolchains/macos.cmake"
+    },
+    {
       "name": "ps2-debug",
       "displayName": "PS2 Debug (PAL + NTSC)",
       "inherits": [
@@ -549,8 +554,36 @@
       "cacheVariables": {
         "PLATFORMS_TO_SUPPORT": "NX"
       }
+    },
+    {
+      "name": "macos-debug",
+      "displayName": "macOS Debug (host architecture)",
+      "inherits": [
+        "tc-macos",
+        "cfg-debug",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/macos-native-debug",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "MACOS",
+        "MACOS_ARCHITECTURES": "native"
+      }
+    },
+    {
+      "name": "macos-release",
+      "displayName": "macOS Release (universal)",
+      "inherits": [
+        "tc-macos",
+        "cfg-release",
+        "host-linux"
+      ],
+      "binaryDir": "${sourceDir}/build/macos-release",
+      "cacheVariables": {
+        "PLATFORMS_TO_SUPPORT": "MACOS"
+      }
     }
   ],
+
   "buildPresets": [
     {
       "name": "ps2-debug",
@@ -866,6 +899,28 @@
       "configurePreset": "nx-debug",
       "targets": [
         "run-nx"
+      ]
+    },
+    {
+      "name": "macos-debug",
+      "configurePreset": "macos-debug",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-release",
+      "targets": [
+        "dist"
+      ]
+    },
+    {
+      "name": "run-macos",
+      "displayName": "Run macOS",
+      "configurePreset": "macos-debug",
+      "targets": [
+        "run-macos"
       ]
     }
   ]

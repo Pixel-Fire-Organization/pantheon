@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scenes/UiScene.h"
+#include "scenes/UIScene.h"
 
 class StyleScene final : public game::UiScene
 {

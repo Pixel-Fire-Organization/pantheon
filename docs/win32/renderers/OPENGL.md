@@ -35,7 +35,7 @@ rather than needing a third graphics port.
 
 ## Model
 
-Geometry is staged into the same representation the [WebGPU](WEBGPU.md) backend
+Geometry is staged into the same representation the [WebGPU](../../renderers/WEBGPU.md) backend
 uses, so both produce identical frames. Three-dimensional and screen-space
 geometry occupy separate spans of one buffer and are drawn as runs sharing a
 material.
@@ -45,11 +45,17 @@ than a generated one. Resolution falls back to the system library for the older
 entry points, because the driver query is not required to answer for them and
 returns various non-null failure values on some drivers.
 
-Two programs exist, one per dialect, mirroring the two paths above: a flat/
-unlit one for the screen-space pass and `RenderToImage3D`'s preview target, and
-a PBR one for the main scene pass, each compiled from whichever of the core or
-legacy shader dialect the chosen path uses. A third, depth-only program serves
-the real-time shadow pass. See "Materials & lighting" below.
+Three programs exist: a flat/unlit one for the screen-space pass and
+`RenderToImage3D`'s preview target, a PBR one for the main scene pass, and a
+depth-only one for the real-time shadow pass. Each is compiled from whichever of
+the core or legacy shader dialect the chosen path uses, and **the sources are
+cooked assets, not text in the renderer** — a core file and a legacy file for each
+program, read at start-up. The core files are the same ones the
+[macOS](../../macos/renderers/OPENGL.md) renderer compiles, behind one shared
+version line, so a core-path difference between the two is a driver difference.
+The contract, and how to edit a shader without rebuilding, are in
+[formats/SHADER_ASSETS.md](../../formats/SHADER_ASSETS.md). See "Materials &
+lighting" below.
 
 ## Materials & lighting
 
@@ -66,10 +72,11 @@ the real-time shadow pass. See "Materials & lighting" below.
 - **The platform's `GFX_MAX_LIGHTS`/`GFX_SHADOW_MAP_SIZE` constants are
   spliced into the shader source at compile time**, as an extra
   `glShaderSource` array entry containing `#define`s generated from the real
-  `PlatformConstants.h` values, rather than duplicated as literals in the raw
-  shader text where they could silently drift from it.
+  `PlatformConstants.h` values, rather than duplicated as literals in the shader
+  asset where they could silently drift from it. The version line is a third
+  entry, so the cooked source carries none.
 - **Baked and dynamic lighting compose by addition, not replacement** — see
-  [WEBGPU.md](WEBGPU.md)'s Materials & lighting section; the formula and the
+  [WEBGPU.md](../../renderers/WEBGPU.md)'s Materials & lighting section; the formula and the
   reason vertex colour is added once rather than folded into albedo are
   identical here, since both backends share the same design.
 - **One real-time shadow caster, dynamic geometry only.** Same shape as
@@ -90,7 +97,7 @@ the real-time shadow pass. See "Materials & lighting" below.
   descriptor/bind-group object to cache in the first place, so the run loop is
   simpler than the WebGPU backend's despite doing the same work.
 - **`RenderToImage3D`'s preview target deliberately stays on the flat
-  program** — see the same reasoning in [WEBGPU.md](WEBGPU.md).
+  program** — see the same reasoning in [WEBGPU.md](../../renderers/WEBGPU.md).
 
 ## Quirks and limits
 
@@ -116,7 +123,7 @@ the real-time shadow pass. See "Materials & lighting" below.
   optional, and without it the frame runs uncapped. This is a nuisance rather
   than a failure and is not treated as one.
 - Screen-space work may be submitted before the frame begins; see the same note
-  in [WEBGPU.md](WEBGPU.md).
+  in [WEBGPU.md](../../renderers/WEBGPU.md).
 - The loader covers only the entry points this backend uses. Adding a feature
   means adding its entry points explicitly.
 

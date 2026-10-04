@@ -4,7 +4,7 @@
 
 # Pantheon
 
-A custom multi-platform game engine written in C++, targeting PlayStation 2, PlayStation Vita, PlayStation Portable, Win32 and Nintendo Switch, leveraging platform SDKs such as `ps2sdk` and `ps2gl` for native 2D/3D graphics, audio, input handling, and hardware acceleration.
+A custom multi-platform game engine written in C++, targeting PlayStation 2, PlayStation Vita, PlayStation Portable, Win32, macOS and Nintendo Switch, leveraging platform SDKs such as `ps2sdk` and `ps2gl` for native 2D/3D graphics, audio, input handling, and hardware acceleration.
 
 Every subsystem carries a Greek-deity codename (Renderer is **Aphrodite**, Memory is **Mnemosyne**, and so on) — see the [Subsystems table](docs/PLATFORMS.md#subsystems) for the full pantheon.
 
@@ -21,25 +21,28 @@ To reliably build this engine from source, you must have the toolchain for at le
    - Cross-compiled from WSL/Linux with MinGW-w64: `sudo apt install mingw-w64`.
    - Nothing else is installed by hand — the default renderer's graphics library is a pinned prebuilt fetched at configure time. See [docs/win32/BUILD.md](docs/win32/BUILD.md).
 
-3. **PS Vita Toolchain (optional, for Vita builds):**
+3. **macOS (optional, for Mac builds):**
+   - Built natively with Xcode or the Command Line Tools, CMake 3.19+ and Python 3.10+; no submodule is needed. One bundle carries both Intel and Apple Silicon code. See [docs/macos/BUILD.md](docs/macos/BUILD.md).
+
+4. **PS Vita Toolchain (optional, for Vita builds):**
    - Install [VitaSDK](https://vitasdk.org) via `vdpm`, then `vdpm install vitaShaRK taihen libmathneon`.
    - **Environment:** export `VITASDK` (e.g. `export VITASDK=/usr/local/vitasdk`) and add `$VITASDK/bin` to `PATH`.
    - The default Vita renderer also needs an offline shader compiler (`psp2cgc`) placed in `external/psp2cgc/`.
      It is not committed. See [docs/vita/BUILD.md](docs/vita/BUILD.md).
 
-4. **PSP Toolchain (optional, for PSP builds):**
+5. **PSP Toolchain (optional, for PSP builds):**
    - Install a prebuilt [`pspdev`](https://github.com/pspdev/pspdev) release (or build `psptoolchain` from source).
    - **Environment:** export `PSPDEV` (e.g. `export PSPDEV=/usr/local/pspdev`) and add `$PSPDEV/bin` to `PATH`.
    - Nothing else is needed — unlike the Vita, this platform has no third-party graphics submodule. See [docs/psp/BUILD.md](docs/psp/BUILD.md).
 
-5. **Nintendo Switch Toolchain (optional, for `nx` builds):**
+6. **Nintendo Switch Toolchain (optional, for `nx` builds):**
    - **Easiest:** Docker Engine in WSL (`sudo apt install docker.io`, then add yourself to the `docker` group).
      `tools/build.py` builds `nx` inside devkitPro's pinned image when no host toolchain is installed.
    - **Or on the host:** install devkitPro pacman, then `sudo dkp-pacman -S switch-dev switch-mesa switch-glad`
      (`DEVKITPRO=/opt/devkitpro` is exported by the package manager's own profile script).
    - Nothing is vendored and no submodule is needed. See [docs/nx/BUILD.md](docs/nx/BUILD.md).
 
-6. **Dependencies:**
+7. **Dependencies:**
    - **CMake (3.10+)**
    - **genisoimage** (Provides the `mkisofs` utility required for automatically bundling bootable `.iso` files):
      ```bash
@@ -48,7 +51,7 @@ To reliably build this engine from source, you must have the toolchain for at le
      sudo apt-get install genisoimage
      ```
 
-7. **Submodules (Third-Party Dependencies):**
+8. **Submodules (Third-Party Dependencies):**
    - The engine links statically with custom local compilations of `ps2gl` and `ps2stuff` located within the `external/` directory to ensure perfect compatibility.
    - Vita builds additionally use `external/vitaGL` for the fallback renderer. Fetch all of them with
      `git submodule update --init --recursive`.
@@ -70,6 +73,7 @@ python3 ./tools/build.py debug --platforms PS2NTSC
 
 # Other platforms
 python3 ./tools/build.py debug --platforms WIN32          # -> dist/win32/
+python3 ./tools/build.py debug --platforms MACOS          # -> dist/macos/<Title>.app (the default on a Mac)
 python3 ./tools/build.py debug --platforms VITA,VITATV    # -> dist/vita/, dist/vitatv/
 python3 ./tools/build.py debug --platforms NX             # -> dist/nx/game.nro
 ```
@@ -113,7 +117,8 @@ Each platform gets its own self-contained bundle under `dist/`, so builds never 
 ```
 dist/ps2pal/    main.elf  engine.iso  main.sym     SYSTEM.CNF VMODE=PAL
 dist/ps2ntsc/   main.elf  engine.iso  main.sym     SYSTEM.CNF VMODE=NTSC
-dist/win32/     game.exe  RASSETS.PS2R
+dist/win32/     game.exe  RASSETS.PS2R  shaders/  wgpu_native.dll
+dist/macos/     <Title>.app   (executable, library, archive and shaders inside)
 dist/nx/        game.nro  main.elf     (the archive is inside game.nro)
 ```
 
@@ -143,6 +148,7 @@ For example, a file at `assets/config.txt` will be accessible on the PS2 as `cdr
 | [Testbed](docs/TESTBED.md) | The debug scenes, and how to reach them |
 | [PlayStation 2](docs/ps2/PLATFORM.md) | Platform spec, budgets, renderers |
 | [Win32](docs/win32/PLATFORM.md) | Platform spec, budgets, renderers |
+| [macOS](docs/macos/PLATFORM.md) | Platform spec, budgets, renderers |
 | [PlayStation Vita](docs/vita/PLATFORM.md) | Platform spec, budgets, renderers |
 | [PlayStation Portable](docs/psp/PLATFORM.md) | Platform spec, budgets, renderers |
 | [Nintendo Switch](docs/nx/PLATFORM.md) | Platform spec, budgets, renderers |

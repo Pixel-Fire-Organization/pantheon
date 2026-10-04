@@ -78,12 +78,12 @@ given pass changes. See "Materials & lighting" below.
   colour, emissive, metallic/roughness/normal-scale/alpha-cutoff, alpha-mask
   flag) via `dkCmdBufPushConstants` into a dedicated aligned slot per run,
   then `dkCmdBufBindUniformBuffer` at that slot's address — the same "one big
-  buffer, per-draw offset" shape [WebGpu](../../win32/renderers/WEBGPU.md)'s
+  buffer, per-draw offset" shape [WebGpu](../../renderers/WEBGPU.md)'s
   dynamic-offset material buffer uses, adapted to deko3d's own push-constant
   idiom rather than a bind-group.
 - **Baked and dynamic lighting compose by addition, not replacement** — the
   same formula and reasoning as
-  [WEBGPU.md](../../win32/renderers/WEBGPU.md)'s Materials & lighting
+  [WEBGPU.md](../../renderers/WEBGPU.md)'s Materials & lighting
   section.
 - **One real-time shadow caster, dynamic geometry only**, `GFX_SHADOW_MAP_SIZE`
   square. As on [Vita gxm](../../vita/renderers/GXM.md), there is no

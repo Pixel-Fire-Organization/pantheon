@@ -14,8 +14,6 @@ static const Level* s_Level = nullptr;
 static SectorResident s_Residents[LEVEL_RESIDENT_SECTORS];
 static SectorResident s_Lod1Residents[MEM_BLOCK_LEVEL_LOD1_SLOTS];
 static bool s_Lod1Pending = false;
-static float s_CenterX = 0.0f;
-static float s_CenterZ = 0.0f;
 static int s_CenterCellX = -0x7fff;
 static int s_CenterCellZ = -0x7fff;
 static bool s_Primed = false;
@@ -301,8 +299,6 @@ void Engine_Sector_Update(float worldX, float worldZ)
 {
     if (!s_Level || !s_Level->info)
         return;
-    s_CenterX = worldX;
-    s_CenterZ = worldZ;
 
     const float cellSize = s_Level->info->cellSize;
     

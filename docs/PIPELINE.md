@@ -52,12 +52,19 @@ when it should *also* exist as a standalone archive resource; one with no
 descriptor is level-only content, read directly by the level compiler and never
 seen by the cook stage. See `assets/README.md`.
 
+**Shaders are a third class of stage 3 output, and they are not packed.** A desktop
+platform's renderers read their shaders before the archive is mounted, so the cook writes them
+as plain files in a `shaders` directory beside `rassets` and `levels`, and stage 5 places that
+directory beside the master archive rather than folding it in. A platform whose cook list has no
+`SHADER` policy cooks none. See [formats/SHADER_ASSETS.md](formats/SHADER_ASSETS.md).
+
 ## Artefacts
 
 ```
 dist/
   cooked/
     <platform>/        stage 3 output: engine-native files, not yet packed
+                         rassets/  levels/  shaders/   (shaders: desktop only)
   <platform>/          stage 5 output: a self-contained runnable directory,
                        or the installable package the platform distributes
 ```
@@ -116,6 +123,8 @@ Packaging is gated on validation, so a bad cook cannot reach a container. The
 validator checks cooked output against the cook list that produced it:
 
 - magic and version,
+- for a platform that ships shaders, every shader its cook list asks for present, in LF line
+  endings, and inside the portability rules,
 - dependencies that name a missing asset,
 - an encoding the cook list did not ask for,
 - textures over the platform budget or maximum dimensions,

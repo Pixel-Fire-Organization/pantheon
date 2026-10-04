@@ -27,6 +27,7 @@ enum class PlatformId : uint8_t
     VitaTv,
     Psp,
     Nx,
+    Macos,
 
     Count
 };

@@ -333,7 +333,7 @@ def test_shipped_declaration_generates_a_usable_table(tmp_path):
 
 
 def test_shipped_cooklists_enable_themes_on_every_platform():
-    for name in ("ps2", "win32", "vita", "psp", "nx"):
+    for name in ("ps2", "win32", "vita", "psp", "nx", "macos"):
         path = os.path.join(ROOT, "engine", "config", name, "cooklist.json")
         with open(path, "r", encoding="utf-8") as fh:
             cl = json.load(fh)

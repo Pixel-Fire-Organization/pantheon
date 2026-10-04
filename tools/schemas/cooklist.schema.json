@@ -101,6 +101,21 @@
               }
             }
           }
+        },
+        "SHADER": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Desktop shader sources (assets/engine/shaders), cooked by tools/cook_shaders.py into a loose 'shaders' directory beside the archive rather than into it: the renderer is built before the archive is mounted. A platform that omits this class cooks and ships no shaders. See docs/formats/SHADER_ASSETS.md.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "dialects": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "description": "Which shader dialects this platform's renderers load. Default: all of them.",
+              "items": { "type": "string", "enum": ["wgsl", "glsl", "glsl_legacy"] }
+            }
+          }
         }
       }
     }
