@@ -168,8 +168,8 @@ def pack_sector(meshes):
     a baked per-vertex RGBA colour array from the level compiler's static
     lighting bake (see docs/formats/MATERIAL_FORMAT.md) -- absent means no
     bake ran and the mesh keeps the runtime's default white tint. Returns the
-    PSEC blob. Sector AABB is derived from the union of mesh bounding
-    spheres."""
+    PSEC blob and the sector AABB: the union of each mesh's exact vertex extent
+    (`aabb`), or of its bounding sphere for a mesh that carries none."""
     if len(meshes) > MAX_MESHES_PER_SECTOR:
         raise ValueError(f"sector holds {len(meshes)} meshes, the resident ring holds {MAX_MESHES_PER_SECTOR}")
     header_size = struct.calcsize(_SECHDR)
@@ -196,15 +196,19 @@ def pack_sector(meshes):
             geom += b"\x00" * ((-len(geom)) % 16)
         entries.append((m, verts_off, norms_off, uvs_off, colors_off))
 
-    # Sector AABB from mesh bounding spheres.
     mn = [1e30, 1e30, 1e30]
     mx = [-1e30, -1e30, -1e30]
     for m in meshes:
-        c = m["center"]
-        r = m["radius"]
+        if "aabb" in m:
+            lo, hi = m["aabb"]
+        else:
+            c = m["center"]
+            r = m["radius"]
+            lo = tuple(c[i] - r for i in range(3))
+            hi = tuple(c[i] + r for i in range(3))
         for i in range(3):
-            mn[i] = min(mn[i], c[i] - r)
-            mx[i] = max(mx[i], c[i] + r)
+            mn[i] = min(mn[i], lo[i])
+            mx[i] = max(mx[i], hi[i])
     if not meshes:
         mn = [0.0, 0.0, 0.0]
         mx = [0.0, 0.0, 0.0]

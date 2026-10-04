@@ -278,8 +278,8 @@ not a render graph" shape `RenderToImage3D` already established.
 
 Static level geometry is lit differently: `tools/compile_level.py` bakes ambient plus every placed light (any entity
 composed with the ECS `LightComponent`, `tools/ECS/ECS.json` — discovered generically, never by a hardcoded
-classname) into each vertex's colour at compile time, including a shadow-ray occlusion test scoped to that vertex's
-own sector cell only (not the whole level — a bounded, cheap approximation). This is a new optional field
+classname) into each vertex's colour at compile time, including a shadow-ray occlusion test against every rendered
+triangle of the map, so a vertex has one colour whichever sector or LOD tier holds it. This is a new optional field
 (`BakedMeshEntry.colorsOffset`) only PSEC (sector) meshes populate; a placed, reusable model has no single correct
 baked lighting and stays fully dynamic. See `docs/formats/LEVEL_FORMAT.md`'s "Static lighting" section.
 

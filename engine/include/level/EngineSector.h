@@ -14,6 +14,12 @@ typedef enum
     SECTOR_READY
 } SectorState;
 
+#define SECTOR_CELL_GEOMETRY 0x01
+#define SECTOR_CELL_LOD0_LOADING 0x02
+#define SECTOR_CELL_LOD0_READY 0x04
+#define SECTOR_CELL_LOD1_LOADING 0x08
+#define SECTOR_CELL_LOD1_READY 0x10
+
 typedef struct
 {
     int16_t cellX; // grid cell, or -1 when unused
@@ -58,6 +64,20 @@ bool Engine_Sector_IsResidentReady(const SectorResident* res);
 /// @param cellZ Grid cell Z.
 /// @return Whether LOD0 can take over from LOD1 for that cell.
 bool Engine_Sector_IsLod0Ready(int16_t cellX, int16_t cellZ);
+
+/// The grid cell the resident ring is centred on.
+/// @param outCellX Receives the cell X.
+/// @param outCellZ Receives the cell Z.
+/// @return False when no level is loaded or the ring has not been centred yet.
+bool Engine_Sector_GetCentreCell(int* outCellX, int* outCellZ);
+
+/// Which tiers hold geometry for one grid cell right now.
+/// @param cellX Grid cell X.
+/// @param cellZ Grid cell Z.
+/// @return A mask of SECTOR_CELL_* bits: whether the cell has geometry at all,
+/// and whether each tier is loading or ready for it. Zero for a cell outside
+/// the grid or when no level is loaded.
+uint8_t Engine_Sector_GetCellResidency(int cellX, int cellZ);
 
 /// How opaque a LOD1 resident should be drawn. Fully opaque while the
 /// full-detail sector for its cell is not yet fully resolvable, so a slow read

@@ -100,9 +100,12 @@ Started after Resource. It holds no level until asked. The streaming centre must
 be updated each frame with the position that should be surrounded by resident
 geometry — normally the camera or player. Without that update the resident set
 never moves and geometry ends where it was when the level loaded. Unloading
-releases sectors (and with them their material pins) and clears the arena, in
-that order. The
-master archive stays mounted throughout — nothing about unloading touches it.
+releases the sectors of both tiers (and with them their material pins) and then
+clears the core arena and both sector arenas, in that order. A sector read still
+in flight when a level is unloaded is discarded when it completes — a scene
+switch unloads the level before the runtime reset drains IO, so this is the
+ordinary case rather than a rare one. The master archive stays mounted
+throughout — nothing about unloading touches it.
 
 **A runtime reset unloads the current level as part of it**, the same as it
 tears down Resource and Archive — the renderer reads the current level and its

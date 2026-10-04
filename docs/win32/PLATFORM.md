@@ -42,7 +42,8 @@ Two consequences worth stating plainly:
 |---|---|---|---|
 | Engine budget | 512 MB | | A policy ceiling, not a hardware one |
 | Config arena | 1 MB | 4 | 256 KB |
-| Level-data arena | 32 MB | 16 | 2 MB |
+| Level-data arena | 72 MB | 36 | 2 MB |
+| Level LOD1 arena | 16 MB | 32 | 512 KB |
 | Renderer arena | 16 MB | 1 | 16 MB |
 | Main pool | 4 MB | | 256 B chunks |
 
@@ -198,7 +199,7 @@ cost. Anything that measures as slow here is unshippable on every console.
 | Interface quads | 16384, plus 2048 overlay quads |
 | Draw runs | 1024 world, 256 screen-space |
 | Staged vertices | grows on demand from the heap — a gap against the fixed-budget rule, see [backlog/performance_findings.md](../backlog/performance_findings.md) |
-| Resident sectors | 9 |
+| Resident sectors | 34 — the 25-cell ring of radius two and nine spare for the hand-over |
 
 **Clock.** The high-resolution performance counter: monotonic, sub-microsecond,
 and it does not wrap within a session. The C library clock is not used; its
@@ -226,6 +227,10 @@ nine seconds per renderer, read from the heartbeat:
 | `webgpu` | 141 to 162, instantaneous | 54272 KB, constant |
 | `opengl` | 144, locked to the display | 54272 KB, constant |
 | `null` | 10000 to 20000 — the engine tick alone, 50 to 100 us | 54272 KB, constant |
+
+The heap figures above predate the level LOD1 arena and the 2026-10-04 growth of the level-data
+arena to 72 MB: the reservation now comes to 111616 KB, by arithmetic. No Windows machine has
+re-measured it since.
 
 **Baseline, material system.** 2026-09-18, same hardware, `MAINASSETSTEST`
 loaded (18354 triangles, 8 materials, 2 static lights baked at compile time, a

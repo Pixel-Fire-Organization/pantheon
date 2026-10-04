@@ -361,7 +361,7 @@ this session (see the baseline note below); retake the baseline with this in
 the scene once hardware access exists.
 
 **Left on the table**, in the order to attack it: overlapping the list in
-flight with the next frame's build; culling sectors and models before staging;
+flight with the next frame's build; culling models before staging;
 one touch per vertex, in the hardware's layout, without the normal; swizzled
 textures; the vector unit; the sky; asynchronous sector recentring.
 

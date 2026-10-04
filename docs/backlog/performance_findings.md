@@ -82,7 +82,7 @@ Severity is against the smallest platform the finding affects.
 |---|---|---|---|
 | PF-01 | all | High | The engine-level wait figure is always zero; present wait is buried in *render*, so the snapshot cannot tell an idle frame from a saturated one |
 | PF-02 | PS2, PSP, Vita | High | Seven per-frame diagnostics log a persisting condition every frame it holds; on the handhelds each line is a synchronous memory-card write |
-| PF-03 | PSP, Vita, Win32, nx | Medium | The shared stager culls primitives but neither sectors nor models; every resident sector is transformed every frame whatever the camera sees |
+| PF-03 | PSP, Vita, Win32, macOS, nx | Medium | The shared stager culls primitives and sectors but not models; every submitted model is transformed every frame whatever the camera sees |
 | PF-04 | PSP, Vita, nx | Medium | The shared stager's storage is heap, grown by reallocation at runtime, to a ceiling far past any platform's budget; the specs say it lives in the arena |
 | PF-06 | PSP | Medium | The frame is serialised: the processor waits for the graphics engine to finish this frame's list before waiting for the blank, so build and draw add rather than overlap |
 | PF-07 | PSP | Medium | Every vertex is touched three times on the way to the hardware — staged with an unused normal, converted to the hardware layout, written back — on the most bandwidth-bound platform |
@@ -135,20 +135,18 @@ costs a card write per frame, which is far more than the quad. The Vita's
 default backend already reports its vertex overflow only when the shortfall
 changes; that is the pattern to copy to all seven.
 
-### PF-03 — sectors and models are never culled by the shared stager
+### PF-03 — models are never culled by the shared stager
 
-The stager tests a primitive's bounding sphere against the view before
-transforming it. It transforms every mesh of every ready resident sector, and
-every mesh of every submitted model, with no test at all. The PS2 direct
-backend, which has its own path, tests each sector's bounds and skips it —
-so the two paths disagree, and the shared one is the slower on the platforms
-that can least afford it. With nine resident sectors, most of the world behind
-the camera is transformed every frame on the PSP and the Vita.
+**Sectors fixed, 2026-10-04; models still open.** The stager tests a primitive's
+bounding sphere against the view before transforming it, and since 2026-10-04 it
+tests each ready sector's bounds the same way, counting the refusal as *entries
+culled*; see [fixed_issues/issues.json](../fixed_issues/issues.json) (EX-0026).
+It still transforms every mesh of every submitted model with no test at all, so a
+model behind the camera costs the same as one in front of it.
 
-Remedy: test the sector bounds the level format already carries, and a
-model's bounds (from its meshes at load time), before appending — the same
-whole-entry refusal the primitive path already does, counted as *entries
-culled* so the snapshot shows it working.
+Remedy for models: test a model's bounds (from its meshes at load time) before
+appending — the same whole-entry refusal the primitive and sector paths already
+do.
 
 ### PF-04 — stager storage is heap, and grows
 
@@ -344,9 +342,9 @@ Recorded so the next pass can skip it rather than re-derive it.
   is the model backend for measurement.
 - **PSP cache write-back** covers exactly the two spans written this frame,
   not the buffer.
-- **Frustum culling of primitives** in the shared stager, and of sectors in
-  the PS2 direct path, both count into *entries culled* so the snapshot shows
-  them working.
+- **Frustum culling of primitives and sectors** in the shared stager, and of
+  sectors in the PS2 direct path, all count into *entries culled* so the snapshot
+  shows them working.
 - **Clocks**: microsecond or better on every platform; the PS2's 32-bit wrap is
   absorbed by the platform; the Vita's is process time and stops while
   suspended, which is correct for a delta.

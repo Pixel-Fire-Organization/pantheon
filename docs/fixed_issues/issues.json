@@ -418,6 +418,108 @@
         "engine/src/debug/scenes/ScenePlatformInfo.cpp"
       ],
       "regression_check": "Configure and build the engine for any desktop platform with clang and confirm it is clean under -Wall -Wextra -Werror."
+    },
+    {
+      "id": "EX-0022",
+      "title": "A scene reload dereferenced the unloaded level from a sector read still in flight, crashing on the first reload",
+      "discovered_in": "game MainScene (macOS, WebGPU)",
+      "date": "2026-10-04",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "Reloading the scene within the first moments after a level load killed the process with SIGSEGV; the log ended at 'Level unloaded'. Reproduced by reloading the scene one frame after the load.",
+      "root_cause": "A scene switch runs the scene's stop hook, which unloads the level and clears the sector subsystem's level, before the runtime reset drains IO. The drain dispatches the completions of reads still in flight; the sector completion checked only a generation that unload never advanced, then read the level's material count through the cleared pointer. Beginning the next level also reset every generation to zero, so a stale completion could match a resident of the new level.",
+      "fix_summary": "Every release path now advances the resident's generation and unpins its materials, through one helper shared by eviction, unload and begin. The completion discards when the level is gone, the generation has moved, or the resident is no longer loading. Begin releases anything left over and never rewinds a generation.",
+      "files_changed": [
+        "engine/src/level/EngineSector.cpp"
+      ],
+      "regression_check": "On macOS run the game with a temporary harness that reloads the scene 1, 2, 3, 5, 8, 13, 21, 34, 55 and 89 frames after successive loads; all sixteen reloads must complete with a steady heap in the heartbeat. Against the previous streamer the first reload exits with status 139."
+    },
+    {
+      "id": "EX-0023",
+      "title": "The LOD1 tier never followed the player, and its sectors were never released on unload",
+      "discovered_in": "game MainScene (macOS, WebGPU)",
+      "date": "2026-10-04",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "With a level whose visibility lists name every cell, the LOD1 slots filled with the cells nearest the level's centre at load and stayed there. Walking away left cells outside the ring with no geometry in either tier (up to ten in a 6x7 level), and the cell beyond the slot count was silently never streamed. After an unload the LOD1 residents stayed ready with their material pins held and their arena uncleared.",
+      "root_cause": "LOD1 eviction fired only for residents the new centre's list no longer named, so a list naming every cell never evicted anything, and a load with no empty slot returned without a word. The subsystem's end path and the level's unload walked and cleared only the full-detail tier.",
+      "fix_summary": "The tier now wants the nearest slot-count cells of the list outside the ring, evicts residents outside that set and loads the rest nearest first. Cells entering the ring keep their LOD1 sector until full detail resolves, and cells leaving it keep their full-detail sector until LOD1 resolves. Demand beyond the slots is logged once per change. Unload releases and clears both tiers. The game scene's debug overlay was rebuilt on a per-cell residency query so it shows this state.",
+      "files_changed": [
+        "engine/src/level/EngineSector.cpp",
+        "engine/include/level/EngineSector.h",
+        "engine/src/level/EngineLevel.cpp",
+        "engine/include/GameAPI.h",
+        "engine/src/GameAPI.cpp",
+        "game/src/scenes/MainScene.cpp",
+        "game/include/scenes/MainScene.h"
+      ],
+      "regression_check": "Walk the player across a multi-cell level in the game on any desktop platform and read the debug overlay: every cell in its window must show a green or blue outline, with at most the one cell the tier has no slot for shown in red, and the log must show evictions and loads following the player."
+    },
+    {
+      "id": "EX-0024",
+      "title": "Sectors were cut by triangle centroid and lit one cell at a time, so cells overlapped, borders were sawtooth, shadows stopped at a cell border and LOD1 sat below the full-detail floor",
+      "discovered_in": "game MainScene (macOS, WebGPU)",
+      "date": "2026-10-04",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "On a multi-cell level about a fifth of the full-detail triangles reached up to two world units past their cell, so a cell that was resident next to one that was not ended in a sawtooth edge and the debug bounds overlapped. Baked shadows and light cut off along cell borders: of the vertices two neighbouring cells share, one in ten differed in baked colour, by up to 0.88. The LOD1 floor stood 0.5 world units below the full-detail floor with coplanar up- and down-facing triangles at one height, which z-fought, and the LOD1 floor area at the full-detail height was zero.",
+      "root_cause": "Triangles were assigned to a cell by centroid and never cut, so a cell's geometry was a sawtooth union of whole triangles. The sector AABB was built from mesh bounding spheres, not vertices. The shadow-ray test saw only the triangles of the vertex's own cell. LOD1 vertex clustering snapped Y as well as X and Z onto a two-unit grid, which moved a half-unit slab's top and bottom onto the same plane.",
+      "fix_summary": "Faces are cut along sector borders, with cut corners computed identically on both sides, before each piece is tessellated; the sector AABB is the exact vertex extent; the bake lights every vertex against every rendered triangle of the map through a grid walk and a per-vertex cache, so a position has one colour in every sector and both tiers; LOD1 on a platform that clips takes coarse faces where nothing is hidden and keeps true heights, and on PS2 clusters X and Z only. The worldspawn key _bake_ambient exposes the bake's ambient term, and a compile warning names textures whose faces cover a sliver of them.",
+      "files_changed": [
+        "tools/compile_level.py",
+        "tools/ps2lib/mesh.py",
+        "tools/ps2lib/levelfmt.py",
+        "tools/tests/test_compile_level.py",
+        "docs/formats/LEVEL_FORMAT.md",
+        ".github/copilot-instructions.md"
+      ],
+      "regression_check": "Run python3 -m pytest tools/tests/test_compile_level.py with the pinned tool requirements; its sector and lighting invariants compile a synthetic map for no platform, ps2 and macos and fail on a triangle outside its cell, an AABB that is not the vertex extent, a vertex with two baked colours, a LOD1 height the full-detail tier lacks, or uncovered LOD1 floor."
+    },
+    {
+      "id": "EX-0025",
+      "title": "The LOD1 tier stopped streaming when the streaming centre left the grid, leaving the edge of the world uncovered",
+      "discovered_in": "game MainScene (macOS, WebGPU)",
+      "date": "2026-10-04",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "Walking off the edge of the map left the tier frozen on the sectors it had when the centre last stood inside the grid, while the full-detail ring, now outside the grid, dropped every sector. The edge cells facing the player had geometry in neither tier: twelve cells on the 6x7 test level, with the debug overlay showing red outlines along the map edge.",
+      "root_cause": "The visibility list for the centre's cell, which names the LOD1 cells to stream, exists only for cells inside the grid, and the streamer skipped the whole LOD1 pass whenever the centre was outside it. It therefore neither loaded the cells that had just left the ring nor evicted the ones that no longer mattered, and a retiring full-detail sector was released at once because nothing was wanted.",
+      "fix_summary": "A centre outside the grid reads the visibility list of the nearest cell inside it. The ring still follows the true position, so the wanted set, the cover rules and the hand-over all work as they do inside the grid.",
+      "files_changed": [
+        "engine/src/level/EngineSector.cpp",
+        "docs/subsystems/SECTOR.md"
+      ],
+      "regression_check": "Walk the player off the edge of a multi-cell level in the game on any desktop platform and read the debug overlay: the tier must keep loading and evicting as the player moves (it holds its full slot count), and any uncovered cells must be the farthest ones, equal to the cells in the world less the ring's cells inside the grid less the tier's slot count; none may be next to the edge facing the player."
+    },
+    {
+      "id": "EX-0026",
+      "title": "The shared stager transformed every resident sector every frame, whatever the camera could see",
+      "discovered_in": "docs/backlog/performance_findings.md (PF-03)",
+      "date": "2026-10-04",
+      "platforms": [
+        "win32",
+        "macos",
+        "vita",
+        "vitatv",
+        "psp",
+        "nx"
+      ],
+      "symptom": "On every platform that stages geometry in the shared stager, all ready LOD0 and LOD1 sectors were appended and transformed each frame, so the work did not depend on where the camera looked. On the 42-cell test level, with the camera looking away from most of the world, between 14 and 39 of the 42 resident sectors lay outside the view and were staged anyway: about 27,000 level vertices a frame instead of between 1,900 and 21,000.",
+      "root_cause": "The stager culled primitives by bounding sphere but had no test for a sector. The PS2 direct and ps2gl paths already tested each sector's bounds, so the two paths disagreed.",
+      "fix_summary": "Each ready sector that would be drawn is tested against the view frustum by the bounds its header carries, using the same box test the PS2 paths use, and refused whole when it is outside, counted as entries culled. A sector with no meshes is skipped before the test, so an empty cell does not inflate the count. Models are still not culled (PF-03 stays open for them).",
+      "files_changed": [
+        "engine/src/graphics/StagedGeometry.cpp",
+        "docs/backlog/performance_findings.md",
+        "docs/guidelines/PERFORMANCE.md",
+        "docs/psp/PLATFORM.md",
+        "docs/vita/PLATFORM.md",
+        "docs/subsystems/RENDERER.md"
+      ],
+      "regression_check": "Render a fixed set of camera poses on a desktop platform with the test level resident, once with the sector test disabled and once enabled: the frames must be identical pixel for pixel, and the entries-culled figure in the performance snapshot must be non-zero whenever the camera looks away from part of the world."
     }
   ]
 }

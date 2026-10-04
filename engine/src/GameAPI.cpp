@@ -24,6 +24,7 @@
 #include "graphics/Renderer.h"
 #include "graphics/Types.h"
 #include "level/EngineLevel.h"
+#include "level/EngineSector.h"
 #include "platform/Platform.h"
 #include "resources/EngineResource.h"
 #include "scenes/EngineScene.h"
@@ -501,6 +502,13 @@ namespace game
             renderer->AddPrimitiveToDrawList(Primitive3D::Cube, Vector3{x, y, z}, Vector3{0.f, 0.f, 0.f}, Vector3{size, size, size}, MakeColor(r, g, b));
     }
 
+    void DrawBox(float x, float y, float z, float sizeX, float sizeY, float sizeZ, int r, int g, int b)
+    {
+        Renderer* renderer = Engine_GetRenderer();
+        if (renderer)
+            renderer->AddPrimitiveToDrawList(Primitive3D::Cube, Vector3{x, y, z}, Vector3{0.f, 0.f, 0.f}, Vector3{sizeX, sizeY, sizeZ}, MakeColor(r, g, b));
+    }
+
     void DrawSphere(float x, float y, float z, float size, int r, int g, int b)
     {
         Renderer* renderer = Engine_GetRenderer();
@@ -813,6 +821,35 @@ namespace game
         if (s_LevelLoaded)
             Engine_Level_SetStreamingCenter(x, z);
     }
+
+    static_assert(CELL_GEOMETRY == SECTOR_CELL_GEOMETRY, "CELL_GEOMETRY must match the sector subsystem");
+    static_assert(CELL_LOD0_LOADING == SECTOR_CELL_LOD0_LOADING, "CELL_LOD0_LOADING must match the sector subsystem");
+    static_assert(CELL_LOD0_READY == SECTOR_CELL_LOD0_READY, "CELL_LOD0_READY must match the sector subsystem");
+    static_assert(CELL_LOD1_LOADING == SECTOR_CELL_LOD1_LOADING, "CELL_LOD1_LOADING must match the sector subsystem");
+    static_assert(CELL_LOD1_READY == SECTOR_CELL_LOD1_READY, "CELL_LOD1_READY must match the sector subsystem");
+
+    bool GetLevelGrid(LevelGrid* outGrid)
+    {
+        const Level* level = Engine_Level_Current();
+        if (!outGrid || !level || !level->info)
+            return false;
+
+        int centreX = 0;
+        int centreZ = 0;
+        if (!Engine_Sector_GetCentreCell(&centreX, &centreZ))
+            return false;
+
+        outGrid->originX = level->info->gridOriginX;
+        outGrid->originZ = level->info->gridOriginZ;
+        outGrid->cellSize = level->info->cellSize;
+        outGrid->cellsX = level->info->cellsX;
+        outGrid->cellsZ = level->info->cellsZ;
+        outGrid->centreCellX = centreX;
+        outGrid->centreCellZ = centreZ;
+        return true;
+    }
+
+    int GetCellResidency(int cellX, int cellZ) { return Engine_Sector_GetCellResidency(cellX, cellZ); }
 
     // --- Scenes -------------------------------------------------------------
     void SetMainScene(Scene* scene) { Engine_Scene_SetMain(scene); }

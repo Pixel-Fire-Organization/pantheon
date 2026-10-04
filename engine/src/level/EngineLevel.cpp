@@ -412,7 +412,7 @@ bool Engine_Level_Load(Level* level)
         level->materials = nullptr;
         level->grid = nullptr;
         level->entsChunk = nullptr;
-    level->visiChunk = nullptr;
+        level->visiChunk = nullptr;
         return false;
     }
 
@@ -438,6 +438,8 @@ void Engine_Level_Unload(Level* level, bool keepPinned)
 
     for (uint32_t i = 0; i < MEM_BLOCK_LEVEL_DATA_SLOTS; ++i)
         Engine_ClearSlot(ARENA_LEVEL_DATA, i);
+    for (uint32_t i = 0; i < MEM_BLOCK_LEVEL_LOD1_SLOTS; ++i)
+        Engine_ClearSlot(ARENA_LEVEL_LOD1, i);
 
     s_CurrentLevel = nullptr;
     Engine_LogInfo("Level unloaded (keepPinned=%s)", keepPinned ? "true" : "false");

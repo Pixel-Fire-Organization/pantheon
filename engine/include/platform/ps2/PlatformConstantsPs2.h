@@ -109,6 +109,7 @@
 #define LEVEL_LOD1_LOADS_PER_FRAME 2 // LOD1 sector reads issued per frame at most
 
 // Resident sectors: a 3x3 ring around the camera cell.
+#define LEVEL_RING_RADIUS_CELLS 1
 #define LEVEL_RESIDENT_SECTORS (MEM_BLOCK_LEVEL_DATA_SLOTS - 2)
 
 // ARENA_LEVEL_DATA slot assignment: slots [0..CORE_SLOTS) hold the resident

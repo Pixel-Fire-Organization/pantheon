@@ -20,6 +20,7 @@ private:
 
     void MovePlayer(float dt);
     void MoveCamera(float dt);
+    void DrawStreamingOverlay() const;
 
     static MainScene* m_instance;
 
@@ -41,4 +42,17 @@ private:
     const float PLAYER_SIZE = 2.0f;
     const int GRID_SLICES = 100;
     const float GRID_SPACING = 1.0f;
+    const int OVERLAY_RADIUS_CELLS = 4;
+    const float OVERLAY_LINE_WIDTH = 0.3f;
+    const float OVERLAY_PLAYER_LINE_WIDTH = 0.45f;
+    const float OVERLAY_LINE_HEIGHT = 0.12f;
+    const float OVERLAY_LINE_Y = 0.6f;
+    const float OVERLAY_INSET_PLAYER = 0.15f;
+    const float OVERLAY_INSET_CENTRE = 0.35f;
+    const float OVERLAY_INSET_LOD0 = 0.6f;
+    const float OVERLAY_INSET_MISSING = 0.9f;
+    const float OVERLAY_INSET_LOD1 = 1.2f;
+    const int HUD_MARGIN = 16;
+    const int HUD_SWATCH = 12;
+    const int HUD_ROW_GAP = 6;
 };
