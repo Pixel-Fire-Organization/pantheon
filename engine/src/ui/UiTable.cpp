@@ -16,7 +16,6 @@ namespace
     bool s_RowOpen = false;
     int s_RowX = 0;
     int s_RowY = 0;
-    int s_RowHeight = 0;
     int s_Column = 0;
 
     int RowHeight()
@@ -114,7 +113,6 @@ bool Ui_TableRow(const char* id, bool selected)
     s_RowOpen = true;
     s_RowX = x;
     s_RowY = y;
-    s_RowHeight = RowHeight();
     s_Column = 0;
     return activated;
 }

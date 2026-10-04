@@ -1,13 +1,48 @@
-# Renderer — webgpu (Win32)
+# Renderer — webgpu (desktop)
 
 The default desktop backend, built on a native implementation of the WebGPU API.
+It is **one implementation shared by every desktop platform**, [Win32](../win32/PLATFORM.md)
+and [macOS](../macos/PLATFORM.md) at present. This document is the behaviour they share;
+what a platform adds — which graphics API sits underneath, how a surface is made from its
+window — is in its own renderer spec: [macOS](../macos/renderers/WEBGPU.md).
 
-Contract and shared behaviour: [RENDERER.md](../../subsystems/RENDERER.md).
+Contract and shared behaviour: [RENDERER.md](../subsystems/RENDERER.md).
+
+## One renderer, one platform hook
+
+The renderer is an abstract class. Everything above the window — the device, the
+pipelines, staging, the material and shadow passes, texture upload, the frame — is written
+once. What differs per platform is how a presentable surface is made from that platform's
+window, and who owns whatever the platform created to host it, so each platform supplies a
+small derived class with two operations:
+
+| Operation | Contract |
+|---|---|
+| Create the surface | Given the instance, return a surface over the platform's window, or nothing. Called once, before the adapter is requested, so the adapter is chosen for compatibility with it |
+| Release the surface | Release the surface and anything the platform made to host it. Called when the renderer shuts down |
+
+A base class cannot call a derived override from its own constructor, so the base
+constructor only prepares its members; the **derived constructor finishes by asking the
+base to bring the device up**, and the renderer then reports initialised or not exactly as
+it always has. A new platform adds one derived class and two source files, and edits
+nothing here.
+
+The shared sources are not part of the engine's common source list, because they include
+the WebGPU header. Each platform's own build fragment lists them.
+
+## Shaders
+
+The three modules — flat, PBR and depth-only — are **cooked assets** read at start-up, not
+text in this renderer. Their contract, the portability baseline that lets one source serve
+Vulkan, Direct3D 12 and Metal, and the way to edit one without rebuilding are in
+[formats/SHADER_ASSETS.md](../formats/SHADER_ASSETS.md). A missing file fails
+construction, naming the file and the cook target, and the platform falls back to its next
+renderer.
 
 ## Model
 
 Geometry is staged on the processor into a representation shared with the
-[OpenGL](OPENGL.md) backend, then uploaded once per frame and drawn as runs of
+[OpenGL](../win32/renderers/OPENGL.md) backend, then uploaded once per frame and drawn as runs of
 vertices sharing a material. Three-dimensional and screen-space geometry stage
 independently and occupy separate spans of one buffer, so a single upload serves
 both.
@@ -99,7 +134,9 @@ serves the real-time shadow pass. See "Materials & lighting" below.
   correct world.
 - The library is a pinned prebuilt binary, verified by checksum and fetched at
   configure time. It is not vendored source, and its version is fixed by the
-  build rather than discovered.
+  build rather than discovered. Each platform pins the archive built for it: the
+  graphics APIs a prebuilt carries differ per target, so what this renderer can
+  reach is a property of the platform's archive, recorded in its own spec.
 
 - **Console pixel formats are expanded on upload.** Textures may be cooked in
   formats that suit the console's video memory — 16-bit colour, or palettised
@@ -128,6 +165,6 @@ serves the real-time shadow pass. See "Materials & lighting" below.
 
 It is the default: the most direct path to the hardware on a modern desktop, with
 explicit resource management that matches how the engine already thinks about
-memory. Prefer [OpenGL](OPENGL.md) where drivers are old, where the target is a
+memory. Prefer [OpenGL](../win32/renderers/OPENGL.md) where drivers are old, where the target is a
 virtual machine or a remote session, or when comparing two independent
 implementations to decide which one is wrong.

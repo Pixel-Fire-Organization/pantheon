@@ -13,7 +13,6 @@ namespace
 
     bool s_MenuBarOpen = false;
     int s_MenuBarY = 0;
-    int s_MenuBarW = 0;
     int s_MenuBarH = 0;
     int s_MenuBarPenX = 0;
 
@@ -34,7 +33,6 @@ namespace
     bool s_MenuOpen = false; // an Ui_BeginMenu...Ui_EndMenu body is currently being drawn
     uint32_t s_MenuId = 0;
     int s_MenuX = 0;
-    int s_MenuY = 0;
     int s_MenuW = 0;
     int s_MenuPenY = 0;
     int s_MenuItemCount = 0;
@@ -92,7 +90,6 @@ namespace
         s_MenuOpen = true;
         s_MenuId = id;
         s_MenuX = anchorX;
-        s_MenuY = anchorY;
         s_MenuW = bodyWidth;
         s_MenuPenY = anchorY;
         s_MenuItemCount = 0;
@@ -127,7 +124,6 @@ bool Ui_BeginMenuBar()
 
     s_MenuBarOpen = true;
     s_MenuBarY = y;
-    s_MenuBarW = w;
     s_MenuBarH = h;
     s_MenuBarPenX = x;
 

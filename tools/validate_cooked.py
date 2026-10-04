@@ -20,6 +20,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ps2lib import font, material as materiallib, ps2a, theme as themelib, tim2
 import cook_assets
+import cook_shaders
 
 
 class Report:
@@ -177,10 +178,36 @@ def _validate_deps(directory, names, present, report):
                 report.error(name, f"dependency '{dep}' was not cooked for this platform")
 
 
+def validate_shaders(directory, cooklist, report):
+    """Check the loose shader directory a renderer reads at startup.
+
+    A platform whose cook list has no SHADER policy has nothing to check. One that
+    does must have every shader of every dialect it asked for, each of which passes
+    the same lint the cook applies and is already in LF line endings.
+    """
+    for dialect in cook_shaders.policy_dialects(cooklist):
+        for rel in cook_shaders.SHADER_SET[dialect]:
+            report.checked += 1
+            path = os.path.join(directory, *rel.split("/"))
+            if not os.path.isfile(path):
+                report.error(f"shaders/{rel}", f"missing from {directory}; run the shader cook for this platform")
+                continue
+            with open(path, "rb") as handle:
+                data = handle.read()
+            if b"\r" in data:
+                report.error(f"shaders/{rel}", "contains a carriage return; the cook writes LF only")
+                continue
+            try:
+                cook_shaders.lint(rel, data)
+            except cook_shaders.ShaderError as error:
+                report.error(f"shaders/{rel}", str(error))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Validate a cooked asset tree")
     ap.add_argument("--platform", help="platform whose cooked tree and cook list to use")
     ap.add_argument("--dir", help="cooked directory (overrides --platform)")
+    ap.add_argument("--shaders", help="cooked shader directory (default: 'shaders' beside the cooked directory)")
     ap.add_argument("--cooklist", help="cook list file (overrides --platform)")
     args = ap.parse_args(argv)
 
@@ -198,6 +225,8 @@ def main(argv=None):
 
     report = Report()
     validate_tree(directory, cooklist, report)
+    shader_dir = args.shaders or os.path.join(os.path.dirname(os.path.abspath(directory)), "shaders")
+    validate_shaders(shader_dir, cooklist, report)
 
     label = cooklist.get("platform", "<default>")
     print(f"validate_cooked: {report.checked} asset(s) in {directory} [cook list: {label}]")

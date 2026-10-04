@@ -29,6 +29,18 @@ thread's priority was declared but never applied, so the worker-above-main rule
 held only by the loader's default; the platform now sets it. Existing findings
 that also hold on nx have it added to their platform column; PF-16 is new.
 
+**macOS addition, 2026-10-03.** The platform-addition pass over the macOS platform and both its backends, run
+mechanically from section 2 of the procedure against the new sources and then measured on hardware: a 2018 MacBook Pro
+(Intel, with an integrated and a discrete graphics processor), the game's boot scene with its level. The default backend
+held 60.5 frames per second locked to the display, the fallback 59.6, the engine tick alone about 51 000, and the engine's
+heap was constant at 70 656 KB across all three over twenty seconds — recorded in
+[macos/PLATFORM.md](../macos/PLATFORM.md#performance). **Only the Intel half was run**; the Apple Silicon half is built and
+signed, and its baseline is the first thing to add. Two things changed before the platform landed: the fallback backend's
+pacing (below, PF-17), and the quit path, which first told the system the application had refused to quit and then, when
+corrected the obvious way, deadlocked against the engine's own loop — the system's quit request is now handled directly, the
+engine told to stop, and success reported at once. Two findings are new,
+PF-17 fixed and PF-18 open, and the existing ones that also hold on macOS have it added to their platform column.
+
 **PF-05 fixed, 2026-09-17.** Root cause was not the hardware or the emulator:
 ps2sdk's `calculate_vertices` divides its output's x/y/z by the homogeneous w
 internally and leaves w undivided, and both the self-test's comparison and the
@@ -215,7 +227,7 @@ spinning. The spec now records this; the remedy is to apply the same rule.
 
 ### PF-11 — the IO worker polls
 
-When no request is queued the worker sleeps a millisecond and rescans the
+*Also holds on macOS.* When no request is queued the worker sleeps a millisecond and rescans the
 request table. That is about a thousand wake-ups a second — on the PS2 and PSP
 each one preempts the main thread, roughly sixteen to twenty times a frame,
 each taking and releasing the request lock. Small, but permanent and avoidable:
@@ -225,7 +237,7 @@ name suggests, which is harmless there.
 
 ### PF-12 — Win32 pacing versus budget
 
-The platform's frame budget is 16 667 µs; the frame is paced to the display
+*Holds on macOS in the same terms: the display's refresh, not the budget, paces the frame, and the spec says so.* The platform's frame budget is 16 667 µs; the frame is paced to the display
 through vertical sync, and on the development desktop the display is 144 Hz,
 so the frame is about 6.9 ms. The snapshot compares against the budget, the
 testbed plots the budget line, and both are the right thing for content
@@ -236,7 +248,7 @@ display mode on this platform, since here it is policy rather than hardware.
 
 ### PF-13 — the desktop backends measure nothing but counts
 
-Neither desktop backend fills present wait, geometry build or upload. The
+*Also holds on macOS, for both its backends.* Neither desktop backend fills present wait, geometry build or upload. The
 snapshot prints `Present Wait : 0.00 ms` unconditionally, which is the zero the
 debug spec forbids; the testbed's *Performance* scene guards build and upload
 with *not measured* but has no guard for present wait. Remedy: bracket the
@@ -267,9 +279,37 @@ It is the reference backend, not the one that ships, which is why it is low.
 Remedy: two persistently mapped buffers alternated per frame and fenced on the
 previous frame's completion — what the default backend already does.
 
+### PF-17 — the fallback backend on macOS was not paced by the display (fixed before landing)
+
+The OpenGL backend asked the driver for a swap interval of one and read it back as applied. On a laptop with two graphics
+processors the context landed on the one that does not drive the built-in display, and the frame ran unpaced: a median of
+223 frames per second in one run and 381 in the next, against a display that does 60. The read-back was true and was not
+enough. The swap now also sleeps out whatever remains of one display refresh since the previous swap, taken from the window's
+screen where the system can say and 60 where it cannot; when the driver has already paced the frame there is nothing to sleep.
+Measured afterwards: median 59.6, range 57.1 to 61.5 on the same scene. A display link would have been the other route and was
+not taken: its API is deprecated from macOS 15 and its replacement needs macOS 14, below the build's target of 11. Recorded in
+[macos/renderers/OPENGL.md](../macos/renderers/OPENGL.md#pacing).
+
+### PF-18 — the default backend's process memory creeps on macOS
+
+Over 165 seconds of the boot scene the process's resident size went from 73 104 KB to 73 852 KB, about 3 KB a second and slowing
+but not stopped, while the engine's own heap column held at 70 656 KB throughout. The fallback backend, run through the same
+event pump and controller poll, was flat at 113 404 KB from 45 seconds on, so the platform's own per-frame Objective-C work does not
+accumulate. The growth is therefore on the graphics library's side. Three minutes cannot tell a leak from caches filling, and nothing
+here establishes that it is not the same on the other desktop platform. **Open:** repeat over an hour, and on Windows, before
+calling it either.
+
 ## Checked, no finding
 
 Recorded so the next pass can skip it rather than re-derive it.
+
+- **macOS start-up reads and allocations.** Every allocation in the macOS sources is at start-up — the window, menu, views,
+  threads and semaphores, the memory map — or is the load-time texture expansion Win32 also does. The shader files are read
+  once, when a renderer is constructed and before any load screen or frame exists, bounded by a byte ceiling the cook also
+  enforces. Nothing in the frame path allocates through the engine's own contract.
+- **macOS clock, log and scheduling.** One monotonic clock, read for the frame and for the fallback's pacing; no log line is
+  emitted per frame outside `--log-input`, which reports changes only; no thread priority is set and the spec says so; the
+  fallback's one sleep is the pacing cap and sleeps for less than a frame.
 
 - **Draw-list sort**: two standard sorts per frame over at most the draw-list
   ceiling (1024 on the consoles, 4096 on the desktop). Bounded and cheap next to
@@ -334,6 +374,10 @@ Neither is a finding today; both are places where the current design accepts a
 cost knowingly, and a later pass should confirm the trade is still the right
 one rather than re-discovering it.
 
+- **Per-frame Objective-C allocation on macOS.** The event pump and the controller poll create short-lived system objects
+  every frame, inside an autorelease pool drained once a frame, outside the engine's own budget and invisible to its heap
+  column. The fallback backend's flat resident size (PF-18) shows they do not accumulate, which is why this is a known cost
+  and not a finding. A pass that finds the process's resident size rising should look here second, after the graphics library.
 - **No console baseline on hardware.** The PS2 and nx figures are emulation and
   the PSP and Vita have none. Every platform spec's *Baseline* item says which it
   has. Until a build has run on each console with the snapshot read, the specs'

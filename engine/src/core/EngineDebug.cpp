@@ -2,7 +2,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <malloc.h>
 #include "Engine.h"
 #include "core/EngineAction.h"
 #include "core/EngineInput.h"
@@ -338,7 +337,6 @@ void Engine_PerfLogger_Tick()
     Engine_LogInfo("[PERF] Used              : %u / %u KB (%u%% full)", texUsed / 1024u, texBudget / 1024u, texBudget ? (texUsed * 100u / texBudget) : 0u);
 
     Engine_LogInfo("[PERF] --- Memory Management ---");
-    size_t arenaTotalUsed = 0;
     size_t arenaTotalCap = 0;
 
     // 1. System heap, as the platform reports it
@@ -353,7 +351,6 @@ void Engine_PerfLogger_Tick()
     {
         size_t cap = 0, used = 0;
         Engine_GetArenaStats((ArenaType)i, &cap, &used);
-        arenaTotalUsed += used;
         arenaTotalCap += cap;
     }
 

@@ -8,7 +8,6 @@
 
 namespace
 {
-    const int PANEL_MARGIN = 16;
     const int PAGE_COUNT = 2;
 
     const char* RendererName(RendererType type)

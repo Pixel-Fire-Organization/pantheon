@@ -30,6 +30,7 @@ SYSTEM.CNF
 .idea/
 *.swp
 *~
+.venv/
 
 # Operating System Files
 .DS_Store

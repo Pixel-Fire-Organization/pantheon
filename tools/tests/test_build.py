@@ -1,4 +1,4 @@
-"""Tests for tools/build.py's container path.
+"""Tests for tools/build.py's container path and its choice of what a host builds.
 
 The decision that matters is the silent one: a host with its own toolchain must
 never be pushed into the container, and a host without one must never try to
@@ -90,3 +90,47 @@ def test_container_mode_is_forwarded_when_re_entering_wsl():
     args = build.parse_args(["debug", "--platforms", "NX", "--container", "never"])
     assert args.container == "never"
     assert build.parse_args(["debug"]).container == "auto"
+
+
+class _Args:
+    def __init__(self, platforms=None, region=None):
+        self.platforms = platforms
+        self.region = region
+
+
+def test_every_known_platform_has_a_toolchain_file_that_exists():
+    for platform, toolchain in build.TOOLCHAINS.items():
+        assert (ROOT / toolchain).is_file(), "{} names {}".format(platform, toolchain)
+
+
+def test_macos_builds_with_its_own_toolchain():
+    assert build.TOOLCHAINS["MACOS"] == "toolchains/macos.cmake"
+    assert build.group_by_toolchain(["MACOS"]) == {"toolchains/macos.cmake": ["MACOS"]}
+
+
+def test_a_mac_asking_for_nothing_builds_only_macos(monkeypatch):
+    monkeypatch.setattr(build.sys, "platform", "darwin")
+    assert build.resolve_platforms(_Args()) == ["MACOS"]
+
+
+def test_an_explicit_request_wins_on_a_mac(monkeypatch):
+    monkeypatch.setattr(build.sys, "platform", "darwin")
+    assert build.resolve_platforms(_Args(platforms="win32, nx")) == ["WIN32", "NX"]
+
+
+def test_other_hosts_still_leave_the_default_list_to_cmake(monkeypatch):
+    monkeypatch.setattr(build.sys, "platform", "linux")
+    assert build.resolve_platforms(_Args()) == []
+
+
+def test_a_macos_only_build_clones_no_submodule():
+    assert build.needs_submodules(["MACOS"]) is False
+
+
+@pytest.mark.parametrize("platforms", [[], ["PS2PAL"], ["WIN32"], ["VITA", "VITATV"], ["MACOS", "NX"]])
+def test_every_other_build_still_clones_them(platforms):
+    assert build.needs_submodules(platforms) is True
+
+
+def test_the_submodule_exemption_names_only_platforms_that_exist():
+    assert build.PLATFORMS_WITHOUT_SUBMODULES <= set(build.TOOLCHAINS)

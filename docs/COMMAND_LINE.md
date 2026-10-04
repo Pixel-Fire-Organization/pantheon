@@ -35,9 +35,10 @@ Overflow (`CMD_MAX_OPTIONS`, `CMD_MAX_POSITIONALS`) is an actionable error, neve
 | `--renderer` | `giftag`, `ps2gl`, `opengl`, `webgpu`, `gxm`, `vitagl`, `gu`, `pspgl`, `deko3d`, `null` | The genuinely runtime-selectable axis. Unsupported names log the compiled-in list and fall back to the platform default. |
 | `--platform` | a platform name | Validation / self-identification. A bundle ships exactly one platform, so a mismatch logs what the build actually contains and continues. |
 | `--help` | — | Prints options plus the compiled-in platform and renderer lists, then exits. |
-| `--gl-version` | `<2.1\|3.3\|4.3\|4.6>` | Win32/OpenGL: pin the context version. Default: the highest the driver grants. |
-| `--no-keyboard-pad` | — | Win32: disable the default keyboard->virtual-pad-0 map, for games that want raw keyboard only. |
-| `--log-input` | — | Win32: log every key press and pad-button change, for tracing a binding that is not reaching game code. |
+| `--gl-version` | `<2.1\|3.3\|4.3\|4.6>` | Win32/OpenGL: pin the context version. Default: the highest the driver grants. Not accepted on macOS, whose OpenGL has one version. |
+| `--shaders` | a directory | Win32 and macOS: read every shader from this directory instead of the one beside the archive, typically `assets/engine/shaders`, so a shader can be edited without a cook or a build. The directory replaces the shipped one wholesale. See [formats/SHADER_ASSETS.md](formats/SHADER_ASSETS.md). |
+| `--no-keyboard-pad` | — | Win32 and macOS: disable the default keyboard->virtual-pad-0 map, for games that want raw keyboard only. |
+| `--log-input` | — | Win32 and macOS: log every key press and pad-button change, for tracing a binding that is not reaching game code. |
 
 A renderer that fails to initialise is not fatal: the platform's `GetFallbackRenderer()` chain is walked
 (`giftag → ps2gl → null`, `webgpu → opengl → null`, `gxm → vitagl → null`, `gu → pspgl → null`,

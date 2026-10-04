@@ -9,7 +9,7 @@
 #include "graphics/NullRenderer.h"
 #include "platform/PlatformRegistry.h"
 #include "renderer/OpenGl.h"
-#include "renderer/WebGpu.h"
+#include "renderer/Win32WebGpuRenderer.h"
 
 Win32Platform::Win32Platform() : m_startupArgs(), m_memory(this)
 {
@@ -185,7 +185,7 @@ Renderer* Win32Platform::CreateRenderer(RendererId id, const EngineConfig& confi
     switch (id)
     {
     case RendererId::WebGpu:
-        return new WebGpuRenderer(config);
+        return new Win32WebGpuRenderer(config);
     case RendererId::Null:
         return new NullRenderer();
     case RendererId::OpenGl:

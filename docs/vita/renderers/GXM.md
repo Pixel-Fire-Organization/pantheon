@@ -59,7 +59,7 @@ for the real-time shadow pass. See "Materials & lighting" below.
   otherwise unconfirmed territory.
 - **Baked and dynamic lighting compose by addition, not replacement** — the
   same formula and reasoning as
-  [WEBGPU.md](../../win32/renderers/WEBGPU.md)'s Materials & lighting section:
+  [WEBGPU.md](../../renderers/WEBGPU.md)'s Materials & lighting section:
   a vertex's incoming colour (the level compiler's bake, or flat white for a
   dynamic model) is added to the dynamic ambient and multiplied by albedo
   once, never folded into albedo itself.

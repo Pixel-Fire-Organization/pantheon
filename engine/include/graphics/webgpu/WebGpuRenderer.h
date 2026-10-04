@@ -21,11 +21,12 @@
 // inside an already-encoded render pass.
 #define WGPU_MATERIAL_UNIFORM_STRIDE 256
 
-class WebGpuRenderer final : public Renderer
+/// The WebGPU backend, shared by every desktop platform. Everything above the window is generic; what differs
+/// per platform is how a surface is made from that platform's window, which a derived class supplies.
+class WebGpuRenderer : public Renderer
 {
 public:
     WebGpuRenderer() = delete;
-    explicit WebGpuRenderer(const EngineConfig& config);
     ~WebGpuRenderer() override = default;
 
     WebGpuRenderer(const WebGpuRenderer&) = delete;
@@ -72,6 +73,23 @@ public:
     Camera3D GetActiveCamera3D() const override;
 
 protected:
+    /// Zero every member. Nothing is created until Initialize runs, because a base constructor cannot reach a derived override.
+    explicit WebGpuRenderer(const EngineConfig& config);
+
+    /// Create the surface this renderer presents into. Called once, from Initialize, before the adapter is requested,
+    /// so the adapter can be chosen for compatibility with it.
+    /// @param instance The instance the surface must belong to.
+    /// @return The surface, or null when the platform window cannot host one; the failure is logged by the caller.
+    virtual WGPUSurface CreateSurface(WGPUInstance instance) = 0;
+
+    /// Release a surface made by CreateSurface, and whatever the platform created to host it. Called from Shutdown.
+    /// @param surface The surface to release; never null.
+    virtual void ReleaseSurface(WGPUSurface surface) = 0;
+
+    /// Bring up the device, the pipelines and the surface, then mark the renderer initialised. A derived constructor
+    /// calls this as its last act; IsInitialized reports whether it succeeded.
+    void Initialize();
+
     void RenderSkybox(const DrawLists& lists) override;
     void RenderPrimitives(DrawLists& lists) override;
     void RenderModels(const DrawLists& lists) override;

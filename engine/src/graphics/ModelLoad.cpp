@@ -1,6 +1,7 @@
 #include "../include/graphics/ModelFormat.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 #include "../../include/core/EngineDebug.h"

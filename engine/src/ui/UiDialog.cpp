@@ -21,7 +21,6 @@ namespace
     const int KEY_SPACE = 36;
     const int KEY_BACKSPACE = 37;
     const int KEY_DONE = 38;
-    const int KEY_CANCEL = 39;
     const int KEYBOARD_KEY_COUNT = 40;
     const int KEYBOARD_COLUMNS = 10;
     const int KEYBOARD_ROW_COUNT = KEYBOARD_KEY_COUNT / KEYBOARD_COLUMNS;

@@ -358,6 +358,66 @@
         "assets/materials/env/GroundDirt_01/GroundDirt_01_height.json"
       ],
       "regression_check": "Run python -m pytest tools/tests -q and confirm test_io_read_buffer_size_by_platform_matches_every_platform_header, test_cook_assets_io_read_buffer_sizes_match_compile_level, test_bake_material_map_respects_the_io_read_buffer_size and test_bake_material_payload_applies_the_current_platforms_io_buffer_cap all pass. Then build examples/material_pbr for win32 (cmake --build <dir> --target stage-example-material_pbr-win32): cook_assets.py must report every STONEWALL_01_BASECOLOR_*/GROUNDDIRT_01_HEIGHT_* map downscaled to fit, validate_cooked must pass, and running the staged game.exe must show no 'exceeds IO_READ_BUFFER_SIZE' errors in the log -- every material map must load (a 'Texture loaded (WxH)' line each), and the level's StoneWall_01/GroundDirt_01 sectors must render with real normal/roughness/AO shading rather than flat fallback colour."
+    },
+    {
+      "id": "EX-0019",
+      "title": "The material_pbr example did not link: its ECS spawn hooks lacked the two classes the level system commit added to the entity declaration",
+      "discovered_in": "examples/material_pbr",
+      "date": "2026-10-03",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "Linking the material_pbr example failed with undefined symbols Game_Spawn_worldspawn and Game_Spawn_func_detail, referenced from the generated EcsSpawn.cpp. Nothing about the failure was platform-specific; it was found first on the macOS platform because that was the first build to link every example after the level system change.",
+      "root_cause": "tools/ECS/ECS.json gained the worldspawn and func_detail classes in the level system commit, which regenerates EcsSpawn.cpp to declare a Game_Spawn_<classname> handler for each. game/src/EcsHooks.cpp was updated; examples/material_pbr/src/EcsHooks.cpp, which supplies its own handlers because the example does not link the game, was not.",
+      "fix_summary": "Added the two handlers to the example, matching the game's: func_detail panics because the map compiler must have merged it away, and worldspawn is a no-op.",
+      "files_changed": [
+        "examples/material_pbr/src/EcsHooks.cpp"
+      ],
+      "regression_check": "Build every example for any desktop platform (cmake --build <dir> --target examples) and confirm material_pbr links. Adding a class to tools/ECS/ECS.json means adding a handler to every EcsHooks.cpp that is linked into a binary."
+    },
+    {
+      "id": "EX-0020",
+      "title": "The ui_gallery example included a header by a name that differs in case from the tracked file, which a case-sensitive filesystem cannot resolve",
+      "discovered_in": "examples/ui_gallery",
+      "date": "2026-10-03",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "On macOS, clang rejected three headers of the ui_gallery example under -Werror with 'non-portable path to file scenes/UIScene.h; specified path differs in case from file name on disk'. On a case-sensitive filesystem, such as the Linux environment the other platforms cross-compile from, the same include would not have resolved at all.",
+      "root_cause": "The tracked file is engine/include/scenes/UIScene.h, but GalleryScene.h, BudgetScene.h and StyleScene.h included scenes/UiScene.h. Windows and macOS filesystems ignore case, so the mismatch only surfaced where a compiler checked for it.",
+      "fix_summary": "The three includes now spell the tracked name.",
+      "files_changed": [
+        "examples/ui_gallery/include/scenes/GalleryScene.h",
+        "examples/ui_gallery/include/scenes/BudgetScene.h",
+        "examples/ui_gallery/include/scenes/StyleScene.h"
+      ],
+      "regression_check": "Build the ui_gallery example with clang on a case-insensitive host; the warning is on by default and the build treats warnings as errors."
+    },
+    {
+      "id": "EX-0021",
+      "title": "Shared engine sources carried dead variables and an include the first clang build refuses, so the engine did not compile under -Werror with Apple's compiler",
+      "discovered_in": "examples/primitives",
+      "date": "2026-10-03",
+      "platforms": [
+        "all"
+      ],
+      "symptom": "The first clang build of the engine failed under -Wall -Wextra -Werror on unused constants and statics in EngineSector, the UI sources and two debug scenes, on a missing <cstdlib> in ModelLoad.cpp, and on <malloc.h> in EngineCore.cpp and EngineDebug.cpp, a header the macOS SDK does not have. The GCC-based toolchains accepted all of it.",
+      "root_cause": "Each was latent: variables only ever assigned, constants never read, an allocator header included for symbols neither file uses, and calloc and free reached through a header that happened to include <cstdlib> on the toolchains tried so far.",
+      "fix_summary": "Removed the dead variables and constants (EngineSector's s_CenterX/Z, EngineDebug's arenaTotalUsed, FNV_PRIME, KEY_CANCEL, the unread menu, modal and table statics, two unused scene constants), used the named TARGET_ constants where SceneMemory spelled their values as literals, added <cstdlib> to ModelLoad.cpp, and dropped the <malloc.h> includes.",
+      "files_changed": [
+        "engine/src/core/EngineCore.cpp",
+        "engine/src/core/EngineDebug.cpp",
+        "engine/src/level/EngineSector.cpp",
+        "engine/src/graphics/ModelLoad.cpp",
+        "engine/src/ui/Ui.cpp",
+        "engine/src/ui/UiDialog.cpp",
+        "engine/src/ui/UiMenu.cpp",
+        "engine/src/ui/UiOverlay.cpp",
+        "engine/src/ui/UiTable.cpp",
+        "engine/src/debug/scenes/SceneMemory.cpp",
+        "engine/src/debug/scenes/ScenePlatformInfo.cpp"
+      ],
+      "regression_check": "Configure and build the engine for any desktop platform with clang and confirm it is clean under -Wall -Wextra -Werror."
     }
   ]
 }

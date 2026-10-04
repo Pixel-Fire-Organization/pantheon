@@ -42,7 +42,11 @@ dist/win32/game.exe
 ```
 
 The directory is self-contained: copy it anywhere and run it. Nothing refers back
-into the build tree or into another platform distribution.
+into the build tree or into another platform distribution. Beside the executable and
+the archive it carries the graphics runtime library and a `shaders` directory: both
+renderers read their shaders from there at start-up, so a bundle without it has no
+renderer that can draw and falls through to the null one, naming the missing file.
+See [formats/SHADER_ASSETS.md](../formats/SHADER_ASSETS.md).
 
 Launch options select a renderer, which is the primary debugging lever:
 
@@ -51,6 +55,7 @@ Launch options select a renderer, which is the primary debugging lever:
 --renderer opengl            fallback; two internal paths
 --gl-version 2.1 | 3.3       choose an OpenGL path explicitly
 --renderer null              headless
+--shaders <directory>        read the shaders from here instead of the bundle's own
 --no-keyboard-pad            disable the keyboard-to-virtual-pad map
 --help                       options, and what this build actually contains
 ```

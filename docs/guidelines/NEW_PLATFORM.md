@@ -123,12 +123,22 @@ itself goes through them — the root names no platform:
 Anything else your platform needs — a disc serial, an image name, a packaging
 tool — is set inside your fragment, not in the root.
 
-**Integration** — the only edits outside your directory:
+**Integration** — the only edits outside your directory. Each is a registration that loads
+nothing for any other platform:
 
 - [ ] One entry in `ENGINE_KNOWN_PLATFORMS` and its metadata block in
       `cmake/Platforms.cmake`
-- [ ] A toolchain file under `toolchains/`, if it needs one
+- [ ] A toolchain file under `toolchains/`, if it needs one, and its entry in `TOOLCHAINS` in
+      `tools/build.py`
 - [ ] Ids in `PlatformId` and any new `RendererId`
+- [ ] An entry in each table the Python tools key by platform name: `DEADZONE_HEADER` and
+      `CAPABILITIES_PATH` in `tools/actions.py`, both byte ceilings in `tools/compile_level.py`, and the IO
+      buffer size in `tools/cook_assets.py` (the last must equal the level compiler's; a test checks it).
+      The cook list resolves by the platform's lower-case name and needs none
+- [ ] The platform's name in the platform lists of the tests that mirror these tables
+- [ ] Presets in `CMakePresets.json`, and the platform in the fixed-issues schema's platform list
+- [ ] A variable shared code reads per platform (`ACTIONS_CAPS_<name>`) is set **from the platform's own
+      fragment**, not added to a shared file
 
 ## 3. Evaluate off-the-shelf components
 
@@ -174,6 +184,35 @@ shared code that look like engine bugs.
 4. **Build integration**: `platform.cmake`, the known-platform entry, the
    toolchain, and a self-contained `dist/<platform>/`.
 5. **Specs updated** to match what was actually built, including what is missing.
+
+### A renderer several platforms share
+
+Some backends are the same implementation on more than one platform: the WebGPU renderer is one on Win32 and macOS.
+Such a renderer is **abstract**, lives with the other shared graphics code (`engine/src/graphics/<name>/`), and asks the
+platform for the few things that really differ through pure virtual hooks — for WebGPU, create a surface from the
+platform's window and release it. Each platform supplies a derived class in its own `renderer/` directory and lists the
+shared sources in its own fragment; they are not part of the engine's common source list, because they include a
+header only some platforms have. A new platform that wants the renderer therefore **adds one derived class**; it does
+not edit the shared one.
+
+Three things go wrong here and have been decided:
+
+- A base constructor cannot call a derived override, so the base only zero-initialises and each derived constructor ends
+  by calling a protected `Initialize()` — the renderer then reports whether it started exactly as before.
+- Whatever a platform creates to host a renderer (a view, a layer, a context) belongs to **that renderer**, is removed in
+  the release hook, and is never inherited by the next renderer in the fallback chain. A failed start must leave the window
+  as it found it.
+- A prebuilt third-party library carries the backends its builder compiled in, not the ones its documentation lists.
+  **Check what is actually in the binary** before planning a fallback around it. The macOS prebuilt of the WebGPU
+  library contains Metal only; the fallback there is a separate OpenGL implementation, found out by scanning the
+  library, not by reading about it.
+
+### Shaders are assets on a platform that has a desktop renderer
+
+A renderer is built before the IO, archive and resource subsystems exist, and is not selectable the way they are, so it
+cannot load a shader through them. A desktop platform ships the cooked shaders as loose files beside its archive and the
+renderers read them with the platform file API. Add a `SHADER` policy to the cook list and ship the directory in the
+bundle, including each example's. See [formats/SHADER_ASSETS.md](../formats/SHADER_ASSETS.md).
 
 ### Rules that exist because they were broken here
 
@@ -245,5 +284,8 @@ shared code that look like engine bugs.
       source
 - [ ] [PERFORMANCE_REVIEW.md](PERFORMANCE_REVIEW.md) run on the platform, its
       findings recorded
-- [ ] No shared engine file changed beyond the registration
+- [ ] No shared engine file changed beyond the registration — and where a shared renderer was needed, a derived class
+      was added rather than the shared one edited
+- [ ] Nothing platform-specific is evaluated, fetched or compiled by a configure that did not ask for the platform:
+      its fragment, language, dependencies and frameworks are reached only through the fragment
 - [ ] `.github/copilot-instructions.md` updated if it changed a convention

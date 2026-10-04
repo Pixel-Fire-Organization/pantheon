@@ -74,8 +74,12 @@ function(platform_configure PLATFORM)
         "${_variantIncludeDir}/renderer/GlApi.h"
         "${_variantSrcDir}/renderer/OpenGl.cpp"
         "${_variantIncludeDir}/renderer/OpenGl.h"
-        "${_variantSrcDir}/renderer/WebGpu.cpp"
-        "${_variantIncludeDir}/renderer/WebGpu.h"
+        "${_variantSrcDir}/renderer/Win32WebGpuRenderer.cpp"
+        "${_variantIncludeDir}/renderer/Win32WebGpuRenderer.h"
+        "${CMAKE_SOURCE_DIR}/engine/src/graphics/webgpu/WebGpuRenderer.cpp"
+        "${CMAKE_SOURCE_DIR}/engine/include/graphics/webgpu/WebGpuRenderer.h"
+        "${CMAKE_SOURCE_DIR}/engine/src/graphics/ShaderAssets.cpp"
+        "${CMAKE_SOURCE_DIR}/engine/include/graphics/ShaderAssets.h"
         PARENT_SCOPE)
 
     set(ENGINE_PLATFORM_${PLATFORM}_INCLUDES "${WGPU_NATIVE_DIR}/include" PARENT_SCOPE)
@@ -117,10 +121,28 @@ function(platform_package PLATFORM EXE_TARGET DIST_DIR)
         # The bundle must run from a copied folder, so the DLL ships beside the exe.
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${WGPU_NATIVE_DIR}/lib/wgpu_native.dll" "${DIST_DIR}/wgpu_native.dll"
+        # Shaders ship loose beside the archive: the renderer is built before the archive is mounted.
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/dist/cooked/${_lower}/shaders" "${DIST_DIR}/shaders"
         COMMENT "Staging dist/${PLATFORM_${PLATFORM}_DIST}/ (exe + assets)"
         VERBATIM
     )
     add_dependencies(bundle-${PLATFORM_${PLATFORM}_DIST} ${EXE_TARGET} package-${_lower})
     set(PLATFORM_${PLATFORM}_PACKAGE_TARGET "bundle-${PLATFORM_${PLATFORM}_DIST}" PARENT_SCOPE)
 
+endfunction()
+
+# Examples stage the same bundle shape: the runtime library and the loose shaders
+# beside the archive the shared staging step already wrote.
+function(platform_example_package PLATFORM NAME STAGE_TARGET EXE_TARGET DIST_DIR)
+    string(TOLOWER "${PLATFORM}" _lower)
+    set(_cooked "${CMAKE_SOURCE_DIR}/examples/dist/${NAME}/${_lower}/cooked")
+
+    add_custom_command(TARGET ${STAGE_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${WGPU_NATIVE_DIR}/lib/wgpu_native.dll" "${DIST_DIR}/wgpu_native.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${_cooked}/shaders" "${DIST_DIR}/shaders"
+        VERBATIM
+    )
 endfunction()

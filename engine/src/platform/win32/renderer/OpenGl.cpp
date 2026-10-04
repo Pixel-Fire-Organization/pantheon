@@ -7,486 +7,12 @@
 #include "Macros.h"
 #include "core/EngineDebug.h"
 #include "core/EngineMemory.h"
+#include "graphics/ShaderAssets.h"
 #include "graphics/TextureExpand.h"
 #include "platform/Platform.h"
 
 namespace
 {
-
-    // Two dialects of one shader. The only differences are the version pragma,
-    // attribute/varying vs in/out, and texture2D vs texture - which is exactly
-    // why supporting 2.1 costs so little and buys a fallback that runs on Mesa,
-    // in VMs and over remote desktop.
-    const char* const kVertex330 = R"GLSL(#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNormal;
-layout(location = 2) in vec2 aUv;
-layout(location = 3) in vec4 aColor;
-uniform mat4 uViewProj;
-out vec2 vUv;
-out vec4 vColor;
-void main() {
-    gl_Position = uViewProj * vec4(aPos, 1.0);
-    vUv = aUv;
-    float n = length(aNormal);
-    float shade = 1.0;
-    if (n > 0.0001) {
-        vec3 l = normalize(vec3(0.4, 0.8, 0.45));
-        shade = 0.35 + 0.65 * max(dot(normalize(aNormal), l), 0.0);
-    }
-    vColor = vec4(aColor.rgb * shade, aColor.a);
-}
-)GLSL";
-
-    const char* const kFragment330 = R"GLSL(#version 330 core
-in vec2 vUv;
-in vec4 vColor;
-uniform sampler2D uTexture;
-out vec4 oColor;
-void main() {
-    vec4 t = texture(uTexture, vUv);
-    oColor = vec4(t.rgb * vColor.rgb, t.a * vColor.a);
-}
-)GLSL";
-
-    const char* const kVertex120 = R"GLSL(#version 120
-attribute vec3 aPos;
-attribute vec3 aNormal;
-attribute vec2 aUv;
-attribute vec4 aColor;
-uniform mat4 uViewProj;
-varying vec2 vUv;
-varying vec4 vColor;
-void main() {
-    gl_Position = uViewProj * vec4(aPos, 1.0);
-    vUv = aUv;
-    float n = length(aNormal);
-    float shade = 1.0;
-    if (n > 0.0001) {
-        vec3 l = normalize(vec3(0.4, 0.8, 0.45));
-        shade = 0.35 + 0.65 * max(dot(normalize(aNormal), l), 0.0);
-    }
-    vColor = vec4(aColor.rgb * shade, aColor.a);
-}
-)GLSL";
-
-    const char* const kFragment120 = R"GLSL(#version 120
-varying vec2 vUv;
-varying vec4 vColor;
-uniform sampler2D uTexture;
-void main() {
-    vec4 t = texture2D(uTexture, vUv);
-    gl_FragColor = vec4(t.rgb * vColor.rgb, t.a * vColor.a);
-}
-)GLSL";
-
-    // PBR main-scene shaders. Bodies only -- CompilePbrShader prepends the
-    // real #version line and a #define block carrying GFX_MAX_LIGHTS/
-    // GFX_SHADOW_MAP_SIZE as separate source strings, so those two constants
-    // are never duplicated as literals here. Mirrors the WGSL shader in
-    // WebGpu.cpp: metallic-roughness Cook-Torrance, screen-space derivative
-    // tangent reconstruction, a fixed dynamic-light array, single-shadow-
-    // caster PCF sampling, and the same baked/dynamic lighting split (the
-    // vertex's incoming colour is added once, as the indirect term -- never
-    // folded into albedo, which would square it wherever albedo is reused).
-    const char* const kVertexPbr330 = R"GLSL(
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNormal;
-layout(location = 2) in vec2 aUv;
-layout(location = 3) in vec4 aColor;
-uniform mat4 uViewProj;
-out vec3 vWorldPos;
-out vec3 vWorldNormal;
-out vec2 vUv;
-out vec4 vColor;
-void main() {
-    gl_Position = uViewProj * vec4(aPos, 1.0);
-    vWorldPos = aPos;
-    vWorldNormal = aNormal;
-    vUv = aUv;
-    vColor = aColor;
-}
-)GLSL";
-
-    const char* const kFragmentPbr330 = R"GLSL(
-in vec3 vWorldPos;
-in vec3 vWorldNormal;
-in vec2 vUv;
-in vec4 vColor;
-out vec4 oColor;
-
-uniform vec3 uCameraPos;
-uniform vec3 uAmbient;
-uniform vec4 uLightPosOrDir[GFX_MAX_LIGHTS];
-uniform vec4 uLightColorIntensity[GFX_MAX_LIGHTS];
-uniform vec4 uLightRange[GFX_MAX_LIGHTS];
-uniform int uShadowCaster;
-uniform mat4 uLightViewProj;
-uniform sampler2D uAlbedoTex;
-uniform sampler2D uNormalTex;
-uniform sampler2D uOrmTex;
-uniform sampler2DShadow uShadowMap;
-uniform vec4 uBaseColor;
-uniform vec3 uEmissive;
-uniform vec4 uMrna; // metallic, roughness, normalScale, alphaCutoff
-uniform float uAlphaMask;
-
-const float PI = 3.14159265359;
-
-float DistributionGGX(vec3 N, vec3 H, float roughness) {
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
-    float denom = NdotH2 * (a2 - 1.0) + 1.0;
-    return a2 / max(PI * denom * denom, 1e-6);
-}
-
-float GeometrySchlickGGX(float NdotV, float roughness) {
-    float r = roughness + 1.0;
-    float k = (r * r) / 8.0;
-    return NdotV / (NdotV * (1.0 - k) + k);
-}
-
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    return GeometrySchlickGGX(NdotV, roughness) * GeometrySchlickGGX(NdotL, roughness);
-}
-
-vec3 FresnelSchlick(float cosTheta, vec3 F0) {
-    return F0 + (vec3(1.0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-float SampleShadow(vec3 worldPos) {
-    if (uShadowCaster < 0) {
-        return 1.0;
-    }
-    vec4 lightClip = uLightViewProj * vec4(worldPos, 1.0);
-    if (lightClip.w <= 0.0) {
-        return 1.0;
-    }
-    vec3 ndc = lightClip.xyz / lightClip.w;
-    vec3 shadowUv = ndc * 0.5 + 0.5;
-    if (shadowUv.x < 0.0 || shadowUv.x > 1.0 || shadowUv.y < 0.0 || shadowUv.y > 1.0 || shadowUv.z < 0.0 || shadowUv.z > 1.0) {
-        return 1.0;
-    }
-    float bias = 0.0025;
-    float texel = 1.0 / GFX_SHADOW_MAP_SIZE;
-    float sum = 0.0;
-    for (int dy = -1; dy <= 1; dy++) {
-        for (int dx = -1; dx <= 1; dx++) {
-            vec2 offs = vec2(float(dx), float(dy)) * texel;
-            sum += texture(uShadowMap, vec3(shadowUv.xy + offs, shadowUv.z - bias));
-        }
-    }
-    return sum / 9.0;
-}
-
-void main() {
-    vec4 albedoSample = texture(uAlbedoTex, vUv);
-    vec3 albedo = albedoSample.rgb * uBaseColor.rgb;
-    float alpha = albedoSample.a * uBaseColor.a;
-    if (uAlphaMask > 0.5 && alpha < uMrna.w) {
-        discard;
-    }
-
-    float metallic = clamp(uMrna.x, 0.0, 1.0);
-    float roughness = clamp(uMrna.y, 0.045, 1.0);
-
-    vec3 N = normalize(vWorldNormal);
-    if (dot(vWorldNormal, vWorldNormal) < 0.0001) {
-        N = vec3(0.0, 1.0, 0.0);
-    }
-
-    vec3 posDx = dFdx(vWorldPos);
-    vec3 posDy = dFdy(vWorldPos);
-    vec2 uvDx = dFdx(vUv);
-    vec2 uvDy = dFdy(vUv);
-    vec3 T = posDx * uvDy.y - posDy * uvDx.y;
-    float tdott = dot(T, T);
-    if (tdott < 1e-10) {
-        T = vec3(1.0, 0.0, 0.0);
-    } else {
-        T = T * inversesqrt(tdott);
-    }
-    T = normalize(T - N * dot(N, T));
-    vec3 B = cross(N, T);
-
-    vec3 normalSample = texture(uNormalTex, vUv).xyz * 2.0 - vec3(1.0);
-    vec3 mapped = normalize(vec3(normalSample.x * uMrna.z, normalSample.y * uMrna.z, normalSample.z));
-    N = normalize(T * mapped.x + B * mapped.y + N * mapped.z);
-
-    vec4 orm = texture(uOrmTex, vUv);
-    float occlusion = orm.r;
-    float finalRoughness = clamp(orm.g * roughness, 0.045, 1.0);
-    float finalMetallic = clamp(orm.b * metallic, 0.0, 1.0);
-
-    vec3 V = normalize(uCameraPos - vWorldPos);
-    vec3 F0 = mix(vec3(0.04), albedo, finalMetallic);
-
-    vec3 Lo = vec3(0.0);
-    for (int i = 0; i < GFX_MAX_LIGHTS; i++) {
-        vec4 posOrDir = uLightPosOrDir[i];
-        vec4 colorIntensity = uLightColorIntensity[i];
-        if (colorIntensity.w <= 0.0) {
-            continue;
-        }
-
-        vec3 L;
-        float attenuation = 1.0;
-        if (posOrDir.w < 0.5) {
-            L = normalize(-posOrDir.xyz);
-        } else {
-            vec3 toLight = posOrDir.xyz - vWorldPos;
-            float dist = length(toLight);
-            float range = max(uLightRange[i].x, 1e-4);
-            L = toLight / max(dist, 1e-4);
-            attenuation = clamp(1.0 - (dist / range), 0.0, 1.0);
-            attenuation = attenuation * attenuation;
-        }
-
-        float NdotL = max(dot(N, L), 0.0);
-        if (NdotL <= 0.0) {
-            continue;
-        }
-
-        float shadowFactor = 1.0;
-        if (i == uShadowCaster) {
-            shadowFactor = SampleShadow(vWorldPos);
-        }
-
-        vec3 H = normalize(V + L);
-        float NDF = DistributionGGX(N, H, finalRoughness);
-        float G = GeometrySmith(N, V, L, finalRoughness);
-        vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-
-        vec3 specular = (NDF * G * F) / max(4.0 * max(dot(N, V), 0.0) * NdotL, 1e-4);
-        vec3 kD = (vec3(1.0) - F) * (1.0 - finalMetallic);
-        vec3 radiance = colorIntensity.rgb * colorIntensity.w * attenuation;
-
-        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadowFactor;
-    }
-
-    vec3 indirect = (vColor.rgb + uAmbient) * albedo * occlusion;
-    vec3 finalRgb = indirect + Lo + uEmissive;
-    oColor = vec4(finalRgb, alpha);
-}
-)GLSL";
-
-    const char* const kVertexPbr120 = R"GLSL(
-attribute vec3 aPos;
-attribute vec3 aNormal;
-attribute vec2 aUv;
-attribute vec4 aColor;
-uniform mat4 uViewProj;
-varying vec3 vWorldPos;
-varying vec3 vWorldNormal;
-varying vec2 vUv;
-varying vec4 vColor;
-void main() {
-    gl_Position = uViewProj * vec4(aPos, 1.0);
-    vWorldPos = aPos;
-    vWorldNormal = aNormal;
-    vUv = aUv;
-    vColor = aColor;
-}
-)GLSL";
-
-    const char* const kFragmentPbr120 = R"GLSL(
-varying vec3 vWorldPos;
-varying vec3 vWorldNormal;
-varying vec2 vUv;
-varying vec4 vColor;
-
-uniform vec3 uCameraPos;
-uniform vec3 uAmbient;
-uniform vec4 uLightPosOrDir[GFX_MAX_LIGHTS];
-uniform vec4 uLightColorIntensity[GFX_MAX_LIGHTS];
-uniform vec4 uLightRange[GFX_MAX_LIGHTS];
-uniform int uShadowCaster;
-uniform mat4 uLightViewProj;
-uniform sampler2D uAlbedoTex;
-uniform sampler2D uNormalTex;
-uniform sampler2D uOrmTex;
-uniform sampler2DShadow uShadowMap;
-uniform vec4 uBaseColor;
-uniform vec3 uEmissive;
-uniform vec4 uMrna;
-uniform float uAlphaMask;
-
-const float PI = 3.14159265359;
-
-float DistributionGGX(vec3 N, vec3 H, float roughness) {
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
-    float denom = NdotH2 * (a2 - 1.0) + 1.0;
-    return a2 / max(PI * denom * denom, 1e-6);
-}
-
-float GeometrySchlickGGX(float NdotV, float roughness) {
-    float r = roughness + 1.0;
-    float k = (r * r) / 8.0;
-    return NdotV / (NdotV * (1.0 - k) + k);
-}
-
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    return GeometrySchlickGGX(NdotV, roughness) * GeometrySchlickGGX(NdotL, roughness);
-}
-
-vec3 FresnelSchlick(float cosTheta, vec3 F0) {
-    return F0 + (vec3(1.0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-float SampleShadow(vec3 worldPos) {
-    if (uShadowCaster < 0) {
-        return 1.0;
-    }
-    vec4 lightClip = uLightViewProj * vec4(worldPos, 1.0);
-    if (lightClip.w <= 0.0) {
-        return 1.0;
-    }
-    vec3 ndc = lightClip.xyz / lightClip.w;
-    vec3 shadowUv = ndc * 0.5 + 0.5;
-    if (shadowUv.x < 0.0 || shadowUv.x > 1.0 || shadowUv.y < 0.0 || shadowUv.y > 1.0 || shadowUv.z < 0.0 || shadowUv.z > 1.0) {
-        return 1.0;
-    }
-    float bias = 0.0025;
-    float texel = 1.0 / GFX_SHADOW_MAP_SIZE;
-    float sum = 0.0;
-    for (int dy = -1; dy <= 1; dy++) {
-        for (int dx = -1; dx <= 1; dx++) {
-            vec2 offs = vec2(float(dx), float(dy)) * texel;
-            sum += shadow2D(uShadowMap, vec3(shadowUv.xy + offs, shadowUv.z - bias)).r;
-        }
-    }
-    return sum / 9.0;
-}
-
-void main() {
-    vec4 albedoSample = texture2D(uAlbedoTex, vUv);
-    vec3 albedo = albedoSample.rgb * uBaseColor.rgb;
-    float alpha = albedoSample.a * uBaseColor.a;
-    if (uAlphaMask > 0.5 && alpha < uMrna.w) {
-        discard;
-    }
-
-    float metallic = clamp(uMrna.x, 0.0, 1.0);
-    float roughness = clamp(uMrna.y, 0.045, 1.0);
-
-    vec3 N = normalize(vWorldNormal);
-    if (dot(vWorldNormal, vWorldNormal) < 0.0001) {
-        N = vec3(0.0, 1.0, 0.0);
-    }
-
-    vec3 posDx = dFdx(vWorldPos);
-    vec3 posDy = dFdy(vWorldPos);
-    vec2 uvDx = dFdx(vUv);
-    vec2 uvDy = dFdy(vUv);
-    vec3 T = posDx * uvDy.y - posDy * uvDx.y;
-    float tdott = dot(T, T);
-    if (tdott < 1e-10) {
-        T = vec3(1.0, 0.0, 0.0);
-    } else {
-        T = T * inversesqrt(tdott);
-    }
-    T = normalize(T - N * dot(N, T));
-    vec3 B = cross(N, T);
-
-    vec3 normalSample = texture2D(uNormalTex, vUv).xyz * 2.0 - vec3(1.0);
-    vec3 mapped = normalize(vec3(normalSample.x * uMrna.z, normalSample.y * uMrna.z, normalSample.z));
-    N = normalize(T * mapped.x + B * mapped.y + N * mapped.z);
-
-    vec4 orm = texture2D(uOrmTex, vUv);
-    float occlusion = orm.r;
-    float finalRoughness = clamp(orm.g * roughness, 0.045, 1.0);
-    float finalMetallic = clamp(orm.b * metallic, 0.0, 1.0);
-
-    vec3 V = normalize(uCameraPos - vWorldPos);
-    vec3 F0 = mix(vec3(0.04), albedo, finalMetallic);
-
-    vec3 Lo = vec3(0.0);
-    for (int i = 0; i < GFX_MAX_LIGHTS; i++) {
-        vec4 posOrDir = uLightPosOrDir[i];
-        vec4 colorIntensity = uLightColorIntensity[i];
-        if (colorIntensity.w <= 0.0) {
-            continue;
-        }
-
-        vec3 L;
-        float attenuation = 1.0;
-        if (posOrDir.w < 0.5) {
-            L = normalize(-posOrDir.xyz);
-        } else {
-            vec3 toLight = posOrDir.xyz - vWorldPos;
-            float dist = length(toLight);
-            float range = max(uLightRange[i].x, 1e-4);
-            L = toLight / max(dist, 1e-4);
-            attenuation = clamp(1.0 - (dist / range), 0.0, 1.0);
-            attenuation = attenuation * attenuation;
-        }
-
-        float NdotL = max(dot(N, L), 0.0);
-        if (NdotL <= 0.0) {
-            continue;
-        }
-
-        float shadowFactor = 1.0;
-        if (i == uShadowCaster) {
-            shadowFactor = SampleShadow(vWorldPos);
-        }
-
-        vec3 H = normalize(V + L);
-        float NDF = DistributionGGX(N, H, finalRoughness);
-        float G = GeometrySmith(N, V, L, finalRoughness);
-        vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-
-        vec3 specular = (NDF * G * F) / max(4.0 * max(dot(N, V), 0.0) * NdotL, 1e-4);
-        vec3 kD = (vec3(1.0) - F) * (1.0 - finalMetallic);
-        vec3 radiance = colorIntensity.rgb * colorIntensity.w * attenuation;
-
-        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadowFactor;
-    }
-
-    vec3 indirect = (vColor.rgb + uAmbient) * albedo * occlusion;
-    vec3 finalRgb = indirect + Lo + uEmissive;
-    gl_FragColor = vec4(finalRgb, alpha);
-}
-)GLSL";
-
-    // Depth-only shadow-pass shaders: dynamic (model/primitive) geometry
-    // only -- static sector geometry already carries baked, shadow-aware
-    // lighting. No alpha-mask cutout support yet: every dynamic mesh casts a
-    // solid silhouette (see docs/subsystems/RENDERER.md).
-    const char* const kVertexShadow330 = R"GLSL(
-layout(location = 0) in vec3 aPos;
-uniform mat4 uLightViewProj;
-void main() {
-    gl_Position = uLightViewProj * vec4(aPos, 1.0);
-}
-)GLSL";
-
-    const char* const kFragmentShadow330 = R"GLSL(
-void main() {
-}
-)GLSL";
-
-    const char* const kVertexShadow120 = R"GLSL(
-attribute vec3 aPos;
-uniform mat4 uLightViewProj;
-void main() {
-    gl_Position = uLightViewProj * vec4(aPos, 1.0);
-}
-)GLSL";
-
-    const char* const kFragmentShadow120 = R"GLSL(
-void main() {
-}
-)GLSL";
 
     GLuint CompileShaderSources(GLenum type, const char* const* sources, GLsizei count)
     {
@@ -509,20 +35,26 @@ void main() {
         return shader;
     }
 
-    GLuint CompileShader(GLenum type, const char* source) { return CompileShaderSources(type, &source, 1); }
+    const char* const kLegacyVersionLine = "#version 120\n";
 
-    // Splices the platform's real GFX_MAX_LIGHTS/GFX_SHADOW_MAP_SIZE constants
-    // into a PBR/shadow shader as GLSL #defines injected between the #version
-    // line and the shader body, rather than duplicating them as literals in
-    // the raw shader text that could silently drift from PlatformConstants.h.
-    // Unlike WGSL (no preprocessor), GLSL's own #define expands these for us
-    // once the two source strings are concatenated, so no manual token
-    // substitution is needed.
-    GLuint CompilePbrShader(GLenum type, const char* versionLine, const char* body)
+    // Compiles one cooked shader. The source carries no version line, so the
+    // dialect's own line and the platform's real GFX_MAX_LIGHTS/
+    // GFX_SHADOW_MAP_SIZE constants are prefixed as separate source strings:
+    // those constants are never duplicated as literals in the shader text,
+    // where they could silently drift from PlatformConstants.h. GLSL's own
+    // #define expands them once the strings are concatenated.
+    GLuint CompileShaderAsset(GLenum type, bool core, const char* name)
     {
+        char path[96];
+        snprintf(path, sizeof(path), "%s%s", core ? "" : "legacy/", name);
+
+        ShaderSource source;
+        if (!ShaderAssets_Load(path, &source))
+            return 0;
+
         char defines[128];
         snprintf(defines, sizeof(defines), "#define GFX_MAX_LIGHTS %d\n#define GFX_SHADOW_MAP_SIZE %d.0\n", GFX_MAX_LIGHTS, GFX_SHADOW_MAP_SIZE);
-        const char* sources[3] = {versionLine, defines, body};
+        const char* sources[3] = {core ? SHADER_GLSL_CORE_VERSION_LINE : kLegacyVersionLine, defines, source.text.get()};
         return CompileShaderSources(type, sources, 3);
     }
 
@@ -735,11 +267,8 @@ bool OpenGlRenderer::CreateContext()
 
 bool OpenGlRenderer::CreateProgram()
 {
-    const char* vertexSource = m_coreProfile ? kVertex330 : kVertex120;
-    const char* fragmentSource = m_coreProfile ? kFragment330 : kFragment120;
-
-    GLuint vs = CompileShader(GL_VERTEX_SHADER, vertexSource);
-    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, fragmentSource);
+    GLuint vs = CompileShaderAsset(GL_VERTEX_SHADER, m_coreProfile, "flat.vert.glsl");
+    GLuint fs = CompileShaderAsset(GL_FRAGMENT_SHADER, m_coreProfile, "flat.frag.glsl");
     if (!vs || !fs)
         return false;
 
@@ -861,12 +390,8 @@ bool OpenGlRenderer::EnsureShadowMap()
 
 bool OpenGlRenderer::CreatePbrProgram()
 {
-    const char* versionLine = m_coreProfile ? "#version 330 core\n" : "#version 120\n";
-    const char* vertexBody = m_coreProfile ? kVertexPbr330 : kVertexPbr120;
-    const char* fragmentBody = m_coreProfile ? kFragmentPbr330 : kFragmentPbr120;
-
-    GLuint vs = CompilePbrShader(GL_VERTEX_SHADER, versionLine, vertexBody);
-    GLuint fs = CompilePbrShader(GL_FRAGMENT_SHADER, versionLine, fragmentBody);
+    GLuint vs = CompileShaderAsset(GL_VERTEX_SHADER, m_coreProfile, "pbr.vert.glsl");
+    GLuint fs = CompileShaderAsset(GL_FRAGMENT_SHADER, m_coreProfile, "pbr.frag.glsl");
     if (!vs || !fs)
         return false;
 
@@ -917,12 +442,8 @@ bool OpenGlRenderer::CreatePbrProgram()
 
 bool OpenGlRenderer::CreateShadowProgram()
 {
-    const char* versionLine = m_coreProfile ? "#version 330 core\n" : "#version 120\n";
-    const char* vertexBody = m_coreProfile ? kVertexShadow330 : kVertexShadow120;
-    const char* fragmentBody = m_coreProfile ? kFragmentShadow330 : kFragmentShadow120;
-
-    GLuint vs = CompilePbrShader(GL_VERTEX_SHADER, versionLine, vertexBody);
-    GLuint fs = CompilePbrShader(GL_FRAGMENT_SHADER, versionLine, fragmentBody);
+    GLuint vs = CompileShaderAsset(GL_VERTEX_SHADER, m_coreProfile, "shadow.vert.glsl");
+    GLuint fs = CompileShaderAsset(GL_FRAGMENT_SHADER, m_coreProfile, "shadow.frag.glsl");
     if (!vs || !fs)
         return false;
 
@@ -1163,7 +684,7 @@ void OpenGlRenderer::RenderShadowMap(const DrawLists& lists)
     gl_UniformMatrix4fv(m_shadowUniformLightViewProj, 1, GL_FALSE, m_lastLightViewProj);
     // One draw over every dynamic vertex: no per-material texture binding to
     // change between runs (no alpha-mask cutout support yet -- see
-    // kFragmentShadow330/120), so there is nothing run boundaries buy it.
+    // shadow.frag.glsl), so there is nothing run boundaries buy it.
     glDrawArrays(GL_TRIANGLES, static_cast<GLint>(dynStart), static_cast<GLsizei>(dynCount));
 
     gl_BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));

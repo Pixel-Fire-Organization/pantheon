@@ -9,6 +9,10 @@ CMakeLists.txt text eol=lf
 # Generated TrenchBroom FGD: keep LF so the build-time regenerate + copy_if_different
 # is a no-op on a clean tree (the generator always writes LF).
 *.fgd text eol=lf
+# Shader sources are cooked byte for byte into loose files a driver compiles, so
+# a checkout must never turn their line endings into CRLF.
+*.wgsl text eol=lf
+*.glsl text eol=lf
 # Default: normalize to LF on all platforms
 * text=auto
 # Git LFS: large binary formats (textures, vendored TrenchBroom binaries)

@@ -42,7 +42,7 @@
             "minItems": 1,
             "items": {
               "type": "string",
-              "enum": ["ps2pal", "ps2ntsc", "win32", "vita", "vitatv", "psp", "all"]
+              "enum": ["ps2pal", "ps2ntsc", "win32", "vita", "vitatv", "psp", "nx", "macos", "all"]
             },
             "description": "Which platforms showed the symptom. 'all' when it was platform-independent."
           },

@@ -38,6 +38,13 @@ The engine targets multiple platforms through one abstract interface — the sam
   operation mode. One C heap owns the whole process allowance, so the engine map is carved from it. Face buttons map
   **by label** (A to `Cross`), which is why the `Nintendo` button-icon family exists apart from `Xbox`. See
   `docs/nx/PLATFORM.md`.
+- **macOS is a single platform whose binary carries both architectures**: `engine/include/platform/macos/` +
+  `engine/src/platform/macos/` hold `MacosPlatform`, concrete. Intel and Apple Silicon are not variants — one executable
+  and one runtime library carry both slices — and the build targets macOS 11. It is a native Cocoa target with no
+  windowing library; **Objective-C++ (`.mm`) is allowed only in `engine/src/platform/macos/`**, behind plain-C++ headers
+  and file-scope state, and nowhere in a header. It draws at one pixel per point, because the interface's metrics are a
+  compile-time percentage of pixels. The bundle (`dist/macos/<Title>.app`) carries the executable, the library, the
+  archive and the shaders, and the platform resolves its data from `Contents/Resources`. See `docs/macos/PLATFORM.md`.
 - **The interface is sized by the platform.** `UI_METRIC_SCALE_PERCENT` is a required platform constant: the theme
   declaration is authored against the console reference framebuffer, and a platform with a materially smaller screen
   states the proportion there. It is applied once, where a style is installed, so no widget and no theme carries a
@@ -70,14 +77,17 @@ The engine targets multiple platforms through one abstract interface — the sam
   just orders of magnitude slower than the medium, which reads as a stall somewhere else entirely. PS2 sets
   `PLATFORM_MAIN_THREAD_PRIORITY` / `PLATFORM_WORKER_THREAD_PRIORITY`; see `docs/ps2/PLATFORM.md`.
 
-**Current state**: PS2, Win32, Vita, PSP and nx are all live. `dist/nx/game.nro` builds in devkitPro's container and
+**Current state**: PS2, Win32, Vita, PSP, nx and macOS are all live. `dist/nx/game.nro` builds in devkitPro's container and
 boots to the main menu under Ryujinx on the deko3d backend, not yet on hardware (see `docs/nx/BUILD.md`). The engine runs entirely through `Platform` - memory map, clock,
 threads/semaphores, file access, input, console/panic and renderer construction - and `engine/src/` contains no OS
 calls. `dist/win32/game.exe` opens a real window and boots into the game through WebGPU at vsync, from the
 same unmodified `game/**` sources the PS2 build uses. `dist/vita/` and `dist/vitatv/` produce installable `.vpk`
 packages carrying the executable, assets, worlds and store-front metadata. `dist/psp/` produces **two** containers from
 one staged tree — an `EBOOT.PBP` plus loose files for a memory card, and a UMD-shaped `game.iso` — and one binary boots
-from either, resolving its asset root from whichever it was started from.
+from either, resolving its asset root from whichever it was started from. `dist/macos/<Title>.app` is a
+universal (Intel + Apple Silicon) signed bundle that boots into the game through WebGPU on Metal at the display's
+refresh, with Apple's OpenGL as the fallback; the Intel slice has run on hardware, the Apple Silicon slice is built
+and signed but not yet run on one (see `docs/macos/PLATFORM.md`).
 
 Remaining: the skybox path in both desktop backends, and the LOD1 sector tier everywhere but giftag (the
 billboard far field was replaced by LOD1 sectors; see `docs/formats/LEVEL_FORMAT.md`). The giftag backend now renders the same scene
@@ -217,6 +227,24 @@ reuses `RendererId::OpenGl` because it is the same API, but it is a **separate i
 (`engine/config/nx/renderer/shaders/`, no `#version`; `tools/nx_shader.py` prefixes the version each needs), so a
 frame difference between them is a backend bug.
 
+**The WebGPU renderer is shared by the desktop platforms, and is abstract.** `WebGpuRenderer`
+(`engine/{include,src}/graphics/webgpu/`) holds everything above the window and is not in `ENGINE_CORE_SOURCES` (it
+includes the WebGPU header); each desktop platform's fragment lists it and supplies a derived class —
+`Win32WebGpuRenderer`, `MacosWebGpuRenderer` — implementing two hooks: create a surface from the platform's window,
+and release it. A base constructor cannot call a derived override, so the base only zero-initialises and each derived
+constructor ends by calling the base's `Initialize()`. The macOS prebuilt of the graphics library contains **Metal
+only** — no OpenGL, ANGLE or Vulkan — so macOS's OpenGL fallback is a separate implementation against Apple's own
+OpenGL (`engine/src/platform/macos/renderer/`), 4.1 core only, that shares no code with Win32's.
+
+**Desktop shaders are cooked assets, not code.** `assets/engine/shaders/` holds WGSL and GLSL sources; the cook
+(`tools/cook_shaders.py`, cook-list policy `SHADER`) writes them as loose files in a `shaders` directory **beside the
+archive**, and the renderers read them through `ShaderAssets` (`engine/{include,src}/graphics/`) with the platform
+file API. They are not archive entries because a renderer is built before the IO, archive and resource subsystems
+exist and is not selectable the way those are. GLSL carries no `#version` (one shared constant, `330 core`, is
+prefixed) and WGSL stays inside the WebGPU 1.0 core baseline (no `enable`/`requires`), so one source serves every
+desktop backend. `--shaders <dir>` reads from a directory instead, so a shader is edited without a cook or a build.
+See `docs/formats/SHADER_ASSETS.md`.
+
 `StagedGeometry` (`engine/include/graphics/StagedGeometry.h`) is the shared processor-side geometry stager used by
 every backend that rebuilds its vertex data each frame and uploads it once — both desktop backends, both Vita
 ones, both PSP ones and both nx ones. Because they stage identically, a frame difference between two of them is a bug in one, not a difference in
@@ -240,7 +268,7 @@ material asset is genuinely shared between a placed model and a brush wall paint
 
 Backend shading is split into two tiers, queried via `Renderer::SupportsPbrShading()` (false by default, mirroring
 `GetTextureBudgetBytes`'s "override only where it differs" shape): PBR-capable backends (webgpu, opengl-win32,
-deko3d, opengl-nx, gxm) shade per pixel with real material maps; the fixed-function backends (giftag, ps2gl, gu,
+opengl-macos, deko3d, opengl-nx, gxm) shade per pixel with real material maps; the fixed-function backends (giftag, ps2gl, gu,
 pspgl, vitagl) stay per-vertex flat/Lambertian. Dynamic lights are fixed renderer slots mirroring cameras
 (`Renderer::SetLight3D`/`SetAmbientLight`, `engine/include/graphics/Primitives.h`'s `Light3D`/`LightID`) — several
 active simultaneously, unlike a camera. A single real-time shadow map from one designated slot
@@ -262,6 +290,16 @@ baked lighting and stays fully dynamic. See `docs/formats/LEVEL_FORMAT.md`'s "St
   to the root of the PSP toolchain (e.g. `/usr/local/pspdev`), with `$PSPDEV/bin` on `PATH`, and `DEVKITPRO` to the
   root of devkitPro (`/opt/devkitpro`, exported by its own `/etc/profile.d` script, which the login shell
   `tools/build.py` enters WSL through reads).
+- **macOS builds natively, and nothing else needs to know.** `toolchains/macos.cmake` sets
+  `ENGINE_TOOLCHAIN_ID` `macos` (there is nothing to cross-compile, so no `CMAKE_SYSTEM_NAME`), the architectures
+  (`MACOS_ARCHITECTURES`: `arm64;x86_64` by default, `native` for the host's own, which the `macos-debug` preset uses),
+  deployment target 11.0, and `-std=c++11 -fno-exceptions -fno-rtti` for C++ and Objective-C++ (plus `-fobjc-arc`).
+  Everything Apple-specific — `enable_language(OBJCXX)`, the per-architecture wgpu-native fetch, the frameworks, the
+  bundle tool — lives in `engine/config/macos/platform.cmake`, which is included only when `MACOS` survives selection,
+  so no other configure evaluates it. `tools/build.py` skips the submodule update when every requested platform is
+  `MACOS`, and on a Mac an unqualified build means `MACOS`. Never put a macOS name in a shared build file beyond the one
+  registration line; a platform that needs a cache variable shared code reads (`ACTIONS_CAPS_macos`) sets it from its own
+  fragment.
 - **A toolchain may build in a container.** `tools/build.py`'s `CONTAINERS` map names a pinned image per toolchain;
   when the host has no install of its own (`--container auto`, the default) the whole configure-and-build runs in
   it, with the checkout mounted at its own path and the container running as the host user, so the build tree and
@@ -343,8 +381,9 @@ baked lighting and stays fully dynamic. See `docs/formats/LEVEL_FORMAT.md`'s "St
   `cmake --build <dir> --target dist` builds them all.
 - **Toolchains**: `toolchains/ps2dev.cmake` (PS2, `mips64r5900el-ps2-elf`), `toolchains/mingw-w64.cmake`
   (Win32, cross-compiled from WSL — needs `sudo apt install mingw-w64`), `toolchains/vitasdk.cmake`
-  (Vita, `arm-vita-eabi`), and `toolchains/pspdev.cmake` (PSP, `psp`), which includes the vendor's own
-  `$PSPDEV/psp/share/pspdev.cmake` and **appends** its flags behind a cache guard rather than forcing them.
+  (Vita, `arm-vita-eabi`), `toolchains/pspdev.cmake` (PSP, `psp`), which includes the vendor's own
+  `$PSPDEV/psp/share/pspdev.cmake` and **appends** its flags behind a cache guard rather than forcing them, and
+  `toolchains/macos.cmake` (macOS, native Apple clang).
 - **Every declarative JSON file the game owns lives under `game/config/`**, one unified space rather than one per
   kind of declaration — but the **schema** that validates each one does not live beside it: schemas are not
   authored by the game, they are the cook system's own contract, so all of them live together under
@@ -449,6 +488,12 @@ baked lighting and stays fully dynamic. See `docs/formats/LEVEL_FORMAT.md`'s "St
   deliberately no `platform_dependencies()` hook and no submodule for this platform. **Never link `pspkernel` into it**:
   that is the kernel-mode stub library and it redefines libc symbols, so a user-mode title fails on a duplicate
   `strtol` rather than on anything naming the real cause.
+- **macOS vendors nothing either, and needs no submodule.** The graphics runtime library is a pinned prebuilt per
+  architecture, SHA256-checked at configure time and merged with `lipo` into one universal dylib the executable links and
+  the bundle carries in `Contents/Frameworks`; the system frameworks (Cocoa, Metal, QuartzCore, GameController, OpenGL)
+  are linked, not vendored. `tools/macos_package.py` assembles and ad-hoc signs `<Title>.app` and refuses a library missing
+  an architecture the executable carries. Every bundled file is signed again after assembly, because a merge or copy
+  invalidates a signature.
 - **nx vendors nothing either.** deko3d, Mesa (`EGL`, `glapi`, `drm_nouveau`) and `glad` come from devkitPro's
   packages (`switch-dev switch-mesa switch-glad`); no submodule, no `platform_dependencies()`. The distribution is one
   `.nro` with the master archive in its embedded RomFS, and each example gets its own through the optional
@@ -470,8 +515,8 @@ baked lighting and stays fully dynamic. See `docs/formats/LEVEL_FORMAT.md`'s "St
 | Engine architecture | `docs/ENGINE.md` |
 | Subsystem | `docs/subsystems/<NAME>.md` |
 | Platform | `docs/<platform>/PLATFORM.md`, `docs/<platform>/BUILD.md` |
-| Renderer | `docs/<platform>/renderers/<NAME>.md` |
-| On-disc format | `docs/formats/<NAME>.md` |
+| Renderer | `docs/<platform>/renderers/<NAME>.md`; a renderer several platforms share is `docs/renderers/<NAME>.md`, with each platform's own part beside it |
+| On-disc format | `docs/formats/<NAME>.md` (shader sources, a plain-text contract, are `docs/formats/SHADER_ASSETS.md`) |
 | Build pipeline | `docs/PIPELINE.md` |
 | Debug testbed scenes | `docs/TESTBED.md` |
 

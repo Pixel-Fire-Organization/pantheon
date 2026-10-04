@@ -6,6 +6,20 @@
 - No STL containers (`std::vector`, `std::string`, etc.) — they use heap and throw.
 - `<cstdint>`, `<cstddef>`, `<cmath>`, `<cstring>` from the C++ standard library are permitted.
 
+## Objective-C++
+
+Objective-C++ (`.mm`) exists **only under `engine/src/platform/macos/`**, where the platform has to speak to
+Cocoa, Metal and the system's controller and OpenGL frameworks. Nowhere else.
+
+- It is compiled as C++11 with `-fno-exceptions -fno-rtti` and **ARC** (`-fobjc-arc`). The language rules above still
+  apply: no STL containers, `enum class`, no `new` outside a platform's `CreateRenderer`, no inline comments.
+- **No Objective-C type appears in a header.** A platform or renderer header is plain C++; anything that must hold an
+  Objective-C object holds it as an opaque pointer, or keeps it in file-scope state inside the `.mm` file that owns it.
+  A header that mentions `NSView` has made every includer an Objective-C++ file.
+- A `.mm` file exposes plain C++ functions or a C++ class to the rest of the platform. Framework deprecation is silenced
+  in the one file that includes the deprecated headers, never project-wide.
+- File names stay `PascalCase`, with `.mm` in place of `.cpp`.
+
 ## Naming
 
 | Element          | Convention              | Example                        |

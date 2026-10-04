@@ -154,11 +154,16 @@ input rather than a separate step a caller could forget to perform.
 
 | Backend | Role |
 |---|---|
-| [webgpu](renderers/WEBGPU.md) | **Default.** Modern explicit API |
+| [webgpu](../renderers/WEBGPU.md) | **Default.** Modern explicit API; the renderer is shared with other desktop platforms, this platform supplying its window surface |
 | [opengl](renderers/OPENGL.md) | Version-configurable, down to a legacy path |
 | null | Final fallback; headless. See [RENDERER.md](../subsystems/RENDERER.md) |
 
 Fallback order is webgpu, then opengl, then null.
+
+Both renderers read their shaders from a `shaders` directory beside the archive, cooked
+from `assets/engine/shaders` — see [formats/SHADER_ASSETS.md](../formats/SHADER_ASSETS.md).
+The WebGPU renderer is shared with the [macOS](../macos/PLATFORM.md) platform; this
+platform supplies the surface made from its window.
 
 The desktop OpenGL backend is **unrelated to the console backend of a similar
 name**. One is the real graphics API at a modern version; the other is a

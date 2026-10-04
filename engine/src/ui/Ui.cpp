@@ -22,7 +22,6 @@ namespace
     // is no fine-positioning case that needs distinguishing a tap from a hold.
     const float SCROLL_STICK_SPEED = 900.0f;
     const uint32_t FNV_OFFSET_BASIS = 2166136261u;
-    const uint32_t FNV_PRIME = 16777619u;
 
     /// @param a Value at the start of the span.
     /// @param b Value at the end of the span.

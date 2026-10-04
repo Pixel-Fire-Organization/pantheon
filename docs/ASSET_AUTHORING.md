@@ -74,6 +74,18 @@ asset that fits one may be rejected on another. The constrained platform is the
 one to check against. Its arithmetic is in
 [ps2/TEXTURE_BUDGET.md](ps2/TEXTURE_BUDGET.md).
 
+## Shaders
+
+The desktop renderers' shaders are source files under `assets/engine/shaders/`, not code in the
+engine and not archive entries. There is no descriptor: the directory is the declaration, and a
+file's extension and position name its dialect. A platform's cook list decides which dialects it
+ships, and the cook writes them to a `shaders` directory beside the archive.
+
+To change one, edit it and either run the platform's cook target or pass `--shaders
+assets/engine/shaders` and relaunch — neither rebuilds the engine. The rules a shader must follow
+to stay valid on every desktop platform, the one constraint on WGSL and on GLSL, and what the
+cook refuses, are in [formats/SHADER_ASSETS.md](formats/SHADER_ASSETS.md).
+
 ## Materials
 
 A material lives under `assets/materials/`, mirroring `assets/textures/`
